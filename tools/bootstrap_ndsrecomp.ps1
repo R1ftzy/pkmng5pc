@@ -48,7 +48,7 @@ if (-not (Test-Path $toml)) {
 }
 
 Step 'Build recompiler'
-Invoke-Native cmake -G Ninja -S (Join-Path $eng 'recompiler') -B (Join-Path $eng 'recompiler/build') -DCMAKE_BUILD_TYPE=$Configuration
+Invoke-Native cmake -G Ninja -S (Join-Path $eng 'recompiler') -B (Join-Path $eng 'recompiler/build') "-DCMAKE_BUILD_TYPE=$Configuration"
 Invoke-Native cmake --build (Join-Path $eng 'recompiler/build')
 
 Step 'Generate BIOS banks'
@@ -69,9 +69,9 @@ if ($BuildRunner) {
   $backend = if ($Sdl3) { 'SDL3' } else { 'NONE' }
   $compute = if ($Sdl3) { 'ON' } else { 'OFF' }
   Invoke-Native cmake -G Ninja -S (Join-Path $eng 'runner') -B (Join-Path $eng 'runner/build') `
-    -DCMAKE_BUILD_TYPE=$Configuration `
-    -DNDS_SDL_BACKEND=$backend `
-    -DNDS_ENABLE_COMPUTE_RENDERER=$compute `
+    "-DCMAKE_BUILD_TYPE=$Configuration" `
+    "-DNDS_SDL_BACKEND=$backend" `
+    "-DNDS_ENABLE_COMPUTE_RENDERER=$compute" `
     -DNDS_BOOTSTRAP_FIRMWARE=ON
   Invoke-Native cmake --build (Join-Path $eng 'runner/build')
 }
