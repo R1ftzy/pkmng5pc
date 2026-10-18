@@ -226,9 +226,15 @@ layer to write: the game's file calls are recompiled code talking to an
 emulated cart. Our `rom/` layer is therefore an **offline** library (bank
 generation, M6 save I/O, M7 launcher detection), not a runtime component.
 
-- [ ] Confirm the emulated cart path serves the game's own reads; no HLE seam.
-- [ ] **Gate:** the game loads its own data files (e.g. `gfl_font.dat`,
-      `skb.narc`).
+- [x] Confirm the emulated cart path serves the game's own reads; no HLE seam.
+      **Met 2026-10-18:** a full NEW GAME session loads and uses the game's own
+      archives — text, fonts, maps, scripts, Pokémon data — and every file read
+      in it is the recompiled game's own call.
+- [x] **Gate:** the game loads its own data files (e.g. `gfl_font.dat`,
+      `skb.narc`). **Met 2026-10-18** with the same session: the game draws text
+      in its own fonts and its message boxes read the game's own text. Evidence:
+      `re/notes/recompilation.md` §"Save-loaded runs are playable; NEW GAME
+      needs the save-capable build".
 
 ##### M2.3 — Video HLE + renderer (first M2 visual target)
 
@@ -244,7 +250,10 @@ generation, M6 save I/O, M7 launcher detection), not a runtime component.
       wraps the invocation. **Met 2026-10-16:** the live window displays the
       boot splash (top screen content, bottom blank) at ~45–50 presented
       frames/s. Pacing is the audio queue, so the port is live but not 1:1.
-- [ ] GE (`GXFIFO`) stubbed initially; enough later for the title scene.
+- [x] GE (`GXFIFO`) stubbed initially; enough later for the title scene. **Met
+      2026-10-18** — and well past it: the intro cinematic, the outdoor town in
+      gameplay and the battle scenes are 3D, on the live window and in the probe
+      frames.
 - [x] **Gate:** boot splash / logos render. **Met 2026-10-16** (top screen;
       the bottom screen is correctly blank at this point in the sequence).
       Evidence: engine A enables **BG1** at `vblank9=240` (~4 s of emulated
@@ -263,14 +272,19 @@ generation, M6 save I/O, M7 launcher detection), not a runtime component.
 
 ##### M2.4 — Input, timing, audio
 
-- [ ] Scanline/vblank + IRQ timing; key input + touch through the HAL.
+- [~] Scanline/vblank + IRQ timing; key input + touch through the HAL. Key
+      input is exercised end-to-end through the frontend's own handler (real SDL
+      events → HAL button state) by the M2.5 gate below — and since then by a
+      full gameplay session (walking, menus, battles); the vblank-driven path
+      produces every frame above. **Touch is still unverified.**
 - [ ] SDAT/SSEQ playback via the ARM7 sound path.
-- [ ] **Gate:** intro/title runs with input and music.
+- [~] **Gate:** intro/title runs with input and music. **Partially met
+      2026-10-18:** input drives the whole run end-to-end; **music/SFX are still
+      unverified by ear** (SDAT/SSEQ is audio-structural only so far).
 
-*Status 2026-10-16:* key input is exercised end-to-end through the frontend's own
-handler (real SDL events → HAL button state) by the M2.5 gate below, and the title
-screen visibly changes under it — but the box stays open for **touch** and for
-**audio** (SDAT/SSEQ is audio-structural only so far, not verified by ear).
+*Status 2026-10-18:* key input is exercised end-to-end through the frontend's own
+handler (real SDL events → HAL button state) by the M2.5 gate below, and now by
+a full gameplay session; the box stays open for **touch** and for **audio**.
 
 ##### M2.5 — Reach the main menu
 
@@ -306,33 +320,45 @@ menu/overworld still Black-only.
 
 ### M3 — Overworld vertical slice
 
-- [ ] Map system: matrix + headers + area data + object/event tables loaded from
-      ROM (`re/notes/map-system.md`).
-- [ ] DS 2D engine: BG layers (NSCR+NCGR+NCLR) and OBJ sprites composited.
-- [ ] DS 3D GE emulation: NSBMD/NSBTX draw for outdoor maps; camera.
-- [ ] Script VM: interpret at least movement/lock/release/warp commands
-      (`re/notes/script-vm.md`).
-- [ ] Text system: render a message box from the ROM text archive
-      (`re/notes/text-system.md`).
+- [x] Map system: matrix + headers + area data + object/event tables loaded from
+      ROM (`re/notes/map-system.md`). **Met 2026-10-18** through the recompiled
+      game's own loader: the room and Nuvema Town render with their object sets
+      and change on area transitions.
+- [x] DS 2D engine: BG layers (NSCR+NCGR+NCLR) and OBJ sprites composited.
+      **Met 2026-10-18:** tile layers and sprites (player, NPCs, menus, message
+      boxes) composite on both screens.
+- [x] DS 3D GE emulation: NSBMD/NSBTX draw for outdoor maps; camera. **Met
+      2026-10-18:** the adopted GE renders the 3D title, the intro cinematic and
+      the outdoor town.
+- [x] Script VM: interpret at least movement/lock/release/warp commands
+      (`re/notes/script-vm.md`). **Met 2026-10-18:** the game's own script VM
+      drives the NEW GAME sequence — scripted movement, area transitions, the
+      gift-box starter choice, dialogue gating.
+- [x] Text system: render a message box from the ROM text archive
+      (`re/notes/text-system.md`). **Met 2026-10-18:** in-game message boxes
+      render from the ROM's text archive (Juniper's intro, the name prompt,
+      in-game dialogue).
 
 **Done when:** you can boot a save (or new game), render a town route, walk with
 the D-pad, trigger a warp, and read a text box — all through the HAL.
 
-*Status 2026-10-18:* M3 has a first foothold, and it is the **save** half of the
-"Done when" clause: with a battery save loaded (`tools/play`, which loads the
-ROM's own `<rom>.sav` by default and always declares the 512 KiB flash cartridge
-via `re/config/frontend.toml`) Black boots past the menu into gameplay and is
-playable, and the game's own saving round-trips to the file. **NEW GAME reaches
-gameplay on that save-capable build too** — with the flash declared and no save
-file attached, the `run-flash-blank` probe drives NEW GAME to the in-game
-name-confirmation screen — while a hand-rolled run that leaves the cartridge at
-the runner's 8 KiB EEPROM default (no `--config`) still crashes on NEW GAME at
-the sync-facade halt (`banks/HANDOFF.md`). Nothing on the checklist
-above is claimed by this: the map/object/script/text systems are still being
-driven through recompiled code, and no warps or text boxes were exercised (the
-name-confirmation box is the game's own text path, not the port's message-box
-work). Evidence: `re/notes/recompilation.md` §"Save-loaded runs are playable;
-NEW GAME needs the save-capable build".
+*Status 2026-10-18:* **first met on Windows, by hand.** The maintainer played a
+NEW GAME on the save-capable build (the ROM's own `<rom>.sav` loaded,
+`re/config/frontend.toml` declaring the 512 KiB flash cartridge) into Nuvema
+Town, walked with the D-pad, went through the game's own area transitions and
+read its text boxes, then chose a starter and entered trainer battles (battles
+are M4, not claimed here). The session was not captured frame-by-frame; its
+reproducible counterpart is the `run-flash-blank` probe, which drives NEW GAME
+from the menu to the in-game name-confirmation box (`halt_stop: null`,
+`banks/save-demo/run-flash-blank.json`), while a hand-rolled run that leaves the
+cartridge at the runner's 8 KiB EEPROM default (no `--config`) still crashes on
+NEW GAME at the sync-facade halt (`banks/HANDOFF.md`). The five systems above are
+ticked on the strength of this: they are the **recompiled game's own** code plus
+the runner's HAL (the LLE stance of M2.2), not port-side re-implementations, so
+the per-subsystem RE notes (`re/notes/map-system.md`, `script-vm.md`,
+`text-system.md`) are still owed. Linux unverified. Evidence:
+`re/notes/recompilation.md` §"Save-loaded runs are playable; NEW GAME needs the
+save-capable build".
 
 ### M4 — Battle system
 
@@ -559,6 +585,8 @@ Newest first. Keep entries short; details and evidence live in `re/notes/`.
   (`-NoSave` / `--no-save` is a blank cart that writes nothing). Headless probe
   timings, the runner log and the frames: `re/notes/recompilation.md`
   §"Save-loaded runs are playable; NEW GAME needs the save-capable build".
+  **M3's system boxes are ticked on the strength of it** (the milestone's "Done
+  when" clause is met on Windows for the first time; Linux unverified).
   **Scope:** Windows, Black only (Linux unverified); the bank patch mechanism is
   new and only this one patch is declared.
 
