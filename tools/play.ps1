@@ -11,12 +11,20 @@
 # registers their bank group by ROM SHA-1.
 #
 # Usage:
-#   pwsh tools/play.ps1
+#   pwsh tools/play.ps1                       # play with the ROM's own save
 #   pwsh tools/play.ps1 -Rom "roms/<your-rom>.nds"
 #   pwsh tools/play.ps1 -Layout separate
 #   pwsh tools/play.ps1 -Frames 600 -Stats    # present 600 frames, print stats, exit
-#   pwsh tools/play.ps1 -SavePath banks/black.sav
+#   pwsh tools/play.ps1 -Sav "banks/black.sav"  # keep a different save file
+#   pwsh tools/play.ps1 -NoSave               # blank 512 KiB cart, write nothing
 #   pwsh tools/play.ps1 -Diagnostics          # keep a perf bundle in banks/play/
+#
+# Saves are on by default: the run loads the save next to the ROM (<rom>.sav),
+# starts blank when it is missing, and keeps writing it. -Sav (alias -SavePath)
+# names another file and -NoSave keeps everything in RAM (the runner's
+# --no-save). Either way the run passes re/config/frontend.toml, which declares
+# the cartridge: a Gen 5 cart is 512 KiB flash, and the runner's 8 KiB EEPROM
+# fallback makes the game's own save init fail.
 #
 # The positional BIOS directory and ARM9 cycle budget are still required by the
 # runner, but the budget is inert under --interactive: the window stays open
@@ -28,8 +36,9 @@ param(
   [string]$BiosDir = 'bios',
   [ValidateSet('stacked', 'separate')][string]$Layout = 'stacked',
   [int]$Frames = 0,
-  [string]$SavePath,
+  [Alias('SavePath')][string]$Sav,
   [switch]$Save,
+  [switch]$NoSave,
   [switch]$Stats,
   [switch]$Coverage,
   [switch]$Diagnostics,
@@ -107,6 +116,15 @@ $Rom = (Resolve-Path -LiteralPath $Rom).Path
 
 # --- command ----------------------------------------------------------------
 
+if ($NoSave -and ($PSBoundParameters.ContainsKey('Sav') -or $Save)) {
+  Fail '-NoSave cannot be combined with -Sav/-Save.'
+}
+# The default is the derivation the runner itself would make: the ROM path with
+# a .sav extension, i.e. the save sits next to the ROM. An explicit -Sav/-Save
+# with an empty value names that same file.
+$savePath = if ($NoSave) { '' } else { [System.IO.Path]::ChangeExtension($Rom, '.sav') }
+if (-not $NoSave -and $Sav) { $savePath = $Sav }
+
 $runnerArgs = @(
   $BiosDir, '250000000',
   '--boot', 'direct', '--generated-firmware', '--freebios',
@@ -120,7 +138,12 @@ if ($Diagnostics) {
 } else {
   $runnerArgs += @('--diagnostics', 'off')
 }
-if ($SavePath) { $runnerArgs += @('--save-path', $SavePath) } elseif (-not $Save) { $runnerArgs += '--no-save' }
+# The config describes the cartridge, not persistence: the runner's historical
+# default (8 KiB EEPROM) makes the game's save init fail, so it is always passed.
+$frontendConfig = Join-Path $root 're/config/frontend.toml'
+if (-not (Test-Path -LiteralPath $frontendConfig)) { Fail "missing $frontendConfig" }
+$runnerArgs += @('--config', $frontendConfig)
+if ($savePath) { $runnerArgs += @('--save-path', $savePath) } else { $runnerArgs += '--no-save' }
 if ($Extra) { $runnerArgs += $Extra }
 
 if ($Frames -gt 0) { $env:NDS_FRONTEND_MAX_FRAMES = "$Frames" }
@@ -134,6 +157,12 @@ if (-not $env:NDS_GPU2D_THREADED) { $env:NDS_GPU2D_THREADED = '0' }
 Write-Host "runner: $runner"
 Write-Host "rom:    $Rom"
 Write-Host "banks:  $banks"
+if ($savePath) {
+  $fresh = if (Test-Path -LiteralPath $savePath) { '' } else { ' (new: written when the game saves)' }
+  Write-Host "save:   $savePath$fresh"
+} else {
+  Write-Host "save:   off (--no-save, blank 512 KiB cart, nothing written)"
+}
 Write-Host "keys:   arrows=D-pad  Z=A X=B  A=Y S=X  Q=L W=R  Enter=Start  Backspace=Select  Esc=quit"
 
 Push-Location $root

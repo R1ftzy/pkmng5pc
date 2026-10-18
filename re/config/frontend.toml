@@ -1,0 +1,13 @@
+# Frontend config shared by the four Gen 5 titles (Black, White, Black 2,
+# White 2), passed to nds_runner as --config by tools/play and, later, the
+# launcher. Only the cartridge table belongs here until a title needs more:
+# the runner's other tables carry their own CLI/env overrides already.
+#
+# Reverse-engineered cartridge fact, no ROM content: Gen 5 retail carts carry
+# 512 KiB of flash, and the game's 0x24000-byte save is a qualified block
+# store inside it. Without this table the runner keeps its historical
+# fallback (8 KiB EEPROM) and rejects any 512 KiB .sav as an invalid size.
+
+[cartridge]
+save_type = "flash"
+save_size = 524288

@@ -318,6 +318,22 @@ menu/overworld still Black-only.
 **Done when:** you can boot a save (or new game), render a town route, walk with
 the D-pad, trigger a warp, and read a text box — all through the HAL.
 
+*Status 2026-10-18:* M3 has a first foothold, and it is the **save** half of the
+"Done when" clause: with a battery save loaded (`tools/play`, which loads the
+ROM's own `<rom>.sav` by default and always declares the 512 KiB flash cartridge
+via `re/config/frontend.toml`) Black boots past the menu into gameplay and is
+playable, and the game's own saving round-trips to the file. **NEW GAME reaches
+gameplay on that save-capable build too** — with the flash declared and no save
+file attached, the `run-flash-blank` probe drives NEW GAME to the in-game
+name-confirmation screen — while a hand-rolled run that leaves the cartridge at
+the runner's 8 KiB EEPROM default (no `--config`) still crashes on NEW GAME at
+the sync-facade halt (`banks/HANDOFF.md`). Nothing on the checklist
+above is claimed by this: the map/object/script/text systems are still being
+driven through recompiled code, and no warps or text boxes were exercised (the
+name-confirmation box is the game's own text path, not the port's message-box
+work). Evidence: `re/notes/recompilation.md` §"Save-loaded runs are playable;
+NEW GAME needs the save-capable build".
+
 ### M4 — Battle system
 
 - [ ] Pokémon/move/item/trainer data loaders (`re/notes/pokemon-data.md`).
@@ -528,6 +544,23 @@ Do not vendor or copy their content; cite and reimplement.
 ## 8. Progress log
 
 Newest first. Keep entries short; details and evidence live in `re/notes/`.
+
+- **2026-10-18 (Black reaches gameplay — played by hand past the sync-facade
+  halt)** — the NEW GAME transition used to park the ARM9 forever in the sync
+  facade's own fatal-halt routine (`0x02088234`, halted at t=112.6 s emulated).
+  Two bring-up facts fixed it, neither of them a change to game logic: the
+  facade releases one resource twice, an environment-only mismatch, declared as
+  a `skip_call` patch at `0x02075F7C`
+  (`docs/adr/0004-declared-bank-patches.md`); and a Gen 5 cart is 512 KiB flash,
+  not the runner's 8 KiB EEPROM fallback (`re/config/frontend.toml`). With both,
+  NEW GAME runs through the intro into gameplay — the maintainer then played by
+  hand: starter chosen, trainer battles entered. **`tools/play` now plays on the
+  ROM's own `<rom>.sav` by default** and always passes the cartridge table
+  (`-NoSave` / `--no-save` is a blank cart that writes nothing). Headless probe
+  timings, the runner log and the frames: `re/notes/recompilation.md`
+  §"Save-loaded runs are playable; NEW GAME needs the save-capable build".
+  **Scope:** Windows, Black only (Linux unverified); the bank patch mechanism is
+  new and only this one patch is declared.
 
 - **2026-10-16 (all four titles boot — White, Black 2 and White 2 join Black at
   the 3D title screen)** — the three other ROMs were banked with plain

@@ -917,3 +917,67 @@ Same flags, same (Debug) configuration; logs in `banks/bench-*.log`.
   was not measured, and no per-title coverage manifest was read. Linux remains
   unverified for all four.
 
+### Bank patch mechanism (2026-10-18)
+
+- **Observation (new directive).** `pkmn_bankgen --title-config` consumes `[[patch]]` blocks (address, kind, reason) and rewrites the emitted shard C after the recompiler emits it: `skip_call` replaces a BL/BLX block with a PC-advance fall-through, `stub_return` empties a function to a `bx lr`-equivalent.
+- **Observation (declared).** `re/config/black.toml` declares one patch: `0x02075F7C skip_call`, the `lock_leave_raw` id-mismatch assert (`banks/HANDOFF.md` §7).
+- **Observation (deterministic).** Regenerating Black with the config changed `irbo_arm9_main_04.c` only - every other generated file was byte-identical - and printed `[patch] 0x02075F7C skip_call applied (shard irbo_arm9_main_04.c)`.
+- **Observation (fail-loud).** An address absent from every shard and a non-BL/BLX site both exit nonzero naming the patch and shard; an unknown kind exits 2 before any recompilation.
+- **Observation (boot unaffected).** The rebuilt runner still renders the splash (`b45f04f74705` / `1ac6f38899e7`, t≈6.24-6.27 s). Whether NEW GAME now proceeds past the assert is not yet re-driven end-to-end. (The save-capable configuration is answered in *Save-loaded runs are playable; NEW GAME needs the save-capable build* below; the runner's EEPROM default is still open.)
+
+### Save-loaded runs are playable; NEW GAME needs the save-capable build (2026-10-18)
+
+Answers the open question at the end of *Bank patch mechanism* for the
+save-capable configuration, and leaves the historical default open.
+
+- **Observation (playable, save loaded).** With a battery save loaded, Black
+  boots from the title into the game, is playable, and the game's own saving
+  round-trips to the file. The run is `tools/play -Sav ""`, which passes
+  `--config re/config/frontend.toml` - the cartridge is declared **512 KiB
+  flash** instead of the runner's historical 8 KiB EEPROM fallback.
+  `banks/save-demo/runner2.err.log` records the hand-driven session:
+  `[save] cartridge backup: flash, 524288 bytes`, `[save] loaded 524288 bytes
+  from ...\banks\save-demo\black.sav`, then 45 `[save] wrote 524288 bytes to
+  ...\banks\save-demo\black.sav` flushes as the game saved in play. This is the
+  **save** half of M3's "Done when" clause.
+- **Observation (NEW GAME reaches gameplay on that configuration).** With the
+  flash declared but **no save file attached**
+  (`banks/runner-patched/nds_runner.exe --boot direct --generated-firmware
+  --freebios --no-save --config re/config/frontend.toml --serve`), NEW GAME
+  proceeds into the game. `banks/save-demo/run-flash-blank.json` (driven
+  2026-10-18 23:33-23:38) presses A four times, the last labelled
+  `confirm-new-game` at t=110.699 s, then keeps pressing on its own cadence:
+  t=104.051-200.159 s, 206 samples, 137 distinct combined frames,
+  `halt_stop: null`, and the stop is the probe's own `--stop-at 200 s`.
+  `banks/save-demo/shots-flash/t00199.64s-A.png` is the in-game
+  name-confirmation text box ("So your name's AAAA. What a wonderful name!"),
+  so this is the first NEW GAME path that reaches gameplay.
+- **Observation (the probe's `park` is idle, not the halt).**
+  `park_loop_first_s` 110.699 / `park_loop_first_pc` `0x020882D8` / 143 parked
+  samples is not a terminal stop: `0x020882D8` is an SDK idle address the very
+  first smoke run already saw at vblank9=120 (above), the picture keeps
+  changing, and the probe's own fatal-halt signature also requires a frozen
+  picture (`check_stall`).
+- **Observation (the plain save-less default is the one that crashes).** The
+  historical `tools/play` invocation - `--no-save` with **no** `--config`, so the
+  runner's 8 KiB EEPROM fallback - is the configuration in which NEW GAME still
+  crashes at the sync-facade assert (`banks/HANDOFF.md`). Those drives predate
+  the patch and were not re-run on the patched banks, so whether the crash
+  survives the patch on its own is open.
+- **Observation (hand-driven, maintainer).** A NEW GAME session played by hand
+  on the save-capable configuration reached the starter choice and entered
+  trainer battles - the first hand-confirmed gameplay in the port, and it is
+  that same configuration `tools/play` now uses by default (the ROM's own
+  `<rom>.sav` loaded, `re/config/frontend.toml` always passed). The session was
+  not captured; the probe runs above are the reproducible evidence.
+- **Unknown.** Which of the two changes present in every passing run above is
+  load-bearing for NEW GAME - the `0x02075F7C skip_call` patch or the cartridge
+  declaration - is not isolated. The splitting probe is the patched runner with
+  `--no-save` and **no** `--config`: a crash there means the EEPROM default is
+  the missing piece, a pass means the patch alone was enough.
+- **Confidence.** High that the save-loaded run is playable (hand-driven, with
+  the runner log) and that NEW GAME reaches gameplay with the flash declared
+  (probe report + screenshots); medium on what inside that configuration is
+  load-bearing. Windows only; the save-loaded run itself was not captured as a
+  probe.
+

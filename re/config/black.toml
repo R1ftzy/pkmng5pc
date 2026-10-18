@@ -59,3 +59,12 @@ path = "black/seeds/arm9_arm9_02004000.toml"
 # Addresses that resolved to no ROM page (the ITCM copy and other
 # runtime-materialized code) stay in the ingest output: they need the
 # captured-bytes bank, which is ROM-derived and never checked in.
+
+# Guest-instruction patches applied by pkmn_bankgen to the emitted shard C
+# after recompilation. Address plus semantic kind only; no ROM bytes.
+# A patch address must exist in an emitted shard or bankgen fails.
+
+[[patch]]
+address = 0x02075F7C
+kind    = "skip_call"
+reason  = "lock_leave_raw id-mismatch assert: leaving an idle lock is a no-op"

@@ -2,6 +2,7 @@
 #include "pkmn/core/nds.h"
 #include "pkmn/core/sha1.h"
 
+#include <algorithm>
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
@@ -115,9 +116,20 @@ struct TitleSeedFile {
     std::string path;
 };
 
+// A declared replacement of one guest instruction in the emitted shard C.
+// skip_call rewrites the per-instruction block of a BL/BLX to fall through to
+// the next instruction; stub_return empties a function body to an immediate
+// return. Addresses and semantics only: no ROM bytes.
+struct TitlePatch {
+    u32 address = 0;
+    std::string kind;
+    std::string reason;
+};
+
 struct TitleConfig {
     std::vector<TitleAlias> aliases;
     std::vector<TitleSeedFile> seed_files;
+    std::vector<TitlePatch> patches;
 };
 
 struct Seed {
@@ -198,6 +210,11 @@ TitleConfig read_title_config(const std::string& path)
             table = 2;
             continue;
         }
+        if (text == "[[patch]]") {
+            config.patches.push_back({});
+            table = 3;
+            continue;
+        }
         if (text.front() == '[') {
             table = 0;
             continue;
@@ -227,6 +244,15 @@ TitleConfig read_title_config(const std::string& path)
                 seed.cpu = unquote(trim_copy(value));
             } else if (key == "path") {
                 seed.path = unquote(trim_copy(value));
+            }
+        } else if (table == 3 && !config.patches.empty()) {
+            TitlePatch& patch = config.patches.back();
+            if (key == "address") {
+                patch.address = parse_u32(value);
+            } else if (key == "kind") {
+                patch.kind = unquote(trim_copy(value));
+            } else if (key == "reason") {
+                patch.reason = unquote(trim_copy(value));
             }
         }
     }
@@ -274,6 +300,251 @@ std::vector<Seed> read_seeds(const std::filesystem::path& path)
     }
     flush();
     return seeds;
+}
+
+std::string hex8(u32 value)
+{
+    char buf[16];
+    std::snprintf(buf, sizeof(buf), "%08X", value);
+    return buf;
+}
+
+std::optional<std::string> read_text(const std::filesystem::path& path)
+{
+    std::ifstream file(path, std::ios::binary);
+    if (!file) {
+        return std::nullopt;
+    }
+    return std::string((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+}
+
+std::vector<std::string> split_whitespace(const std::string& text)
+{
+    std::vector<std::string> tokens;
+    usize at = 0;
+    while (at < text.size()) {
+        while (at < text.size() && std::isspace(static_cast<unsigned char>(text[at]))) {
+            ++at;
+        }
+        usize begin = at;
+        while (at < text.size() && !std::isspace(static_cast<unsigned char>(text[at]))) {
+            ++at;
+        }
+        if (at > begin) {
+            tokens.push_back(text.substr(begin, at - begin));
+        }
+    }
+    return tokens;
+}
+
+std::string join_lines(const std::vector<std::string>& lines)
+{
+    std::string out;
+    for (usize i = 0; i < lines.size(); ++i) {
+        if (i != 0) {
+            out.push_back('\n');
+        }
+        out += lines[i];
+    }
+    return out;
+}
+
+// One per-instruction block of an emitted shard: the L_<address>: label up to
+// the next label, or up to the closing brace when the block ends the function.
+struct InstructionBlock {
+    usize start = 0;
+    usize end = 0;
+    bool ends_with_function = false;
+};
+
+std::optional<InstructionBlock> find_instruction_block(const std::string& text, u32 address)
+{
+    usize start = text.find("\nL_" + hex8(address) + ":");
+    if (start == std::string::npos) {
+        return std::nullopt;
+    }
+    ++start;
+    usize next_label = text.find("\nL_", start);
+    usize function_end = text.find("\n}", start);
+    if (function_end == std::string::npos) {
+        function_end = text.size();
+    }
+    if (next_label < function_end) {
+        return InstructionBlock { start, next_label, false };
+    }
+    return InstructionBlock { start, function_end, true };
+}
+
+enum class PatchOutcome { NotPresent, Applied, Malformed };
+
+std::string patch_marker(const TitlePatch& patch)
+{
+    std::string reason = patch.reason;
+    for (usize at = reason.find("*/"); at != std::string::npos; at = reason.find("*/", at)) {
+        reason.replace(at, 2, "* /");
+    }
+    return "[patch " + patch.kind + ": " + reason + "]";
+}
+
+PatchOutcome patch_skip_call(std::string& text, const TitlePatch& patch, std::string& error)
+{
+    std::optional<InstructionBlock> block = find_instruction_block(text, patch.address);
+    if (!block) {
+        return PatchOutcome::NotPresent;
+    }
+    usize comment_begin = text.find("/*", block->start);
+    usize comment_end
+        = comment_begin == std::string::npos ? std::string::npos : text.find("*/", comment_begin);
+    if (comment_end == std::string::npos || comment_end > block->end) {
+        error = "instruction comment not found";
+        return PatchOutcome::Malformed;
+    }
+    std::string comment = text.substr(comment_begin + 2, comment_end - comment_begin - 2);
+    std::string mode;
+    std::string mnemonic;
+    std::vector<std::string> tokens = split_whitespace(comment);
+    for (usize i = 0; i + 1 < tokens.size(); ++i) {
+        if (tokens[i] == "A" || tokens[i] == "T") {
+            mode = tokens[i];
+            mnemonic = tokens[i + 1];
+            break;
+        }
+    }
+    if (mnemonic != "bl" && mnemonic != "blx") {
+        error = "expected an unconditional BL/BLX, found '"
+            + (mnemonic.empty() ? std::string("unknown") : mnemonic) + "'";
+        return PatchOutcome::Malformed;
+    }
+    std::string addr_label = hex8(patch.address);
+    u32 next = patch.address + 4;
+    const std::string lr_marker = "g_cpu.R[14] = 0x";
+    usize lr = text.find(lr_marker, block->start);
+    if (lr != std::string::npos && lr + lr_marker.size() + 8 <= block->end) {
+        next = static_cast<u32>(
+            std::strtoul(text.substr(lr + lr_marker.size(), 8).c_str(), nullptr, 16));
+    }
+    std::string next_label = hex8(next);
+    std::vector<std::string> lines;
+    lines.push_back("L_" + addr_label + ":");
+    lines.push_back("    /*" + comment + "  " + patch_marker(patch) + " */");
+    lines.push_back("    g_cpu.R[15] = 0x" + addr_label + "u;");
+    lines.push_back("    if (runtime_should_yield()) return;");
+    lines.push_back("    ++g_insn_count[g_nds_active];");
+    lines.push_back("    if (g_insn_hook_armed) runtime_insn_slow();");
+    lines.push_back("    uint32_t _cyc_" + addr_label + " = 3u;");
+    lines.push_back("    uint32_t _code_" + addr_label + " = nds_code_numc(0x" + addr_label
+        + "u, NDS_ARM9_CODE_K(0x" + addr_label + "u, " + (mode == "T" ? "1" : "0") + "));");
+    lines.push_back("    uint32_t _data_" + addr_label + " = 0u;");
+    lines.push_back("    uint32_t _int_" + addr_label + " = 0u;");
+    lines.push_back("    g_cpu.R[15] = 0x" + next_label + "u;");
+    lines.push_back("    runtime_tick(g_nds_active == NDS_ARM9 ? arm9_cycle_combine(_code_"
+        + addr_label + ", _data_" + addr_label + ", _int_" + addr_label
+        + ", 0u) : arm7_cycle_combine(_cyc_" + addr_label + ", _data_" + addr_label
+        + ", 0u, (_int_" + addr_label + " != 0u)));");
+    lines.push_back("    if (runtime_unwinding()) return;");
+    if (block->ends_with_function) {
+        lines.push_back("    /* fall-through to 0x" + next_label + " */");
+        lines.push_back("    g_cpu.R[15] = 0x" + next_label + "u;");
+        lines.push_back("    { static NdsLinkSlot _lnk_" + next_label + "_f = {0, 0u, 0x"
+            + next_label + "u, 0};");
+        lines.push_back("      runtime_link_fallthrough(&_lnk_" + next_label + "_f); }");
+        lines.push_back("    return;");
+    }
+    text.replace(block->start, block->end - block->start, join_lines(lines));
+    return PatchOutcome::Applied;
+}
+
+PatchOutcome patch_stub_return(std::string& text, const TitlePatch& patch, std::string& error)
+{
+    std::string name = "_afunc_" + hex8(patch.address) + "(void) {";
+    usize begin = text.find(name);
+    if (begin == std::string::npos) {
+        return PatchOutcome::NotPresent;
+    }
+    usize end = text.find("\n}", begin);
+    if (end == std::string::npos) {
+        error = "function body is not terminated";
+        return PatchOutcome::Malformed;
+    }
+    std::string addr_label = hex8(patch.address);
+    std::vector<std::string> lines;
+    lines.push_back(name);
+    lines.push_back("    /* " + patch_marker(patch) + " */");
+    lines.push_back("    g_cpu.R[15] = 0x" + addr_label + "u;");
+    lines.push_back("    if (runtime_should_yield()) return;");
+    lines.push_back("    ++g_insn_count[g_nds_active];");
+    lines.push_back("    if (g_insn_hook_armed) runtime_insn_slow();");
+    lines.push_back("    uint32_t _bxt_" + addr_label + " = g_cpu.R[14];");
+    lines.push_back("    g_cpu.R[15] = _bxt_" + addr_label + " & ((_bxt_" + addr_label
+        + " & 1u) ? ~1u : ~3u);");
+    lines.push_back("    if (_bxt_" + addr_label + " & 1u) g_cpu.cpsr |= CPSR_T_BIT; else g_cpu.cpsr &= ~CPSR_T_BIT;");
+    lines.push_back("    runtime_tick(g_nds_active == NDS_ARM9 ? arm9_refill_cycles(_bxt_"
+        + addr_label + ") : arm7_refill_cycles(_bxt_" + addr_label + "));");
+    lines.push_back("    if (runtime_unwinding()) return;");
+    lines.push_back("    if (runtime_call_should_return(g_cpu.R[15])) return;");
+    lines.push_back("    runtime_dispatch_with_exchange(_bxt_" + addr_label + ");");
+    lines.push_back("    return;");
+    lines.push_back("}");
+    text.replace(begin, end + 2 - begin, join_lines(lines));
+    return PatchOutcome::Applied;
+}
+
+bool apply_bank_patches(const std::filesystem::path& bank_dir, const std::string& bank,
+    const std::vector<TitlePatch>& patches, std::vector<bool>& applied)
+{
+    if (patches.empty()) {
+        return true;
+    }
+    std::vector<std::filesystem::path> shards;
+    std::error_code ec;
+    for (const std::filesystem::directory_entry& entry :
+        std::filesystem::directory_iterator(bank_dir, ec)) {
+        std::string name = entry.path().filename().string();
+        if (!entry.is_regular_file() || !name.starts_with(bank + "_")) {
+            continue;
+        }
+        std::string suffix = name.substr(bank.size() + 1);
+        if (suffix.size() == 4 && std::isdigit(static_cast<unsigned char>(suffix[0]))
+            && std::isdigit(static_cast<unsigned char>(suffix[1])) && suffix[2] == '.'
+            && suffix[3] == 'c') {
+            shards.push_back(entry.path());
+        }
+    }
+    std::sort(shards.begin(), shards.end());
+    for (const std::filesystem::path& shard : shards) {
+        std::optional<std::string> text = read_text(shard);
+        if (!text) {
+            std::fprintf(stderr, "error: could not read '%s'\n", shard.string().c_str());
+            return false;
+        }
+        bool changed = false;
+        for (usize i = 0; i < patches.size(); ++i) {
+            if (applied[i]) {
+                continue;
+            }
+            const TitlePatch& patch = patches[i];
+            std::string error;
+            PatchOutcome outcome = patch.kind == "stub_return"
+                ? patch_stub_return(*text, patch, error)
+                : patch_skip_call(*text, patch, error);
+            if (outcome == PatchOutcome::Malformed) {
+                std::fprintf(stderr, "error: patch %s %s in %s: %s\n", hex32(patch.address).c_str(),
+                    patch.kind.c_str(), shard.filename().string().c_str(), error.c_str());
+                return false;
+            }
+            if (outcome == PatchOutcome::Applied) {
+                applied[i] = true;
+                changed = true;
+                std::printf("[patch] %s %s applied (shard %s)\n", hex32(patch.address).c_str(),
+                    patch.kind.c_str(), shard.filename().string().c_str());
+            }
+        }
+        if (changed && !write_text(shard, *text)) {
+            std::fprintf(stderr, "error: could not write '%s'\n", shard.string().c_str());
+            return false;
+        }
+    }
+    return true;
 }
 
 std::string toml_for(const Image& image, const std::string& source_note,
@@ -357,8 +628,8 @@ int main(int argc, char** argv)
             "Writes decoded ARM9/ARM7 images and per-bank recompiler configs, then\n"
             "(unless --emit-only) runs the recompiler once per bank. The generated\n"
             "bank directory is the one to pass as NDS_TITLE_BANK_DIR. --title-config\n"
-            "adds the checked-in per-title aliases ([[code_copy]]) and observed Tier-3\n"
-            "entry points ([[entry_point]]) to the matching CPU's config.\n");
+            "adds the checked-in per-title aliases ([[code_copy]]), observed Tier-3\n"
+            "entry points ([[entry_point]]), and instruction patches ([[patch]]).\n");
         return 2;
     }
 
@@ -465,8 +736,16 @@ int main(int argc, char** argv)
     TitleConfig title;
     if (!title_config_path.empty()) {
         title = read_title_config(title_config_path);
-        std::printf("title config : %s (%zu alias(es), %zu seed file(s))\n",
-            title_config_path.c_str(), title.aliases.size(), title.seed_files.size());
+        for (const TitlePatch& patch : title.patches) {
+            if (patch.kind != "skip_call" && patch.kind != "stub_return") {
+                std::fprintf(stderr, "error: patch %s has unknown kind '%s'\n",
+                    hex32(patch.address).c_str(), patch.kind.c_str());
+                return 2;
+            }
+        }
+        std::printf("title config : %s (%zu alias(es), %zu seed file(s), %zu patch(es))\n",
+            title_config_path.c_str(), title.aliases.size(), title.seed_files.size(),
+            title.patches.size());
     }
     std::filesystem::path title_dir = std::filesystem::path(title_config_path).parent_path();
 
@@ -536,6 +815,7 @@ int main(int argc, char** argv)
         return 0;
     }
 
+    std::vector<bool> patches_applied(title.patches.size(), false);
     for (const Image& image : images) {
         std::printf("recompile    : %s\n", image.bank.c_str());
         std::string command = command_path(recompiler);
@@ -549,9 +829,25 @@ int main(int argc, char** argv)
         if (!run(command)) {
             return 1;
         }
+        if (!apply_bank_patches(bank_dir, image.bank, title.patches, patches_applied)) {
+            return 1;
+        }
     }
 
-    std::printf("\ndone: %zu bank(s) in %s\n", images.size(),
+    usize applied_count = 0;
+    for (usize i = 0; i < title.patches.size(); ++i) {
+        if (patches_applied[i]) {
+            ++applied_count;
+            continue;
+        }
+        std::fprintf(stderr, "error: patch %s %s was not found in any emitted shard\n",
+            hex32(title.patches[i].address).c_str(), title.patches[i].kind.c_str());
+    }
+    if (applied_count != title.patches.size()) {
+        return 1;
+    }
+
+    std::printf("\ndone: %zu bank(s), %zu patch(es) applied in %s\n", images.size(), applied_count,
         std::filesystem::absolute(bank_dir).string().c_str());
     return 0;
 }

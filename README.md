@@ -25,7 +25,7 @@ build/windows-debug/tools/pkmn_bankgen.exe "roms/<your-rom>.nds" banks/black `
 cmake --preset windows-relwithdebinfo -DPKMNG5PC_BUILD_RUNNER=ON
 cmake --build --preset windows-relwithdebinfo
 
-# 6. Play
+# 6. Play (loads roms/<your-rom>.sav; -NoSave for a blank cart)
 pwsh tools/play.ps1
 ```
 
@@ -197,7 +197,7 @@ sh tools/play.sh
 | `--layout stacked\|separate` | one top-over-bottom window (default) or two windows |
 | `--frames N` | present N frames, print fps and a frame hash, exit — a self-test |
 | `--stats` | print the performance summary on exit |
-| `--save-path <file>` / `--save` | persist a battery save (the default is `--no-save`) |
+| `--sav [<file>]` | keep the battery save at another path; the default is the ROM's own `<rom>.sav`. Aliases: `--save-path`, `--save`; `--no-save` (`-NoSave` in PowerShell) runs a blank cart and writes nothing |
 
 Controls: `arrows` = D-pad, `Z`/`X` = A/B, `A`/`S` = Y/X, `Q`/`W` = L/R, `Enter` = Start, `Backspace` = Select, `Esc` = quit. The bottom-screen window is the touchscreen.
 
@@ -216,7 +216,7 @@ build/windows-relwithdebinfo/third_party/ndsrecomp/runner/nds_runner.exe \
 - The two **positional** arguments are the BIOS directory (a scratch dir; the runner writes a generated Wi-Fi identity into it) then the **ARM9 cycle budget**. Under `--interactive` the budget is parsed but **inert**: the window stays open until you close it or press `Esc`. Without `--interactive` the run executes the budget and exits with a CPU and graphics report instead of opening a window.
 - `--interactive` also starts the debug server on port 19842 (`debug_pump_start`), so `tools/ndsquery.py` can query a running window — but execution belongs to the frontend, so the `run_to_*` commands are rejected. Use `--serve` for a headless run you drive step by step.
 - `--freebios` supplies the BSD-2 BIOS images vendored inside `ndsrecomp`; it is effectively required, since without it the runner wants retail BIOS dumps and aborts with `dump verification failed`. Both `--freebios` and `--generated-firmware` require `--boot direct`.
-- `--save-path <file>` persists a battery save; `--no-save` disables it.
+- `--save-path <file>` loads a battery save at boot and persists it; `--no-save` runs with a blank cartridge and writes nothing. Either way `tools/play` passes `--config re/config/frontend.toml` (the `[cartridge]` table): Gen 5 carts carry 512 KiB of flash, and without it the runner's historical 8 KiB EEPROM fallback makes the game's own save init fail (it also rejects a 512 KiB `.sav` as an invalid size).
 - Diagnostics: `--diagnostics on --diagnostics-dir <dir>` writes a performance bundle, and a coverage manifest is written next to the ROM by default (`tools/play` passes `--no-coverage-manifest`).
 - For automated eyes, `--serve` starts the same run headlessly with the JSON debug server on port 19842 (`third_party/ndsrecomp/TCP.md`), and `tools/runwatch.py` drives it: it logs a timeline of vblank counts, ARM9/ARM7 PCs, DISPCNT for both engines and a hash per frame, writes a PNG plus a console-layout (top over bottom) montage whenever the screen changes, and — if the watched counter stops advancing — takes a stall report instead of waiting out the protocol's round cap.
 
@@ -227,18 +227,46 @@ build/windows-relwithdebinfo/third_party/ndsrecomp/runner/nds_runner.exe \
 
   Screenshots are ROM-derived output: keep them in the git-ignored `banks/` tree.
 
-Status: the pipeline is verified end-to-end — banks generate, link, and register against the ROM SHA-1 at run time, both CPUs execute, and the game boots from your ROM all the way to its **navigable main menu**. **All four titles boot to their intro and 3D title screen** (White, Black 2 and White 2 were played through the intro and watched on their title screens on a live window on 2026-10-16, each with its own bank group in the same runner); Black is the title driven all the way through the menu. `tools/play` opens the live SDL window: the top screen shows the Pokémon Company + Nintendo boot splash, the intro cinematic (Game Freak logo, castle/throne, Zekrom, cast), the title screen, and then the four-entry startup menu — NEW GAME / MYSTERY GIFT / NINTENDO WFC SETTINGS / MIC TEST — after an **A** press (Start does not advance the title). The selection bar moves under the D-pad, and A opens sub-screens (e.g. MYSTERY GIFT's own menu, with "Welcome to Mystery Gift!" on the bottom screen). This is **M2.5's gate, met 2026-10-16 on a live window** (Windows; Linux unverified). Presented frames run at roughly 45–50 per second (measured from the frontend's own soak counters): live and watchable, but below the guest's 59.83 Hz.
+#### Saves
 
-Two known limitations sit between here and M3:
+`tools/play` starts on the battery save and keeps it updated, so a run continues where the cartridge left off instead of always showing NEW GAME. Saves are **on by default**: the file is the ROM's own `<rom>.sav`, created on the first in-game save.
+
+```sh
+# just play - this loads and keeps roms/<your-rom>.sav
+pwsh tools/play.ps1
+sh tools/play.sh
+
+# a file you keep elsewhere (e.g. one exported from your own DS)
+pwsh tools/play.ps1 -Sav "banks/saves/black.sav"
+sh tools/play.sh --sav banks/saves/black.sav
+
+# write nothing: a blank 512 KiB cart in RAM
+pwsh tools/play.ps1 -NoSave
+sh tools/play.sh --no-save
+```
+
+A Gen 5 save on disk is the cartridge's **512 KiB flash image**; the game's own 0x24000-byte save (rotating blocks + checksums) lives inside it. That is why every `tools/play` run passes `--config re/config/frontend.toml`, which declares the `[cartridge]` chip as 512 KiB flash — without it the runner's historical 8 KiB EEPROM fallback rejects any 512 KiB file as an invalid size and the game's save init fails. The file has to be that full image; a tool that exports the raw backup chip (`.sav`, or an emulator's `.dsv`) produces one. The runner does not validate the save's contents — the game does — and it logs what it did (`[save] loaded 524288 bytes from …`), while `tools/play` prints the file it used as `save:` in its header.
+
+Persistence is **on by default**; `--no-save` (`-NoSave`) turns it off and leaves the same 512 KiB flash cartridge blank with no file behind it. If the save file does not exist yet you get a fresh cartridge that is written on the first in-game save. `-Save` / `--save` (no value) is the older spelling of `-Sav ""` / `--sav ""`, and `--save-path <file>` still works.
+
+Loading a save is also **how a session continues**: with one loaded, Black boots past the menu into the game and is playable, and the game's own saving round-trips to the file. The same save-capable configuration — the 512 KiB flash cartridge that `re/config/frontend.toml` declares — is what **NEW GAME** needs as well, with or without a save file attached; a run that leaves the cartridge at the runner's 8 KiB EEPROM default (a hand-rolled `nds_runner` invocation with no `--config`) still crashes on NEW GAME, and `tools/play` never does that.
+
+Saves are game data, so they stay out of the repo (`roms/` and `banks/` are git-ignored) — and because the runner rewrites the file in place whenever the game saves, keep your own copy of a save you care about.
+
+Status: the pipeline is verified end-to-end — banks generate, link, and register against the ROM SHA-1 at run time, both CPUs execute, and the game boots from your ROM all the way to its **navigable main menu**. **All four titles boot to their intro and 3D title screen** (White, Black 2 and White 2 were played through the intro and watched on their title screens on a live window on 2026-10-16, each with its own bank group in the same runner); Black is the title driven all the way through the menu. `tools/play` opens the live SDL window: the top screen shows the Pokémon Company + Nintendo boot splash, the intro cinematic (Game Freak logo, castle/throne, Zekrom, cast), the title screen, and then the four-entry startup menu — NEW GAME / MYSTERY GIFT / NINTENDO WFC SETTINGS / MIC TEST — after an **A** press (Start does not advance the title). The selection bar moves under the D-pad, and A opens sub-screens (e.g. MYSTERY GIFT's own menu, with "Welcome to Mystery Gift!" on the bottom screen). This is **M2.5's gate, met 2026-10-16 on a live window** (Windows; Linux unverified). Presented frames run at roughly 45–50 per second (measured from the frontend's own soak counters): live and watchable, but below the guest's 59.83 Hz. **Added 2026-10-18: the port reaches gameplay.** With a battery save loaded (see [Saves](#saves)) Black boots past the menu into a playable game and the game's own saving round-trips to the 512 KiB file; **NEW GAME reaches the game on the same save-capable build too** (the cartridge declared as 512 KiB flash, save file or not), while a save-less run that leaves the cartridge at the runner's 8 KiB EEPROM default still crashes on NEW GAME. Evidence: `re/notes/recompilation.md`.
+
+Three known limitations sit between here and M3:
 
 - The vendored runner's threaded 2D path wedges one scheduler round at ≈83.69 s of emulated time. `tools/play` works around it with `NDS_GPU2D_THREADED=0` (see the invocation note above).
 - The two ARM7 `[[alias]]` entries in `re/config/black.toml` are commented out: declaring them hangs the boot, so the ARM7 bank holds only the 49 discovered functions. The ARM9 seeds are unaffected and on.
+- A run that reaches the runner without the cartridge table — no `--config re/config/frontend.toml` — keeps the runner's 8 KiB EEPROM fallback and crashes on NEW GAME. `tools/play` always passes it, so this only affects hand-rolled invocations. See [Saves](#saves).
 
 See `re/notes/recompilation.md` and the M2.3/M2.5 entries in `Plan.md`.
 
 ### Troubleshooting
 
 - `refusing to start: dump verification failed` — add `--freebios`.
+- `[save] ignoring <file>: expected 8192 bytes, found 524288` — the run has no cartridge config, so the runner is still using its 8 KiB EEPROM fallback. `tools/play` always passes `--config re/config/frontend.toml`; a hand-rolled invocation has to pass it too; see [Saves](#saves).
 - `PKMNG5PC_BUILD_RUNNER=ON but no generated title banks were found` — run step 3 first; check `PKMNG5PC_BANKS_DIR` if the banks are somewhere else.
 - Two `ndsrecomp` tests are environment-sensitive on Windows and can fail without affecting the runner: `gpu2d_window_test` overflows the default thread stack (`0xC00000FD`; the `nds_runner` target gets a 64 MB stack, the test does not), and `live_index_lock_test` (Python-driven) is intermittent — its index writers sometimes fail to spawn.
 
