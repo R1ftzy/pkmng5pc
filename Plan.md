@@ -591,6 +591,23 @@ Do not vendor or copy their content; cite and reimplement.
 
 Newest first. Keep entries short; details and evidence live in `re/notes/`.
 
+- **2026-10-19 (an overlay-banking design pass: the mechanism exists, the boot
+  window can't show the win)** — before generating an overlay bank, verified
+  that the static dispatch already supports it: several banks per CPU
+  (`nds_register_dispatch`, `dispatch_lookup.h`), selection by validated live
+  span with generation collision as the documented case, and a runner build
+  that already expects an ahead-of-time overlay bank as a **second bank group
+  with the same ROM SHA-1** (`runner/CMakeLists.txt`). Black's overlay set:
+  **237** overlays, **3.26 MB** (4.8x the decoded ARM9 module), on 58 load
+  bases — **30 shared** by up to 30 generations. Feeding the decoded overlays
+  to the submodule's ingest resolves **9 more** page versions (19 → 10
+  unresolved) and removes **5** dumped-bytes runtime banks. But on the
+  post-ingest 1200-frame boot window the residual ARM9 interpreter work is
+  **66%** Black's runtime-materialized page at `0x01FF8000`, **23%** a module
+  coverage hole at `0x02077000`, and only **2.9%** overlays — so overlays stay
+  on the critical path for *gameplay* speed but the boot benchmark cannot size
+  it. `re/notes/recompilation.md` §"Overlays are bankable ahead of time".
+
 - **2026-10-19 (the ARM9 ingest lands on all four titles — the last per-frame
   interpreter cost for the module, closed)** — the coverage baseline below named
   the three finder-only titles as "one ingest away" and left Black paying 9.4

@@ -1411,3 +1411,96 @@ over Black's own corpus.
   and the digests. Medium on the speed-up transfer across titles (one window
   each, no interleaved A/B per title except Black's own before/after). Windows,
   RelWithDebInfo, `NDS_GPU2D_THREADED=0`.
+
+### Overlays are bankable ahead of time; at boot they are the small part of what is left (2026-10-19)
+
+The ARM9 ingest section above left the overlays as "the open bucket". This is
+the design pass over that bucket, before any bank is generated: whether the
+static bank mechanism can hold an overlay at all, what Black's overlays look
+like, and how much of the measured interpreter cost they actually carry.
+
+- **Observation (several banks per CPU are supported, and generation collision
+  is the design case).** `nds_register_dispatch()` appends to a per-CPU
+  `ctx.banks` vector and merges the table's rows into one flat
+  `dispatch_index` (`runtime_arm.cpp:990`, `dispatch_lookup.h:135`). Lookup
+  walks *every* candidate at an address and selects the one whose
+  `NdsStaticValidation` proves the largest live span, ties going to
+  registration order (`dispatch_lookup.h:40-77`); a row whose expected bytes no
+  longer match live RAM is simply `inactive` and the next candidate is tried.
+  The file's own contract names overlay generations at one address as the case
+  this exists for.
+
+- **Observation (the runner's build already anticipates an ahead-of-time
+  overlay group).** `runner/CMakeLists.txt:295-302` states that several bank
+  groups may carry the SAME ROM SHA-1, "how one cartridge gets banks from more
+  than one generated directory (e.g. the main image in one, an ahead-of-time
+  overlay bank in another, without regenerating or polluting either tree)".
+  Bank source names must contain `_arm9_`/`_arm7_` for CPU inference
+  (`:256-266`). So an overlay bank is a second group directory for the title's
+  existing SHA-1, not a change to the main image.
+
+- **Observation (the content-validated bank path *is* the overlay path).**
+  `--validate-live-bytes` emits the interior-entry fail-closed resume switch
+  "the overlay pipeline's content-validated banks rely on"
+  (`recompiler/tests/interior_entry_fail_closed_test.cpp:1-10`). An overlay
+  bank is therefore an ordinary validated bank whose `[program] load_address`
+  is the overlay table's `ram_address`; no new codegen mode, and nothing runs a
+  compiler at play time (ADR 0003).
+
+- **Observation (what Black's overlay set is).** Decoded from the ROM's ARM9
+  overlay table (`ram_address`, `ram_size`, and the FAT file, BLZ where the
+  entry's size field is non-zero): **237** overlays, **3,256,320** bytes
+  (3.26 MB) — 4.8x the 0x000A67C0-byte decoded ARM9 module — every one
+  decoding to exactly its declared size. They land on **58** distinct load
+  bases and **30** of those bases are *shared* by 2 to 30 overlays (30 at
+  `0x021F36C0` and again at `0x021F5260`). Generation collision is the norm, so
+  it is per-row byte validation, not the address, that must pick the live
+  generation. B2W2 are larger (344 overlays, 3.69 MB).
+
+- **Observation (overlays are ROM content; the ingest already resolves them).**
+  Built an ingest `--images` dir carrying the decoded `arm9.bin`/`arm7.bin`
+  and all 237 `overlays/*.bin` with `overlays.json` (`ram_address` as
+  `load_address`). Over Black's 12 checked-in manifests, captured page versions
+  resolved to ROM **90 → 99** of 109 and **not-in-ROM 19 → 10**; 156 entry
+  points that used to file under `arm9_unresolved` now name their overlay
+  (`ov009`/`ov010` @ `0x02155160`, `ov011` @ `0x02172BC0`, `ov088` @
+  `0x021B95A0`); and the dumped-bytes runtime banks the ingest writes drop
+  **15 → 10**. Those five banks were overlay content misread as runtime-
+  materialized code.
+
+- **Observation (how much of the boot residual overlays own).** Taking the
+  post-ingest Black window (`banks/bench/arm9seed2-black`: 727,268 interpreted
+  ARM9 instructions / 33,008 interpreter entries over 1200 frames) and
+  attributing each page by exact byte equality against the decoded images:
+
+  | owner (by guest page) | entries | share |
+  | --- | --- | --- |
+  | Black's runtime-materialized page at `0x01FF8000` | 21,753 | 65.9% |
+  | ARM9 **module** residual at `0x02077000` | 7,508 | 22.7% |
+  | runtime-materialized `0x021B6000` | 2,776 | 8.4% |
+  | **overlays** (`ov088` 658, `ov011` 225, `ov010` 57, `ov009` 31) | 971 | 2.9% |
+
+- **Inference (high on the mechanism, medium on the weights).** An overlay
+  bank needs no new machinery: decode the overlay, recompile it with
+  `--validate-live-bytes` at its `ram_address`, and register it as a second
+  bank group for the title's SHA-1. But on the boot window overlays are only
+  ~3% of what is *left*: the residual is dominated by Black's runtime-
+  materialized page at `0x01FF8000` (66%) and by a **module** coverage hole at
+  `0x02077000` (23% — an interior entry at `0x020777B8` that the bank's
+  `0x020777B0` row does not own; the post-ingest manifest does seed it, so this
+  is a re-ingest, not overlay work). Overlays are still what runs in menus and
+  battle, so banking them stays on the critical path for gameplay speed — the
+  boot window just cannot show the win.
+
+- **Unknown.** The overlay share over a *gameplay* window: every manifest on
+  disk is a 1200-frame boot window and there is no scripted input, so the
+  measured 3% is a lower bound. Whether `0x021B6000`'s page (8.4%) is an
+  overlay generation the byte match missed. Whether the 30-way shared bases
+  need a `registration-order.txt` for deterministic pick among equal-span rows.
+
+- **Confidence.** High on the bank/dispatch mechanics (cited by file:line), the
+  overlay table, and the page attributions (byte equality via the submodule's
+  own `rom_alias.RomImages`). Medium on the share column, which counts
+  interpreter *entries* (dispatch misses), not instructions — an entry is the
+  unit the ingest acts on, but instructions-per-entry is not constant. Windows,
+  RelWithDebInfo, `NDS_GPU2D_THREADED=0`.
