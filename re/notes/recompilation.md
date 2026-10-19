@@ -981,3 +981,107 @@ save-capable configuration, and leaves the historical default open.
   load-bearing. Windows only; the save-loaded run itself was not captured as a
   probe.
 
+### The ARM7 alias hang is a missing live-byte validation (2026-10-19) — resolved
+
+Closes the *Unknown (the mechanism)* of *The ARM7 alias banks are what stop the
+boot*. The two `[[alias]]` blocks are enabled again in `re/config/black.toml`.
+
+- **Observation (an alias range is not one module).** The coverage ingest that
+  proposed the two ARM7 aliases (`banks/coverage-ingest/ingest-report.json`)
+  reports the copy spans as *mostly* module content: it counts **17 page
+  versions whose bytes are not in the ROM** among the pages the spans cover, and
+  the `0x037F8000` span ends on the ARM7 WRAM pages (`0x03800000` among them).
+  The bytes the guest holds at those addresses are materialized at run time, so
+  the module's bytes are not what is there.
+- **Observation (the dispatch contract makes that fatal).** A dispatch row
+  emitted without validation carries a null validation pointer and is selected
+  on its address alone - rank 0, which
+  `runner/src/dispatch_lookup.h` documents as proving nothing about the bytes
+  currently at `pc`. So the alias bank ran module-derived bodies at addresses
+  where the guest held something else, which is the hang: `pc9=0x01FF8010`,
+  `vblank9=0`, ARM7 parked at `0x00001078`.
+- **Observation (the submodule's own precedent).** `PLAN.md` A1/A2 model exactly
+  this case: relocated ARM7/ARM9 code that is materialized at run time belongs in
+  a **content-validated** bank. `--validate-live-bytes` is the recompiler flag
+  that emits `&g_validation_<bank>__N` per row plus the `NdsStaticValidation`
+  tables, and `runtime_arm.cpp` gates each row on
+  `validation_identity_live`, i.e. `bus_range_has_write_provenance` +
+  `bus_live_bytes_equal` (`bus.cpp`).
+- **Observation (the rule).** `pkmn_bankgen` now appends `--validate-live-bytes`
+  to the recompiler invocation of every bank that declares at least one alias
+  (`tools/bankgen/main.cpp`; the same flag is printed by the `--emit-only`
+  hint). It is a consequence of the bank's own content, not a per-title switch.
+- **Observation (the emission is byte-accurate).** All **187** validation
+  structs emitted for `banks/black/bin/irbo_arm7_main.bin` compare equal to the
+  image at the mapped source offsets (`0x02380000`-relative); 0 mismatches
+  (`banks/scratch/alias_val_check.py`).
+- **Observation (coverage).** With the aliases validated, `pkmn_bankgen
+  --emit-only --title-config re/config/black.toml` gives arm9 **0** code_copy /
+  937 seeds and arm7 **2** code_copy / 1387 seeds / 0 dropped. The recompiled
+  arm7 bank is **3567 functions** (arm 3287 / thumb 280) in 8 body shards, and
+  the flag also changes body codegen - the log reads `45 BL sites expanded`.
+- **Observation (the boot is healthy again).** `tools/play -NoSave -Frames 280
+  -Stats` reports `frame_fnv=(f462d3ff20fd83f4,06be2b0d14dc4383)` - the
+  known-good pair - in every run so far (plain, `-Coverage`, and the four
+  `-Diagnostics` bench runs). The historical hang signature was
+  `(f5c5169d40c04383,f5c5169d40c04383)` with `vblank9=0`.
+- **Observation (the Tier-3 load collapses).** `tools/play -NoSave -Frames 280
+  -Stats -Coverage -Diagnostics` writes a manifest and a performance log per
+  run; `banks/scratch/bench.ps1` files them under `banks/bench/<tag>/`. The
+  interleaved pair below is the same 280-frame boot window, same runner, the
+  only difference being the ARM7 bank (`f462d3ff20fd83f4,06be2b0d14dc4383` in
+  all four runs, so the guest is bit-identical):
+
+| counter | `a*-baseline49` (49 fns) | `b*-validated` (3567 fns) |
+| --- | --- | --- |
+| `tier3_entries7` | 1,407,701 | **1,550** |
+| `tier3_insns7` | 35,154,815 | **24,813** |
+| `tier3_entries9` | 22,978 | 23,003 |
+| `tier3_insns9` | 684,389 | 684,389 |
+| ARM7 `cache_hit_absent` | 166.6K-204.2K / frame | 104-113 / frame |
+| ARM7 `tier3_arm7` (emu_attrib) | 23.4-29.5 ms/frame | **0.029-0.032 ms/frame** |
+
+  The ARM9 halves match to within noise, so the ARM7 column is the effect. The
+  alias code the ARM7 really runs (`a7=0x03806C14`/`0x03806C48` are the hot PCs)
+  is now executed natively instead of interpreted.
+- **Observation (it is a real win, measured A/B/A/B).** Emulated time for the
+  same 280 frames: baseline **8.480 s / 8.348 s**, validated **5.624 s /
+  5.568 s** - **-33.5%** (mean 8.414 s -> 5.596 s, i.e. 30.0 -> 20.0 ms/frame).
+  Presented rate 30.5/31.1 -> 41.7/41.3 fps. Audio stops starving: underruns
+  **220/202 -> 0/0** and `min_queue_frames` 7 -> 5026, and `slow32ms` 116/115 ->
+  10/9. The `frame_fnv` pair is identical in all four runs. *(An earlier draft of
+  this section compared the 280-frame window against the 250 M-cycle 2026-10-16
+  manifest; that was apples-to-oranges and is corrected by this table.)*
+- **Inference (high).** The hang was never a wrong CFG walk or a mis-keyed
+  function: it was a *rank-0* dispatch row, selected on address alone, claiming
+  bytes it had no right to claim. Content validation is what makes an alias bank
+  sound, and it is the submodule's documented answer for relocated code.
+- **Observation (what the ARM7 costs now).** With interpretation gone, the ARM7
+  is the *second* cost, not the first: `exec_arm7` 8.79-9.11 ms/frame against
+  `exec_arm9` 6.71-6.98 ms, `sched_other` ~2.3-2.7 ms, `tier3_arm9` 0.38-0.40 ms,
+  `raster2d` 0.37-0.40 ms. Inside `exec_arm7` the dispatch tail dominates:
+  `literal_fallthrough` ~44.3K events/frame, `literal_branch` ~14.2K,
+  `resume_dispatch` ~5.0K. *(Caveat: `emu_attrib`'s `exec_*` and `sched_*`
+  buckets are per-scheduler-round sampled estimates, so they only compare
+  *within* one run. The buckets the log marks `exact` - `tier3_*`, `raster2d`,
+  `dma_*` - are the ones that compare across the A/B, and they are the ones the
+  win is read from.)*
+- **Observation (`--coalesce-fallthroughs` has nothing to work with here).** The
+  pass that folds a body's fall-through into a local `goto` is gated in
+  `recompiler/src/main.cpp:build_superblocks` on `source == addr`, i.e. it skips
+  exactly the relocated rows an alias bank is made of. Run by hand on
+  `irbo_arm7_main` it reports `coalesced 40 fallthrough edges` - the 49
+  image-resident functions - against 2769 address-adjacent same-mode
+  function pairs in the bank, none of which cross a 4 KiB page. So the idea is
+  dead for this bank until the pass accepts relocated rows (upstream).
+- **Inference (medium).** Coverage and CPU cost are now separate problems: what
+  is left on the ARM7 is *host-side dispatch overhead on statically recompiled
+  code*, not interpretation. That is runner machinery, not bank content.
+- **Unknown.** What bounds gameplay (the 280-frame splash is a pathological
+  window - the ARM7 there is spinning in a poll loop with a control transfer
+  every ~8 guest cycles), and whether an equivalent alias treatment of the ARM9
+  ITCM span pays the same way.
+- **Confidence.** High on the mechanism, on the boot, and on the A/B: identical
+  digests, two interleaved pairs, and a 900-1400x Tier-3 drop. Medium on how the
+  numbers transfer to gameplay. Windows, RelWithDebInfo, one ROM.
+

@@ -14,31 +14,36 @@ id = "black"
 # reach the relocated code (the finder reports these bases as 'undeclared
 # alias candidates' until it is told).
 
-# BISECT 2026-10-16: the two ARM7 aliases are DISABLED - declaring them hangs the
-# boot even with no seeds (arm7 bank 236 fns, arm9 parked at pc9=0x01FF8010,
-# vblank9=0), while aliases off boots (arm7 bank 49 fns, splash b45f04f74705 at
-# t=6.27 s). So the alias bank's own code is the problem, not the 1387 seeds it
-# enables - without a declared alias those seeds drop as "outside image" anyway.
-# Evidence and the three-way comparison: re/notes/recompilation.md. Re-enable
-# when the alias code path is fixed; the 937 ARM9 seeds are unaffected and stay on.
+# BISECT 2026-10-16: the two ARM7 aliases were DISABLED because declaring them
+# hung the boot even with no seeds (arm7 bank 236 fns, arm9 parked at
+# pc9=0x01FF8010, vblank9=0), while aliases off booted (arm7 bank 49 fns, splash
+# b45f04f74705 at t=6.27 s). Root cause found 2026-10-19: an alias range is not
+# uniformly module content - it carries runtime-materialized pages (the coverage
+# ingest itself counts 17 page versions "not in ROM", and the ARM7 WRAM spans
+# contain pages at 0x03800000/0x03809000). A dispatch row with no validation is
+# selected on its address alone, so the bank ran module-derived code where the
+# guest held something else. pkmn_bankgen now recompiles an alias-declaring bank
+# with the recompiler's --validate-live-bytes, which makes every row prove the
+# bytes at the pc before it runs. Evidence and the three-way comparison:
+# re/notes/recompilation.md.
 
-# [[alias]]
-# cpu           = "arm7"
-# runtime_start = 0x02fe0000
-# source_start  = 0x02391a58
-# size          = 0x00017000
-# name          = "arm7_alias_02fe0000"
-# note          = "resident at a base no bank declares; recompile the module at this base, no dumped bytes required"
+[[alias]]
+cpu           = "arm7"
+runtime_start = 0x02fe0000
+source_start  = 0x02391a58
+size          = 0x00017000
+name          = "arm7_alias_02fe0000"
+note          = "resident at a base no bank declares; recompile the module at this base, no dumped bytes required"
 
 # 11 captured page(s); module 0x11A58..0x28A58 -> guest 0x02FE0000..0x02FF7000; declared base 0x02380000.
 
-# [[alias]]
-# cpu           = "arm7"
-# runtime_start = 0x037f8000
-# source_start  = 0x02380644
-# size          = 0x00011000
-# name          = "arm7_alias_037f8000"
-# note          = "resident at a base no bank declares; recompile the module at this base, no dumped bytes required"
+[[alias]]
+cpu           = "arm7"
+runtime_start = 0x037f8000
+source_start  = 0x02380644
+size          = 0x00011000
+name          = "arm7_alias_037f8000"
+note          = "resident at a base no bank declares; recompile the module at this base, no dumped bytes required"
 
 # 14 captured page(s); module 0x644..0x11644 -> guest 0x037F8000..0x03809000; declared base 0x02380000.
 

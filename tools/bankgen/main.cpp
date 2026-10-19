@@ -629,7 +629,9 @@ int main(int argc, char** argv)
             "(unless --emit-only) runs the recompiler once per bank. The generated\n"
             "bank directory is the one to pass as NDS_TITLE_BANK_DIR. --title-config\n"
             "adds the checked-in per-title aliases ([[code_copy]]), observed Tier-3\n"
-            "entry points ([[entry_point]]), and instruction patches ([[patch]]).\n");
+            "entry points ([[entry_point]]), and instruction patches ([[patch]]).\n"
+            "A bank declaring an alias is recompiled with --validate-live-bytes, so\n"
+            "its rows only run where the copy they describe is actually resident.\n");
         return 2;
     }
 
@@ -749,12 +751,22 @@ int main(int argc, char** argv)
     }
     std::filesystem::path title_dir = std::filesystem::path(title_config_path).parent_path();
 
+    // A bank that declares a relocated copy is recompiled with
+    // --validate-live-bytes: the copy spans guest addresses whose live bytes are
+    // not always the module's (an ARM7 WRAM span carries runtime-materialized
+    // pages), and a row with no validation dispatches on the address alone, so
+    // it would run module-derived code where the guest holds something else.
+    std::vector<std::string> validate_banks;
+
     for (const Image& image : images) {
         std::vector<TitleAlias> aliases;
         for (const TitleAlias& alias : title.aliases) {
             if (alias.cpu == image.cpu) {
                 aliases.push_back(alias);
             }
+        }
+        if (!aliases.empty()) {
+            validate_banks.push_back(image.bank);
         }
         std::vector<Seed> seeds;
         usize dropped = 0;
@@ -806,10 +818,14 @@ int main(int argc, char** argv)
         if (!emit_only) {
             std::printf("\nno --recompiler given; emitting only. Run:\n");
             for (const Image& image : images) {
-                std::printf("  nds_recompile --config %s --bin %s --out %s --bank %s --shards %d\n",
+                const bool validated
+                    = std::find(validate_banks.begin(), validate_banks.end(), image.bank)
+                    != validate_banks.end();
+                std::printf(
+                    "  nds_recompile --config %s --bin %s --out %s --bank %s --shards %d%s\n",
                     (config_dir / (image.bank + ".toml")).string().c_str(),
                     (bin_dir / (image.bank + ".bin")).string().c_str(), bank_dir.string().c_str(),
-                    image.bank.c_str(), shards);
+                    image.bank.c_str(), shards, validated ? " --validate-live-bytes" : "");
             }
         }
         return 0;
@@ -826,6 +842,10 @@ int main(int argc, char** argv)
         char shard_arg[32];
         std::snprintf(shard_arg, sizeof(shard_arg), " --shards %d", shards);
         command += shard_arg;
+        if (std::find(validate_banks.begin(), validate_banks.end(), image.bank)
+            != validate_banks.end()) {
+            command += " --validate-live-bytes";
+        }
         if (!run(command)) {
             return 1;
         }

@@ -571,6 +571,24 @@ Do not vendor or copy their content; cite and reimplement.
 
 Newest first. Keep entries short; details and evidence live in `re/notes/`.
 
+- **2026-10-19 (the ARM7 alias work lands, and it is a 33.5% boot win)** — the
+  two ARM7 `[[alias]]` blocks in `re/config/black.toml`, disabled since
+  2026-10-16 because declaring them hung the boot, are enabled again with the
+  root cause fixed: an *alias range is not uniformly module content* — it carries
+  run-time-materialized pages (the coverage ingest itself counts 17 page versions
+  "not in ROM"), and a dispatch row emitted without validation is selected on its
+  address alone, so the bank ran module code where the guest held something else.
+  `pkmn_bankgen` now recompiles any bank that declares an alias with the
+  recompiler's `--validate-live-bytes`, so every row proves the bytes at the pc
+  before it runs (`re/notes/recompilation.md` §"The ARM7 alias hang is a missing
+  live-byte validation"). Result: the ARM7 bank goes 49 → **3567 functions**,
+  Tier-3 ARM7 entries 1,407,701 → **1,550** over the same 280-frame window,
+  emulated time 8.414 s → **5.596 s (-33.5%)**, presented rate 31 → 42 fps, and
+  audio underruns **220 → 0**. The guest is bit-identical throughout
+  (`frame_fnv=(f462d3ff20fd83f4,06be2b0d14dc4383)` in all four interleaved runs).
+  **Scope:** Windows, Black only; the A/B is a boot window and the ARM9 ITCM span
+  still interprets.
+
 - **2026-10-18 (Black reaches gameplay — played by hand past the sync-facade
   halt)** — the NEW GAME transition used to park the ARM9 forever in the sync
   facade's own fatal-halt routine (`0x02088234`, halted at t=112.6 s emulated).
