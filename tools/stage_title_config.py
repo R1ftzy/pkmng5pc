@@ -8,6 +8,13 @@ copies the seed files into `re/config/` with the ROM hash and runner build id
 stripped (dump fingerprints do not belong in the repo) and writes the index that
 pkmn_bankgen turns into recompiler config, in two shapes:
 
+With `--overlays-only` it stages just the `arm9_ov*.toml` overlay seeds into the
+title's seed directory and leaves the title index alone. That is the safe mode
+to re-run at any time: a title's index and module seed union may be hand-edited
+(Black's module seed is a hand-merged union), and this mode never rewrites them.
+`pkmn_bankgen --overlays --overlay-seeds re/config/<title>/seeds` then picks the
+overlays up by their `arm9_ov` name, so no `[[seed_file]]` entry is needed.
+
 * an alias (`[[alias]]`) is a module copied at run time to a base no bank
   declares. It becomes a `[[code_copy]]` in that CPU's config, so the CFG walk
   follows the copy into the relocated code -- `source_start` is the module's own
@@ -76,7 +83,26 @@ def main():
     parser.add_argument("--ingest", required=True, help="ingest --out directory")
     parser.add_argument("--title", required=True, help="title id, e.g. black")
     parser.add_argument("--out", default="re/config")
+    parser.add_argument("--overlays-only", action="store_true",
+                        help="stage only the arm9_ov*.toml overlay seeds and leave the "
+                             "title index (and its hand-editable seeds) untouched")
     args = parser.parse_args()
+
+    if args.overlays_only:
+        seed_dir = os.path.join(args.out, args.title, "seeds")
+        os.makedirs(seed_dir, exist_ok=True)
+        staged = []
+        for name in sorted(os.listdir(os.path.join(args.ingest, "seeds"))):
+            if not name.startswith("arm9_ov"):
+                continue
+            with open(os.path.join(seed_dir, name), "w", encoding="utf-8",
+                      newline="\n") as f:
+                f.write(sanitize(os.path.join(args.ingest, "seeds", name)))
+            staged.append(name)
+        print(f"staged {len(staged)} overlay seed file(s) into {seed_dir}")
+        for name in staged:
+            print(f"  {args.title}/seeds/{name}")
+        return 0
 
     report = json.load(open(os.path.join(args.ingest, "ingest-report.json"),
                             encoding="utf-8"))

@@ -6,6 +6,7 @@
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -88,6 +89,11 @@ bool looks_blz(byte_span in, usize& decoded_size)
     return true;
 }
 
+struct Seed {
+    u32 addr = 0;
+    bool thumb = false;
+};
+
 struct Image {
     std::string bank;
     std::string label;
@@ -95,6 +101,11 @@ struct Image {
     u32 load_address = 0;
     u32 entry_pc = 0;
     std::vector<u8> bytes;
+    // An ARM9 overlay is a bank like any other, but it has no [[code_copy]] and
+    // is always content-validated: several overlays may share its load address,
+    // so a row must prove the live bytes before it runs.
+    bool overlay = false;
+    std::vector<Seed> overlay_seeds;
 };
 
 // The checked-in per-title config (re/config/<title>.toml). An alias is a module
@@ -130,11 +141,6 @@ struct TitleConfig {
     std::vector<TitleAlias> aliases;
     std::vector<TitleSeedFile> seed_files;
     std::vector<TitlePatch> patches;
-};
-
-struct Seed {
-    u32 addr = 0;
-    bool thumb = false;
 };
 
 std::string hex32(u32 value)
@@ -309,6 +315,13 @@ std::string hex8(u32 value)
     return buf;
 }
 
+std::string hex_offset(u32 value, int width)
+{
+    char buf[16];
+    std::snprintf(buf, sizeof(buf), "%0*X", width, value);
+    return buf;
+}
+
 std::optional<std::string> read_text(const std::filesystem::path& path)
 {
     std::ifstream file(path, std::ios::binary);
@@ -439,8 +452,8 @@ PatchOutcome patch_skip_call(std::string& text, const TitlePatch& patch, std::st
     lines.push_back("    g_cpu.R[15] = 0x" + next_label + "u;");
     lines.push_back("    runtime_tick(g_nds_active == NDS_ARM9 ? arm9_cycle_combine(_code_"
         + addr_label + ", _data_" + addr_label + ", _int_" + addr_label
-        + ", 0u) : arm7_cycle_combine(_cyc_" + addr_label + ", _data_" + addr_label
-        + ", 0u, (_int_" + addr_label + " != 0u)));");
+        + ", 0u) : arm7_cycle_combine(_cyc_" + addr_label + ", _data_" + addr_label + ", 0u, (_int_"
+        + addr_label + " != 0u)));");
     lines.push_back("    if (runtime_unwinding()) return;");
     if (block->ends_with_function) {
         lines.push_back("    /* fall-through to 0x" + next_label + " */");
@@ -477,7 +490,8 @@ PatchOutcome patch_stub_return(std::string& text, const TitlePatch& patch, std::
     lines.push_back("    uint32_t _bxt_" + addr_label + " = g_cpu.R[14];");
     lines.push_back("    g_cpu.R[15] = _bxt_" + addr_label + " & ((_bxt_" + addr_label
         + " & 1u) ? ~1u : ~3u);");
-    lines.push_back("    if (_bxt_" + addr_label + " & 1u) g_cpu.cpsr |= CPSR_T_BIT; else g_cpu.cpsr &= ~CPSR_T_BIT;");
+    lines.push_back("    if (_bxt_" + addr_label
+        + " & 1u) g_cpu.cpsr |= CPSR_T_BIT; else g_cpu.cpsr &= ~CPSR_T_BIT;");
     lines.push_back("    runtime_tick(g_nds_active == NDS_ARM9 ? arm9_refill_cycles(_bxt_"
         + addr_label + ") : arm7_refill_cycles(_bxt_" + addr_label + "));");
     lines.push_back("    if (runtime_unwinding()) return;");
@@ -585,6 +599,111 @@ std::string toml_for(const Image& image, const std::string& source_note,
     return out;
 }
 
+// One ARM9 overlay, decoded.  The overlay table declares where each loads
+// (ram_addr) and how big it is (ram_size); the bytes are the FAT member, BLZ
+// when the entry's size field is non-zero.
+std::optional<Image> load_overlay(
+    byte_span rom, const nds::Overlay& ov, const std::string& code, const std::string& title)
+{
+    auto data = nds::file_data(rom, ov.file_id);
+    if (!data || data->empty()) {
+        std::fprintf(stderr, "error: overlay %u file %u is missing\n", ov.id, ov.file_id);
+        return std::nullopt;
+    }
+    Image image;
+    image.overlay = true;
+    image.bank = code + "_arm9_ov" + hex_offset(ov.id, 3);
+    image.label = title + " overlay " + hex_offset(ov.id, 3);
+    image.cpu = "arm9";
+    image.load_address = ov.ram_addr;
+    if (ov.compressed()) {
+        image.bytes = compression::blz_decompress(*data);
+    } else {
+        image.bytes.assign(data->begin(), data->end());
+    }
+    if (image.bytes.size() != ov.ram_size) {
+        std::fprintf(stderr, "error: overlay %u decoded to 0x%zX, table says 0x%X\n", ov.id,
+            image.bytes.size(), ov.ram_size);
+        return std::nullopt;
+    }
+    return image;
+}
+
+// The overlays a coverage ingest resolved at least one entry point to.  The
+// finder is a CFG walk from its seeds, so an overlay with no observed entry has
+// nothing to bank; the ingest names each seed file arm9_ov<id>_<ram_base>.toml,
+// which is also what tells two overlays that share a load address apart.
+std::vector<Image> build_overlay_images(byte_span rom, const std::string& code,
+    const std::string& title, const std::filesystem::path& seed_dir)
+{
+    std::vector<Image> images;
+    std::error_code ec;
+    if (!std::filesystem::is_directory(seed_dir, ec)) {
+        std::fprintf(stderr, "warning: overlay seed dir '%s' is not a directory\n",
+            seed_dir.string().c_str());
+        return images;
+    }
+    std::vector<std::filesystem::path> seed_files;
+    for (const auto& entry : std::filesystem::directory_iterator(seed_dir, ec)) {
+        if (!entry.is_regular_file()) {
+            continue;
+        }
+        std::string stem = entry.path().stem().string();
+        if (stem.rfind("arm9_ov", 0) == 0) {
+            seed_files.push_back(entry.path());
+        }
+    }
+    std::sort(seed_files.begin(), seed_files.end());
+    for (const std::filesystem::path& seed_path : seed_files) {
+        std::string stem = seed_path.stem().string();
+        std::size_t split = stem.find('_', std::strlen("arm9_ov"));
+        if (split == std::string::npos) {
+            continue;
+        }
+        u32 id = static_cast<u32>(std::strtoul(stem.substr(7, split - 7).c_str(), nullptr, 10));
+        u32 base = static_cast<u32>(std::strtoul(stem.substr(split + 1).c_str(), nullptr, 16));
+        std::optional<nds::Overlay> ov;
+        for (usize i = 0; i < nds::overlay_count(rom); ++i) {
+            auto candidate = nds::overlay(rom, i);
+            if (candidate && candidate->id == id) {
+                ov = candidate;
+                break;
+            }
+        }
+        if (!ov) {
+            std::fprintf(stderr, "warning: %s names an overlay the ROM has no entry for\n",
+                seed_path.string().c_str());
+            continue;
+        }
+        if (ov->ram_addr != base) {
+            std::fprintf(stderr, "warning: %s says base 0x%X but the table says 0x%X; skipping\n",
+                seed_path.string().c_str(), base, ov->ram_addr);
+            continue;
+        }
+        std::vector<Seed> seeds;
+        for (const Seed& seed : read_seeds(seed_path)) {
+            if (seed.addr >= ov->ram_addr && (seed.addr - ov->ram_addr) < ov->ram_size) {
+                seeds.push_back(seed);
+            }
+        }
+        if (seeds.empty()) {
+            std::fprintf(stderr, "warning: %s has no seed inside the overlay; skipping\n",
+                seed_path.string().c_str());
+            continue;
+        }
+        auto image = load_overlay(rom, *ov, code, title);
+        if (!image) {
+            return images;
+        }
+        image->overlay_seeds = seeds;
+        image->entry_pc = seeds.front().addr;
+        std::printf("overlay      : %s load=0x%X size=0x%zX seeds=%zu\n", image->bank.c_str(),
+            image->load_address, image->bytes.size(), seeds.size());
+        images.push_back(std::move(*image));
+    }
+    return images;
+}
+
 bool run(const std::string& command)
 {
     std::printf("  $ %s\n", command.c_str());
@@ -624,6 +743,7 @@ int main(int argc, char** argv)
             "usage: pkmn_bankgen <rom.nds> <out-dir> [--recompiler <nds_recompile>]\n"
             "                    [--title-config <re/config/<title>.toml>]\n"
             "                    [--shards <n>] [--emit-only]\n"
+            "                    [--overlays --overlay-seeds <dir>]\n"
             "\n"
             "Writes decoded ARM9/ARM7 images and per-bank recompiler configs, then\n"
             "(unless --emit-only) runs the recompiler once per bank. The generated\n"
@@ -631,7 +751,9 @@ int main(int argc, char** argv)
             "adds the checked-in per-title aliases ([[code_copy]]), observed Tier-3\n"
             "entry points ([[entry_point]]), and instruction patches ([[patch]]).\n"
             "A bank declaring an alias is recompiled with --validate-live-bytes, so\n"
-            "its rows only run where the copy they describe is actually resident.\n");
+            "its rows only run where the copy they describe is actually resident.\n"
+            "--overlays adds one content-validated ARM9 bank per overlay that has an\n"
+            "observed seed file (arm9_ov<id>_<base>.toml) in --overlay-seeds.\n");
         return 2;
     }
 
@@ -639,8 +761,10 @@ int main(int argc, char** argv)
     std::filesystem::path out_dir = argv[2];
     std::string recompiler;
     std::string title_config_path;
+    std::string overlay_seeds_dir;
     int shards = 8;
     bool emit_only = false;
+    bool overlays = false;
 
     for (int i = 3; i < argc; ++i) {
         std::string arg = argv[i];
@@ -650,6 +774,10 @@ int main(int argc, char** argv)
             shards = std::atoi(argv[++i]);
         } else if (arg == "--title-config" && i + 1 < argc) {
             title_config_path = argv[++i];
+        } else if (arg == "--overlay-seeds" && i + 1 < argc) {
+            overlay_seeds_dir = argv[++i];
+        } else if (arg == "--overlays") {
+            overlays = true;
         } else if (arg == "--emit-only") {
             emit_only = true;
         } else {
@@ -728,6 +856,17 @@ int main(int argc, char** argv)
     }
     images.push_back(std::move(*arm7));
 
+    if (overlays) {
+        if (overlay_seeds_dir.empty()) {
+            std::fprintf(stderr, "error: --overlays needs --overlay-seeds <dir>\n");
+            return 2;
+        }
+        for (Image& image :
+            build_overlay_images(byte_span(rom), code, header->title, overlay_seeds_dir)) {
+            images.push_back(std::move(image));
+        }
+    }
+
     std::filesystem::path bin_dir = out_dir / "bin";
     std::filesystem::path config_dir = out_dir / "config";
     // out_dir doubles as the bank group directory the runner globs; the decoded
@@ -759,6 +898,27 @@ int main(int argc, char** argv)
     std::vector<std::string> validate_banks;
 
     for (const Image& image : images) {
+        if (image.overlay) {
+            // Overlay banks carry no alias and are always content-validated: two
+            // overlays routinely share a load address, so a row must prove the
+            // live bytes before it runs.
+            validate_banks.push_back(image.bank);
+            std::printf("%-4s         : overlay, %zu seed(s)\n", image.cpu.c_str(),
+                image.overlay_seeds.size());
+            std::filesystem::path ov_bin = bin_dir / (image.bank + ".bin");
+            std::filesystem::path ov_config = config_dir / (image.bank + ".toml");
+            if (!write_file(ov_bin, image.bytes)) {
+                std::fprintf(stderr, "error: could not write '%s'\n", ov_bin.string().c_str());
+                return 1;
+            }
+            if (!write_text(ov_config, toml_for(image, source_note, {}, image.overlay_seeds))) {
+                std::fprintf(stderr, "error: could not write '%s'\n", ov_config.string().c_str());
+                return 1;
+            }
+            std::printf(
+                "wrote        : %s + %s\n", ov_bin.string().c_str(), ov_config.string().c_str());
+            continue;
+        }
         std::vector<TitleAlias> aliases;
         for (const TitleAlias& alias : title.aliases) {
             if (alias.cpu == image.cpu) {
