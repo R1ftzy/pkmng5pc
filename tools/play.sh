@@ -19,7 +19,13 @@
 #   sh tools/play.sh --frames 600 --stats     # present 600 frames, print stats, exit
 #   sh tools/play.sh --sav banks/black.sav    # keep a different save file
 #   sh tools/play.sh --no-save                # blank 512 KiB cart, write nothing
+#   sh tools/play.sh --banks banks/white      # check another title's bank dir
 #   sh tools/play.sh --diagnostics            # keep a perf bundle in banks/play/
+#
+# --banks only moves the existence check -- the runner has its own bank
+# directory compiled in at configure time (PKMNG5PC_BANKS_DIR /
+# NDS_TITLE_BANK_DIRS). Pass the same directory here as the one the runner was
+# built with so a missing or stale bank set is reported before boot.
 #
 # --native hands the two screens to this project's own present/compositor
 # (`render/`, docs/adr/0006-ndsrecomp-native-present-hook.md) instead of the
@@ -46,6 +52,7 @@ root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 rom=${PKMNG5PC_ROM:-}
 runner=${PKMNG5PC_RUNNER:-}
 bios_dir=bios
+banks_dir=banks/black
 layout=stacked
 native=0
 frames=0
@@ -61,6 +68,7 @@ while [ $# -gt 0 ]; do
     --rom)      rom=$2; shift 2 ;;
     --runner)   runner=$2; shift 2 ;;
     --bios-dir) bios_dir=$2; shift 2 ;;
+    --banks)    banks_dir=$2; shift 2 ;;
     --layout)   layout=$2; shift 2 ;;
     --native)   native=1; shift ;;
     --frames)   frames=$2; shift 2 ;;
@@ -94,11 +102,16 @@ or pass --runner <path>."
 
 # --- banks ------------------------------------------------------------------
 
-banks="$root/banks/black"
+case $banks_dir in
+  /*|[A-Za-z]:*) banks=$banks_dir ;;
+  *)             banks="$root/$banks_dir" ;;
+esac
 set -- "$banks"/*_[0-9][0-9].c
 [ -e "$1" ] || fail "no generated title banks in $banks. Generate them first:
   build/linux-debug/tools/pkmn_bankgen \"roms/<your-rom>.nds\" banks/black \\
-      --recompiler third_party/ndsrecomp/recompiler/build/nds_recompile"
+      --recompiler third_party/ndsrecomp/recompiler/build/nds_recompile
+or point --banks at the directory the runner was configured with
+(PKMNG5PC_BANKS_DIR / NDS_TITLE_BANK_DIRS)."
 
 # --- ROM --------------------------------------------------------------------
 

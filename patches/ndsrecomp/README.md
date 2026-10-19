@@ -58,3 +58,25 @@ Six small sites, all behind `#if defined(PKMNG5PC_NATIVE_PRESENT)`:
 Nothing above changes guest execution, input, audio, pacing or the
 presented-frame digest ring: it is presentation, plus the pointer-coordinate
 conversion the replaced renderer used to perform.
+
+## 0002-libslirp-msvc-clang.patch
+
+`runner/vendor/melonds/net/libslirp/src/`: two upstream portability bugs in the
+vendored libslirp that only surface when the runner is built with plain LLVM
+Clang and the MSVC/UCRT headers (the toolchains `windows-*` presets document).
+There the POSIX names are not declared, and `-Wimplicit-function-declaration` is
+an error under C99 and later, so the `slirp` target does not compile:
+
+1. `tcp_subr.c`, `tcp_connect()`: the accepted socket in the "guest address not
+   available yet" path is closed with `close(s)`. Every other socket close in
+   the tree goes through `closesocket`, which `util.h` maps to the Winsock
+   wrapper on Windows; `close` on a socket is wrong there (and warns on POSIX).
+2. `tftp.c`: the read-only TFTP server works on POSIX file descriptors
+   (`open`/`lseek`/`read`/`close`). Under `_WIN32` they are aliased to the
+   underscored UCRT forms from `<io.h>` (`_open`/`_lseek`/`_read`/`_close`)
+   rather than relying on the deprecated non-ANSI aliases, which UCRT does not
+   declare for a `-std=gnu11` translation unit.
+
+Both changes are what upstream would take: they are correct on POSIX as well,
+and they need no guard macro. The vendored tree is GPL-3.0 through the melonDS
+GPL subtree, so the patch carries the same §5(a) purpose as 0001.

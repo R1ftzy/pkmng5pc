@@ -142,6 +142,31 @@ Run step 3 **once per ROM you own**; each run writes its own `banks/<title>/` an
 
 `re/config/` holds one config per ROM (`black.toml`, `white.toml`, `black2.toml`, `white2.toml`). The ARM7 module image is **byte-identical in all four titles**, so it is relocated to the same two bases and its observed entry points are the same list: the two `[[alias]]` blocks and the seeds under `re/config/arm7/seeds/` are shared by every title, and the ARM7 bank comes out identical for each (3567 functions). `pkmn_bankgen` recompiles any bank that declares an alias with `--validate-live-bytes`, which is what makes a relocated range sound — see `re/notes/recompilation.md` §"The ARM7 alias hang is a missing live-byte validation". The ARM9 half of a config is title-specific; every title now carries its own ARM9 seeds (`re/config/<title>/seeds/`).
 
+#### Another title: Black 2 / White 2
+
+Generating banks for another title is the same step with that title's config
+(and, optionally, another bank directory):
+
+```sh
+build/windows-debug/tools/pkmn_bankgen.exe \
+    "roms/<your-rom>.nds" banks/black2 \
+    --title-config re/config/black2.toml \
+    --recompiler third_party/ndsrecomp/recompiler/build/nds_recompile.exe
+```
+
+The bank directory's name is only a label: what wires it to the runner is
+`-DPKMNG5PC_BANKS_DIR=banks/black2` plus
+`-DPKMNG5PC_TITLE_ROM_SHA1=<that ROM's SHA-1>` (bankgen prints the SHA-1), or
+the multi-title form in step 4 when one binary should serve several titles.
+`tools/play` checks `banks/black` by default, so pass
+`-Banks banks/black2` (`--banks banks/black2` on Linux) when the runner was
+configured with a different directory, and run with
+`pwsh tools/play.ps1 -Rom "roms/<your-rom>.nds"`.
+`re/config/black2.toml` is Black 2-specific (it carries no `[[patch]]` and adds
+the ARM9 ITCM alias); never run a Black 2 ROM through `re/config/black.toml` —
+bankgen fails loudly on the unmatched patch by design
+(`docs/adr/0004-declared-bank-patches.md`).
+
 ### 4. Configure and build with the runner
 
 ```sh
@@ -194,6 +219,7 @@ sh tools/play.sh
 | --- | --- |
 | `--rom <path>` | use a specific ROM (`PKMNG5PC_ROM` also works) |
 | `--runner <path>` | use a specific runner (`PKMNG5PC_RUNNER` also works) |
+| `--banks <dir>` | check that title banks exist in `<dir>` instead of `banks/black` (`-Banks` in PowerShell); should match the directory the runner was configured with |
 | `--layout stacked\|separate` | one top-over-bottom window (default) or two windows |
 | `--native` | present the two screens through this project's own `render/` compositor (Vulkan) instead of the runner's SDL blit — see [Native present](#native-present) |
 | `--frames N` | present N frames, print fps and a frame hash, exit — a self-test |

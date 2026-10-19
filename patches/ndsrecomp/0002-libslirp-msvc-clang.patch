@@ -1,0 +1,32 @@
+diff --git a/runner/vendor/melonds/net/libslirp/src/tcp_subr.c b/runner/vendor/melonds/net/libslirp/src/tcp_subr.c
+index 3cfe286..7f1ee46 100644
+--- a/runner/vendor/melonds/net/libslirp/src/tcp_subr.c
++++ b/runner/vendor/melonds/net/libslirp/src/tcp_subr.c
+@@ -481,7 +481,7 @@ void tcp_connect(struct socket *inso)
+             addrlen = sizeof(addr);
+             s = accept(inso->s, (struct sockaddr *)&addr, &addrlen);
+             if (s >= 0) {
+-                close(s);
++                closesocket(s);
+             }
+             return;
+         }
+diff --git a/runner/vendor/melonds/net/libslirp/src/tftp.c b/runner/vendor/melonds/net/libslirp/src/tftp.c
+index 1b39692..ef01d95 100644
+--- a/runner/vendor/melonds/net/libslirp/src/tftp.c
++++ b/runner/vendor/melonds/net/libslirp/src/tftp.c
+@@ -29,6 +29,14 @@
+ #include <sys/stat.h>
+ #include <fcntl.h>
+ 
++#ifdef _WIN32
++#include <io.h>
++#define open _open
++#define close _close
++#define lseek _lseek
++#define read _read
++#endif
++
+ static inline int tftp_session_in_use(struct tftp_session *spt)
+ {
+     return (spt->slirp != NULL);

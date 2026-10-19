@@ -18,7 +18,13 @@
 #   pwsh tools/play.ps1 -Frames 600 -Stats    # present 600 frames, print stats, exit
 #   pwsh tools/play.ps1 -Sav "banks/black.sav"  # keep a different save file
 #   pwsh tools/play.ps1 -NoSave               # blank 512 KiB cart, write nothing
+#   pwsh tools/play.ps1 -Banks banks/white    # check another title's bank dir
 #   pwsh tools/play.ps1 -Diagnostics          # keep a perf bundle in banks/play/
+#
+# -Banks only moves the existence check -- the runner has its own bank
+# directory compiled in at configure time (PKMNG5PC_BANKS_DIR /
+# NDS_TITLE_BANK_DIRS). Pass the same directory here as the one the runner was
+# built with so a missing or stale bank set is reported before boot.
 #
 # -Native hands the two screens to this project's own present/compositor
 # (`render/`, docs/adr/0006-ndsrecomp-native-present-hook.md) instead of the
@@ -42,6 +48,7 @@ param(
   [string]$Rom,
   [string]$Runner,
   [string]$BiosDir = 'bios',
+  [string]$Banks = 'banks/black',
   [ValidateSet('stacked', 'separate')][string]$Layout = 'stacked',
   [switch]$Native,
   [int]$Frames = 0,
@@ -83,7 +90,7 @@ or pass -Runner <path>.
 
 # --- banks ------------------------------------------------------------------
 
-$banks = Join-Path $root 'banks/black'
+$banks = if ([System.IO.Path]::IsPathRooted($Banks)) { $Banks } else { Join-Path $root $Banks }
 $bodies = @(Get-ChildItem $banks -File -ErrorAction SilentlyContinue |
     Where-Object { $_.Name -match '_[0-9][0-9]\.c$' })
 if ($bodies.Count -eq 0) {
@@ -91,6 +98,8 @@ if ($bodies.Count -eq 0) {
 no generated title banks in $banks. Generate them first:
   build/windows-debug/tools/pkmn_bankgen.exe "roms/<your-rom>.nds" banks/black ``
       --recompiler third_party/ndsrecomp/recompiler/build/nds_recompile.exe
+or point -Banks at the directory the runner was configured with
+(PKMNG5PC_BANKS_DIR / NDS_TITLE_BANK_DIRS).
 "@
 }
 

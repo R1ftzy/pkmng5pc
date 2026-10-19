@@ -212,10 +212,13 @@ FreeBIOS + placeholder retail BIOS banks, and builds. Generated banks under
 
 Configure applies the tracked patches in `patches/ndsrecomp/` to the submodule
 (idempotently), so the superproject reports it as *modified content* by design:
-currently one — the guarded present hook behind `tools/play -Native`
-(`docs/adr/0006-ndsrecomp-native-present-hook.md`). Revert with
-`git -C third_party/ndsrecomp checkout .` and re-configure. The patched file
-still builds standalone (the hook compiles out without our build's macro), so
+two today — `0001-native-present-hook` (the guarded present hook behind
+`tools/play -Native`, `docs/adr/0006-ndsrecomp-native-present-hook.md`) and
+`0002-libslirp-msvc-clang` (POSIX fd/socket calls in the vendored libslirp,
+which only compile by accident on toolchains whose headers declare them). Revert
+with `git -C third_party/ndsrecomp checkout .` and re-configure. Both patched
+files still build standalone (the hook compiles out without our build's macro,
+and 0002 is a portability fix that is correct on POSIX too), so
 `bootstrap_ndsrecomp.*` needs no change.
 
 - **Unit tests:** format parsers, compression codecs, save checksums.
