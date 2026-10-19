@@ -207,8 +207,12 @@ constraints first:
       code. **ARM9 + ARM7 static banks now generate, link, and are wired into the
       build** (`pkmn_bankgen` → `banks/<title>/`, `PKMNG5PC_BUILD_RUNNER`); see
       `re/notes/recompilation.md`. Overlays are deliberately left to the runner's
-      live-overlay path. Discovery is uneven: ARM9 yields 5265 functions, ARM7
-      only 49, so most ARM7 code runs interpreted.
+      live-overlay path. Discovery is uneven: the ARM9 bank holds 5265 functions
+      without seeds (7175 with Black's 937 Tier-3 seeds), and the ARM7's 49
+      discovered functions become **3567** once its two relocated copies and the
+      shared Tier-3 seeds are declared. All four titles now use that ARM7 bank,
+      so the ARM7 no longer runs mostly interpreted; the ARM9 still does on the
+      three titles with no per-title ingest.
 - [x] Memory bus, CP15/TCM, WRAM, IRQ + timers, DMA, IPC/FIFO, SPI/firmware
       defaults; a **reimplemented BIOS** (FreeBIOS, `--freebios`) so no retail
       BIOS dump is required. Supplied by the adopted runner; now exercised by a
@@ -573,6 +577,23 @@ Do not vendor or copy their content; cite and reimplement.
 ## 8. Progress log
 
 Newest first. Keep entries short; details and evidence live in `re/notes/`.
+
+- **2026-10-19 (the ARM7 alias win is generalised to White, Black 2 and White 2)**
+  — the four Gen 5 ARM7 module images are **byte-identical**
+  (`36425935…`, `0x28F84`, load `0x02380000`), so the two relocated copies and
+  their 1387 observed entry points are a property of the module, not a title.
+  `re/config/{white,black2,white2}.toml` are new, the ARM7 seed files moved to a
+  shared `re/config/arm7/seeds/`, and every title's ARM7 bank is now **3567
+  functions**, byte-identical across the four titles modulo the bank name, each
+  recompiled with `--validate-live-bytes`. The three ARM9 halves stay
+  finder-only (5265 / 5865 / 5865). All three boot with the guest they had before
+  (White `frame_fnv=(749d014056024140,02da4c025df80383)`, unchanged from the
+  49-function bank; both B2W2 titles `(957b279301c98b19,02da4c025df80383)`), and
+  White's 1200-frame window drops 31.786 → **26.949 s** emulated and 473 → **348**
+  `slow32ms`. **Scope:** Windows, boot windows; the remaining interpreter cost is
+  the ARM9 (`tier3_arm9` 21-22 ms/frame on the three titles, against 0.40 on
+  Black). `re/notes/recompilation.md` §"The ARM7 aliases generalise to White,
+  Black 2 and White 2".
 
 - **2026-10-19 (the ARM7 alias work lands, and it is a 33.5% boot win)** — the
   two ARM7 `[[alias]]` blocks in `re/config/black.toml`, disabled since

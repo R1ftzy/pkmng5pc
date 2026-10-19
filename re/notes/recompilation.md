@@ -1085,3 +1085,73 @@ boot*. The two `[[alias]]` blocks are enabled again in `re/config/black.toml`.
   digests, two interleaved pairs, and a 900-1400x Tier-3 drop. Medium on how the
   numbers transfer to gameplay. Windows, RelWithDebInfo, one ROM.
 
+### The ARM7 aliases generalise to White, Black 2 and White 2 (2026-10-19)
+
+Carries the resolved ARM7 fix from `re/config/black.toml` to the other three
+titles. `re/config/{white,black2,white2}.toml` are new; the two ARM7 seed files
+that Black staged move to `re/config/arm7/seeds/` and are shared.
+
+- **Observation (the module is the same bytes in all four titles).**
+  `pkmn_bankgen` prints the decoded ARM7 image SHA-1 for every ROM; all four
+  report `364259352fffdcd15b75c2d9e997d2ed0d877190`, `raw 0x28F84 bytes`,
+  `load=0x02380000` (`banks/bankgen-{black,white,black2,white2}.log`). So the
+  relocated copies and the entry points observed inside them are a property of
+  the module, not of a title, and the two `[[alias]]` blocks plus the 1387 ARM7
+  seeds transfer verbatim. `re/config/arm7/seeds/` is where they now live;
+  `re/config/black.toml`, `white.toml`, `black2.toml` and `white2.toml` all
+  reference it, and each config notes that only its ARM9 half is title-specific.
+- **Observation (the aliases alone are not the win).** A probe with the two
+  `[[alias]]` blocks and *no* seeds gives `functions=236 (arm=234 thumb=2)` for
+  White's ARM7; adding the 1387 shared seeds gives `functions=3567 (arm=3287
+  thumb=280)`, exactly Black's bank. The seeds carry almost all of it — the
+  finder's walk over the relocated range only finds what the module's own flow
+  reaches, and the observed entry points are what reach the rest.
+- **Observation (per-title emission).** `pkmn_bankgen <rom> banks/<title>
+  --title-config re/config/<title>.toml` for each title reports arm9 `0
+  code_copy, 0 seed(s)` and arm7 `2 code_copy, 1387 seed(s), 0 dropped outside
+  image`; the ARM9 recompiles are unchanged (5265 / 5865 / 5865 functions, no
+  seeds), and every ARM7 bank is recompiled with `--validate-live-bytes`
+  (`banks/bankgen-{white,black2,white2}-generalise.log`).
+- **Observation (the four ARM7 banks are the same bank).** Normalising the bank
+  name out of the generated ARM7 sources, the 8 body shards, the dispatch and
+  the header hash identically for all four titles (e.g.
+  `irao_arm7_main_00.c` == `irbo_arm7_main_00.c` == `ireo_arm7_main_00.c` ==
+  `irdo_arm7_main_00.c`, and likewise for every shard). The win is Black's win,
+  replicated.
+- **Observation (the boots are healthy and White's guest is bit-identical).**
+  `tools/play -NoSave -Frames 1200 -Stats -Coverage -Diagnostics`. White before
+  the bank change and White after present the same digest
+  `frame_fnv=(749d014056024140,02da4c025df80383)`; Black 2 and White 2 present
+  `(957b279301c98b19,02da4c025df80383)`. No hang, no zero-`vblank9`.
+- **Observation (White's window speeds up; the ARM7 interpreter cost is gone).**
+  Same 1200-frame window, same flags, the only change being the ARM7 bank:
+
+  | counter | White, 49-fn ARM7 | White, 3567-fn ARM7 |
+  | --- | --- | --- |
+  | emulated time | 31.786 s (26.5 ms/frame) | **26.949 s (22.5 ms/frame)** |
+  | presented rate | 32.72 fps | 36.51 fps |
+  | `slow32ms` | 473 | **348** |
+  | audio underruns | 1687 | **1297** |
+
+  The saved 4.8 s is the ARM7 alias window (`tier3_arm7` after the change is
+  0.093-0.095 ms/frame on all three titles, against the 23.4-29.5 ms/frame it
+  cost Black before the fix); it is averaged over 1200 frames, most of which are
+  past the boot window that does the interpreting.
+- **Observation (what is left is the ARM9).** Over the same ~1180-frame samples
+  the three titles show `tier3_arm9` **20.9-22.0 ms/frame** and `tier3_insns9`
+  **120-121 M**, against Black's `tier3_arm9` 0.40 ms/frame. Their ARM9 banks
+  are finder-only; Black's carries the 937 Tier-3 seeds, and that is the whole
+  difference. So the ARM7 half of the interpreter cost is now closed on all four
+  titles, and the ARM9 half is open on three of them.
+- **Inference (high).** The generalisation is exact: identical image bytes,
+  identical config, byte-identical emitted bank, same digest. Nothing about it
+  is title-specific, and the shared seed directory is the honest expression of
+  that.
+- **Unknown.** How the three titles behave once their ARM9 is seeded (Black
+  needed a `skip_call` patch at `0x02075F7C` for a `lock_leave_raw` assert;
+  whether White / Black 2 / White 2 hit the same assert is not yet known), and
+  what the numbers do over a gameplay window rather than a boot.
+- **Confidence.** High on the bank identity and the boots; medium on the
+  speed-up transfer, since only White has an interleaved before/after and only at
+  one window length. Windows, RelWithDebInfo.
+

@@ -1,0 +1,59 @@
+# Per-title recompilation config for white.
+#
+# Addresses and reasoning only: no ROM bytes and no dump fingerprints.
+# The ARM7 half is shared across the four Gen 5 titles: the ARM7 module image
+# is byte-identical in all of them (same image SHA-1), so it is relocated to the
+# same bases and its observed entry points are the same list, kept once in
+# re/config/arm7/seeds/. Only the ARM9 half of a config is title-specific.
+
+[title]
+id = "white"
+
+# A module copied at run time to a base no bank declares. The module's own
+# guest address is declared_base + module_span_start, and the copy lives at
+# guest_span_start; both resolve from the module's bytes, so no dumped bytes
+# are needed. Declaring the copy is what lets the recompiler's CFG walk reach
+# the relocated code (the finder reports these bases as 'undeclared alias
+# candidates' until it is told).
+#
+# pkmn_bankgen recompiles an alias-declaring bank with --validate-live-bytes,
+# so every row proves the bytes at the pc before it runs: an alias range carries
+# runtime-materialized pages, and a row with no validation is selected on its
+# address alone. See re/notes/recompilation.md and re/config/black.toml.
+
+[[alias]]
+cpu           = "arm7"
+runtime_start = 0x02fe0000
+source_start  = 0x02391a58
+size          = 0x00017000
+name          = "arm7_alias_02fe0000"
+note          = "resident at a base no bank declares; recompile the module at this base, no dumped bytes required"
+
+# 11 captured page(s); module 0x11A58..0x28A58 -> guest 0x02FE0000..0x02FF7000; declared base 0x02380000.
+
+[[alias]]
+cpu           = "arm7"
+runtime_start = 0x037f8000
+source_start  = 0x02380644
+size          = 0x00011000
+name          = "arm7_alias_037f8000"
+note          = "resident at a base no bank declares; recompile the module at this base, no dumped bytes required"
+
+# 14 captured page(s); module 0x644..0x11644 -> guest 0x037F8000..0x03809000; declared base 0x02380000.
+
+# Observed Tier-3 entry points, replayed as [[entry_point]] seeds. Shared with
+# the other titles because the ARM7 module is byte-identical in all of them.
+
+[[seed_file]]
+cpu  = "arm7"
+path = "arm7/seeds/arm7_arm7_02fce5a8.toml"
+
+[[seed_file]]
+cpu  = "arm7"
+path = "arm7/seeds/arm7_arm7_037f79bc.toml"
+
+# The ARM9 half stays finder-discovered only: this title has no per-title
+# Tier-3 ingest yet, and the ARM9 module differs between titles. Addresses that
+# resolve to no ROM page (the ITCM copy and other runtime-materialized code)
+# likewise stay out of a ROM-backed bank; they need the captured-bytes bank,
+# which is ROM-derived and never checked in.

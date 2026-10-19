@@ -127,7 +127,7 @@ build/windows-debug/tools/pkmn_bankgen.exe \
 | Output | Meaning |
 | --- | --- |
 | `irbo_arm9_main_00..07.c`, `irbo_arm9_main_dispatch.c` | ARM9 bank: 7175 functions (5265 discovered + the 937 seeded entry points), 8 shards |
-| `irbo_arm7_main_00..07.c`, `irbo_arm7_main_dispatch.c` | ARM7 bank: 49 discovered functions |
+| `irbo_arm7_main_00..07.c`, `irbo_arm7_main_dispatch.c` | ARM7 bank: 3567 functions (49 discovered, then the two relocated copies and the 1387 shared seeds), 8 shards, recompiled with `--validate-live-bytes` |
 | `bin/*.bin`, `config/*.toml` | decoded images and recompiler configs |
 
 `pkmn_bankgen` derives every input from the ROM (load address, size and entry point come from the header and overlay table), so nothing ROM-derived is hand-written or committed. Options:
@@ -140,7 +140,7 @@ Only ARM9 + ARM7 static banks are generated. Overlays are deliberately left to t
 
 Run step 3 **once per ROM you own**; each run writes its own `banks/<title>/` and prints the directory to pass as `NDS_TITLE_BANK_DIR`. Because the runner registers one bank group per ROM SHA-1 (see step 4), a single runner binary can carry several titles at once.
 
-The ARM7 `[[alias]]` entries in `re/config/black.toml` are currently **commented out** (with the reasoning at the site): declaring them hangs the boot, so the generated ARM7 bank holds only the 49 discovered functions. The ARM9 half of the config is on. See `re/notes/recompilation.md` §"The ARM7 alias banks".
+`re/config/` holds one config per ROM (`black.toml`, `white.toml`, `black2.toml`, `white2.toml`). The ARM7 module image is **byte-identical in all four titles**, so it is relocated to the same two bases and its observed entry points are the same list: the two `[[alias]]` blocks and the seeds under `re/config/arm7/seeds/` are shared by every title, and the ARM7 bank comes out identical for each (3567 functions). `pkmn_bankgen` recompiles any bank that declares an alias with `--validate-live-bytes`, which is what makes a relocated range sound — see `re/notes/recompilation.md` §"The ARM7 alias hang is a missing live-byte validation". The ARM9 half of a config is title-specific; only Black carries ARM9 seeds so far.
 
 ### 4. Configure and build with the runner
 
@@ -258,7 +258,7 @@ Status: the pipeline is verified end-to-end — banks generate, link, and regist
 Three known limitations remain:
 
 - The vendored runner's threaded 2D path wedges one scheduler round at ≈83.69 s of emulated time. `tools/play` works around it with `NDS_GPU2D_THREADED=0` (see the invocation note above).
-- The two ARM7 `[[alias]]` entries in `re/config/black.toml` are commented out: declaring them hangs the boot, so the ARM7 bank holds only the 49 discovered functions. The ARM9 seeds are unaffected and on.
+- The ARM9 half of `re/config/white.toml`, `black2.toml` and `white2.toml` is finder-only (5265 / 5865 / 5865 functions, no per-title Tier-3 seeds), so those three titles run most of their ARM9 code through the interpreter; Black, whose ARM9 carries 937 seeded entry points (7175 functions), does not. Capturing a per-title coverage manifest and staging it with `tools/stage_title_config.py` is the next step.
 - A run that reaches the runner without the cartridge table — no `--config re/config/frontend.toml` — keeps the runner's 8 KiB EEPROM fallback and crashes on NEW GAME. `tools/play` always passes it, so this only affects hand-rolled invocations. See [Saves](#saves).
 
 See `re/notes/recompilation.md` and the M2.3/M2.5/M3 entries in `Plan.md`.

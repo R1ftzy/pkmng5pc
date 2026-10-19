@@ -21,6 +21,12 @@ hold addresses that resolved to no ROM page at all -- runtime-materialized code
 such as the ITCM copy -- and cannot be seeded into a ROM-backed bank; they need
 the captured-bytes bank the ingest also writes, whose bytes stay git-ignored.
 
+The ARM7 half of an ingest is not title-specific: the ARM7 module image is
+byte-identical in all four Gen 5 titles, so it relocates to the same bases and
+its observed entry points are one shared list. Those live once in
+`re/config/arm7/seeds/` and every title's config references them; merge a staged
+title's ARM7 seeds into that shared set instead of keeping a per-title copy.
+
     python tools/stage_title_config.py --ingest banks/coverage-ingest --title black
 """
 

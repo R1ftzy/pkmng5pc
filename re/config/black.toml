@@ -47,15 +47,19 @@ note          = "resident at a base no bank declares; recompile the module at th
 
 # 14 captured page(s); module 0x644..0x11644 -> guest 0x037F8000..0x03809000; declared base 0x02380000.
 
-# Observed Tier-3 entry points, replayed as [[entry_point]] seeds.
+# Observed Tier-3 entry points, replayed as [[entry_point]] seeds. The ARM7
+# module is byte-identical across the four Gen 5 titles (same image SHA-1), so
+# it is relocated to the same bases and its observed entry points are shared:
+# re/config/arm7/seeds/ serves every title's config, and only the ARM9 half
+# below is title-specific.
 
 [[seed_file]]
 cpu  = "arm7"
-path = "black/seeds/arm7_arm7_02fce5a8.toml"
+path = "arm7/seeds/arm7_arm7_02fce5a8.toml"
 
 [[seed_file]]
 cpu  = "arm7"
-path = "black/seeds/arm7_arm7_037f79bc.toml"
+path = "arm7/seeds/arm7_arm7_037f79bc.toml"
 
 [[seed_file]]
 cpu  = "arm9"
