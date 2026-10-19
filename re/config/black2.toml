@@ -41,8 +41,25 @@ note          = "resident at a base no bank declares; recompile the module at th
 
 # 14 captured page(s); module 0x644..0x11644 -> guest 0x037F8000..0x03809000; declared base 0x02380000.
 
-# Observed Tier-3 entry points, replayed as [[entry_point]] seeds. Shared with
-# the other titles because the ARM7 module is byte-identical in all of them.
+# The ARM9 crt0 stub the game copies to ITCM is not runtime-materialized after
+# all: its bytes are verbatim arm9.bin, so the copy resolves to a module and can
+# be declared like any other relocated range (Black's ingest could not place the
+# same page; Black 2 and White 2 can). The observed entry points inside it are
+# staged as arm9 seeds below.
+
+[[alias]]
+cpu           = "arm9"
+runtime_start = 0x01ff8000
+source_start  = 0x0209d740
+size          = 0x00001000
+name          = "arm9_alias_01ff8000"
+note          = "resident at a base no bank declares; recompile the module at this base, no dumped bytes required"
+
+# 1 captured page(s); module 0x99740..0x9A740 -> guest 0x01FF8000..0x01FF9000; declared base 0x02004000.
+
+# Observed Tier-3 entry points, replayed as [[entry_point]] seeds. The ARM7 half
+# is shared with the other titles because the ARM7 module is byte-identical in
+# all of them; the ARM9 half is title-specific.
 
 [[seed_file]]
 cpu  = "arm7"
@@ -52,8 +69,19 @@ path = "arm7/seeds/arm7_arm7_02fce5a8.toml"
 cpu  = "arm7"
 path = "arm7/seeds/arm7_arm7_037f79bc.toml"
 
-# The ARM9 half stays finder-discovered only: this title has no per-title
-# Tier-3 ingest yet, and the ARM9 module differs between titles. Addresses that
-# resolve to no ROM page (the ITCM copy and other runtime-materialized code)
-# likewise stay out of a ROM-backed bank; they need the captured-bytes bank,
-# which is ROM-derived and never checked in.
+# The ARM9 half is title-specific (its module differs from every other title's),
+# so Black 2 has its own observed Tier-3 entry points from a Black 2 coverage
+# manifest: the 1957 arm9@0x02004000 entry points plus the 29 inside the ITCM
+# copy declared above, plus the starts of the 1880 interpreted spans the finder
+# never reaches.
+# Addresses that resolved to no ROM page (other runtime-materialized code) stay
+# in the ingest output: they need the captured-bytes bank, which is ROM-derived
+# and never checked in.
+
+[[seed_file]]
+cpu  = "arm9"
+path = "black2/seeds/arm9_arm9_01f5e8c0.toml"
+
+[[seed_file]]
+cpu  = "arm9"
+path = "black2/seeds/arm9_arm9_02004000.toml"

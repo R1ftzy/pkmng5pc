@@ -208,14 +208,18 @@ constraints first:
       build** (`pkmn_bankgen` → `banks/<title>/`, `PKMNG5PC_BUILD_RUNNER`); see
       `re/notes/recompilation.md`. Overlays are deliberately left to the runner's
       live-overlay path. Discovery is uneven: the ARM9 bank holds 5265 functions
-      without seeds (7175 with Black's 937 Tier-3 seeds), and the ARM7's 49
-      discovered functions become **3567** once its two relocated copies and the
-      shared Tier-3 seeds are declared. All four titles now use that ARM7 bank,
-      so the ARM7 no longer runs mostly interpreted; the ARM9 still does on the
-      three titles with no per-title ingest (measured: 101-105 k interpreted
-      ARM9 instructions/frame there against 2.7 k on Black - `tier3_arm9` 21.5
-      vs 0.4 ms/frame). By static code volume only about 1/5 of the game's ARM
-      code is banked at all; the 3.3 MB of overlays is not.
+      without seeds, and the ARM7's 49 discovered functions become **3567** once
+      its two relocated copies and the shared Tier-3 seeds are declared. All four
+      titles now use that ARM7 bank, and **since 2026-10-19 all four carry their
+      own ARM9 Tier-3 seeds too** (Black 8422 functions, White 8438, B2/W2
+      9553/9464; Black 2 and White 2 additionally declare the ITCM crt0 copy as
+      an ARM9 `[[alias]]`, because there its byte content is the ARM9 module
+      itself). Interpreted ARM9 instructions per boot frame fall from 101-105 k
+      to **635-645** on all four, `tier3_arm9` from ~21 ms to **0.03-0.06
+      ms/frame**, with each title's presented-frame digest unchanged - the
+      details and the counter tables are in `re/notes/recompilation.md`
+      §"The ARM9 ingest lands on all four titles". By static code volume about
+      1/5 of the game's ARM code is banked at all; the 3.3 MB of overlays is not.
 - [x] Memory bus, CP15/TCM, WRAM, IRQ + timers, DMA, IPC/FIFO, SPI/firmware
       defaults; a **reimplemented BIOS** (FreeBIOS, `--freebios`) so no retail
       BIOS dump is required. Supplied by the adopted runner; now exercised by a
@@ -586,6 +590,31 @@ Do not vendor or copy their content; cite and reimplement.
 ## 8. Progress log
 
 Newest first. Keep entries short; details and evidence live in `re/notes/`.
+
+- **2026-10-19 (the ARM9 ingest lands on all four titles — the last per-frame
+  interpreter cost for the module, closed)** — the coverage baseline below named
+  the three finder-only titles as "one ingest away" and left Black paying 9.4
+  ms/frame of ARM9 Tier-3. Both are now done, per title: a plain
+  `bankgen --emit-only` supplies the decoded images, each title's own 1200-frame
+  coverage manifest goes through the submodule's
+  `ingest_coverage_manifests.py` with the title's current dispatch as
+  `--owned-rows`, `tools/stage_title_config.py` stages the ARM9 seed file (the
+  ARM7 half stays shared), and the bank is regenerated. Black additionally
+  re-ingested **all twelve** manifests on disk against its current bank, and
+  what is checked in is the union of that output with the old seeds (1509
+  addresses). A new finding from the same run: **Black 2's and White 2's ITCM
+  crt0 page is verbatim ARM9 module bytes** (guest `0x01FF8000` = module
+  `0x99740` / `0x99780`), so it is declared as an ARM9 `[[alias]]` — Black's own
+  page at that address is different bytes and stays interpreter-only. Result, on
+  one unchanged 1200-frame boot window per title: interpreted ARM9 instructions
+  per frame **101-105 k → 635-645** (Black 103 k → 635), `tier3_arm9` **21.5 →
+  0.03-0.06 ms/frame**, `emu` **29 → 4.3-4.8 ms/frame**, presented rate **32.5 →
+  59.7 fps** on the three titles (Black 60.8 → 59.9), White's `slow32ms` 348 → 2
+  and underruns 1297 → **0**, and **every title's presented-frame digest is
+  unchanged** (`749d014056024140` / `957b279301c98b19`). Scope: Windows,
+  boot/intro windows only — the overlays, which are what runs in menus and
+  battle, are untouched and remain the open bucket.
+  `re/notes/recompilation.md` §"The ARM9 ingest lands on all four titles".
 
 - **2026-10-19 (a coverage baseline: what is recompiled and what still costs)**
   — no new run; a snapshot assembled from the manifests and soak counters

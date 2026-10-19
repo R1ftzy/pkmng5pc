@@ -52,8 +52,14 @@ path = "arm7/seeds/arm7_arm7_02fce5a8.toml"
 cpu  = "arm7"
 path = "arm7/seeds/arm7_arm7_037f79bc.toml"
 
-# The ARM9 half stays finder-discovered only: this title has no per-title
-# Tier-3 ingest yet, and the ARM9 module differs between titles. Addresses that
-# resolve to no ROM page (the ITCM copy and other runtime-materialized code)
-# likewise stay out of a ROM-backed bank; they need the captured-bytes bank,
-# which is ROM-derived and never checked in.
+# The ARM9 half is title-specific (its module differs from every other title's),
+# so White has its own observed Tier-3 entry points from a White coverage
+# manifest: the 1534 entry points plus the starts of the 1478 interpreted spans
+# that the finder never reaches.
+# Addresses that resolved to no ROM page (the ITCM copy and other
+# runtime-materialized code) stay in the ingest output: they need the
+# captured-bytes bank, which is ROM-derived and never checked in.
+
+[[seed_file]]
+cpu  = "arm9"
+path = "white/seeds/arm9_arm9_02004000.toml"
