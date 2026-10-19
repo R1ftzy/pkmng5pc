@@ -212,7 +212,10 @@ constraints first:
       discovered functions become **3567** once its two relocated copies and the
       shared Tier-3 seeds are declared. All four titles now use that ARM7 bank,
       so the ARM7 no longer runs mostly interpreted; the ARM9 still does on the
-      three titles with no per-title ingest.
+      three titles with no per-title ingest (measured: 101-105 k interpreted
+      ARM9 instructions/frame there against 2.7 k on Black - `tier3_arm9` 21.5
+      vs 0.4 ms/frame). By static code volume only about 1/5 of the game's ARM
+      code is banked at all; the 3.3 MB of overlays is not.
 - [x] Memory bus, CP15/TCM, WRAM, IRQ + timers, DMA, IPC/FIFO, SPI/firmware
       defaults; a **reimplemented BIOS** (FreeBIOS, `--freebios`) so no retail
       BIOS dump is required. Supplied by the adopted runner; now exercised by a
@@ -583,6 +586,26 @@ Do not vendor or copy their content; cite and reimplement.
 ## 8. Progress log
 
 Newest first. Keep entries short; details and evidence live in `re/notes/`.
+
+- **2026-10-19 (a coverage baseline: what is recompiled and what still costs)**
+  — no new run; a snapshot assembled from the manifests and soak counters
+  already in `banks/bench/` plus the ROM's overlay table. Banked statically:
+  the ARM9 module (Black **7175** functions, White 5265, B2/W2 5865) and the
+  ARM7 image (**3567** on all four). Not banked at all: the **237** (B/W) /
+  **344** (B2/W2) ARM9 overlays, 3.26 / 3.69 MB of code+data — **4.8x / 5.8x
+  the decoded ARM9 module** — all of which runs through the interpreter
+  (`live_overlay.active=false` in every measured run), so only about **1/5** of
+  the game's ARM code by volume has a bank. Per frame, interpreted instructions:
+  ARM7 **97** (was 163,511 before the alias work, now closed on all four), ARM9
+  **2,663** on Black but **101,471 / 104,533 / 103,811** on the three
+  finder-only titles. White's steady-state frame is `tier3_arm9` **21.5** of
+  30.8 ms (~32.5 fps), ~217 ns per interpreted instruction against a few ns
+  natively; the graphics models cost `raster2d` 1.06 ms/frame and the 3D GE is
+  idle in these windows. Inference: the ARM9 ingest takes the three titles to
+  ~9.7 ms/frame (~100 fps); overlays are the remaining unbounded bucket.
+  **Scope:** boot/intro windows only, one tight measurement per title; no
+  gameplay window was measured. `re/notes/recompilation.md` §"What is
+  recompiled, and what still costs".
 
 - **2026-10-19 (the ARM7 alias win is generalised to White, Black 2 and White 2)**
   — the four Gen 5 ARM7 module images are **byte-identical**

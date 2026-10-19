@@ -1227,3 +1227,87 @@ section records what that cost and how it was closed.
   run has used adaptive widths).
 - **Confidence.** High on the mechanism, the parity, and the guest digests.
   Windows, RelWithDebInfo, Black, boot window.
+
+
+### What is recompiled, and what still costs (2026-10-19)
+
+A coverage snapshot of where the guest's work goes, derived entirely from files
+already on disk — the manifests' `static_coverage` (`banks/bench/*/coverage.json`)
+and the soak counters (`banks/bench/*/performance.jsonl`, `emu_attrib`), plus the
+overlay table read straight from the ROM header. No run was made for it;
+`banks/scratch/est_coverage.py`, `est_buckets.py` and `est_overlays.py` re-print
+these tables from those files.
+
+- **Observation (the static banks).**
+
+  | | ARM9 main module | ARM7 image (+ its two relocated copies) |
+  | --- | --- | --- |
+  | decoded size | 681,920 (B/W); 633,856 / 633,920 (B2/W2) | 167,812, identical in all four |
+  | functions banked | Black 7175; White 5265; B2 5865; W2 5865 | 3567 in all four |
+  | guest base | `0x02004000` | `0x02380000` + `0x02FE0000` + `0x037F8000` |
+  | spans still interpreted | Black: 874 / 5,182 B | 1,036 / 13,602 B |
+
+  Counted from the generated bodies (`/* 0x… mode=…` in
+  `banks/<title>/*_{arm9,arm7}_main_*.c`); the interpreted spans are
+  `banks/coverage-ingest/interpreted-ranges.json`.
+
+- **Observation (overlays are not banked at all).** The ARM9 overlay table
+  (header `0x50` offset / `0x54` size, 32-byte entries) holds **237** entries in
+  B/W and **344** in B2/W2, whose `ram_size` totals **3,256,320 B** (B/W) and
+  **3,689,824 B** (B2/W2) — **4.8x and 5.8x the whole decoded ARM9 module**. They
+  are the runner's runtime live-overlay path, and every measured run reports
+  `live_overlay.active=false, registered_banks=0`, so overlay code is interpreted
+  in full. By static code volume about **1/5** of the game's ARM code (0.85 MB of
+  ARM9+ARM7) has a bank.
+
+- **Observation (interpreted instructions per frame, exact).**
+
+  | run | ARM9 | ARM7 |
+  | --- | --- | --- |
+  | Black, 49-function ARM7 bank | 3,183 | 163,511 |
+  | Black, ARM7 aliases + seeds | 2,663 | 97 |
+  | White | 101,471 | 337 |
+  | Black 2 | 104,533 | 346 |
+  | White 2 | 103,811 | 343 |
+
+  (manifest totals divided by presented frames). The ARM7 gap is closed on all
+  four titles; the ARM9 gap is closed only on Black, whose bank carries the 937
+  Tier-3 seeds. The three finder-only banks pay ~101-105 k interpreted ARM9
+  instructions per frame against Black's 2.7 k.
+
+- **Observation (the frame budget, White, steady state,
+  `ms_per_frame`).** `tier3_arm9` **21.5** (max 27.2), `exec_arm9` 3.0,
+  `exec_arm7` 2.3, `sched_other` 2.2, `raster2d` **1.06**, `dma_arm9` 0.73, `spu`
+  0.17, `display` 0.20, `tier3_arm7` 0.08, `gpu3d_frame` 0.014, `geometry` 0.0;
+  accounted 30.8 ms/frame at ~32.5 fps. At 67.03 MHz and 59.8261 Hz the guest
+  issues 1,120,380 ARM9 cycles/frame, so the interpreter spends ~21.5 ms to
+  execute ~101 k instructions — about **217 ns/instruction** in this build
+  against a few ns natively.
+
+- **Observation (what the graphics path costs).** Every pixel still comes from
+  the runner's device models: the 2D rasteriser is `raster2d` 1.06 ms/frame
+  (`gpu2d_render_ns` 1.04 s over 1,183 frames), and the 3D GE is the vendored
+  melonDS soft rasteriser, untaxed in these windows (`gpu3d_frame` 0.014,
+  `geometry` 0.0 — boot/intro does not reach it). `NDS_ENABLE_COMPUTE_RENDERER`
+  is `OFF`, and that OpenGL compute/HD path presents through its own GL surface
+  rather than our seam. `render/` owns only the final present (ADR 0005/0006).
+
+- **Inference (high).** The three finder-only titles are one ingest away from
+  Black's numbers: same finder, same tooling, same measured outcome when the
+  seeds land. Replacing 101 k interpreted instructions/frame at ~217 ns with
+  native code at a few ns takes `tier3_arm9` 21.5 → ~0.4 ms, i.e. ~30.8 →
+  ~9.7 ms/frame, comfortably past the guest's 59.83 Hz. Overlays remain the
+  unbounded bucket and need the live-overlay backend enabled (or the hot
+  overlays banked) before "native speed" is true in menus and battle, where the
+  code is not the ARM9 module at all.
+
+- **Unknown.** The interpreted shares over a *gameplay* window (every number
+  here is a boot/intro window, which understates the overlay share), whether the
+  three titles need their own `[[patch]]` the way Black needed `skip_call` at
+  `0x02075F7C`, and how much of the 101 k is reachable by seeds versus by the
+  17 page versions that resolve to no ROM page.
+
+- **Confidence.** High on the manifests, the bank counts and the overlay table
+  (all read from files or the ROM header). Medium on the per-frame budget, which
+  is one window on one title, and on the extrapolation, which transfers Black's
+  outcome by analogy. Windows, RelWithDebInfo, `NDS_GPU2D_THREADED=0`.
