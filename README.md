@@ -63,7 +63,7 @@ On Linux / macOS the same steps use `sh tools/bootstrap_ndsrecomp.sh`, the `linu
 
 SDL3 is **not** a manual prerequisite — the runner configure fetches and builds it automatically (see [Runner](#runner-the-bootable-build)). Nothing outside `rom/`, `tools/` and `tests/` needs it.
 
-Windows: the presets pin `CMAKE_CXX_COMPILER=clang++`. Put `clang++`, `cmake`, `ninja` and `ctest` on `PATH`.
+Windows: the presets pin `CMAKE_C_COMPILER=clang` and `CMAKE_CXX_COMPILER=clang++` (a mixed pair — e.g. clang++ C++ objects linked against another toolchain's C objects — breaks the vendored libslirp, which failed to build under MSVC-ABI headers until patch `patches/ndsrecomp/0002-libslirp-msvc-clang.patch`). Put `clang`, `clang++`, `cmake`, `ninja` and `ctest` on `PATH`. To use another compiler, pass `-DCMAKE_C_COMPILER=... -DCMAKE_CXX_COMPILER=...` to `cmake --preset` (or use the bootstrap scripts' `-Compiler` / `--compiler`); CMake caches the choice, so changing it needs a fresh `build/<preset>/`.
 
 ## Build
 
@@ -103,6 +103,16 @@ sh tools/bootstrap_ndsrecomp.sh
 ```
 
 Add `-BuildRunner` / `--build-runner` to also build a standalone runner under `third_party/ndsrecomp/runner/build/`. **Not needed here** — step 4 builds the runner as part of this project, which is the only way to have SDL3 supplied via CMake.
+
+Both bootstrap scripts take `-Compiler` / `--compiler` to pick the toolchain: a bare name resolved from `PATH` (`clang`, `clang-18`, `gcc`) or a path to the C compiler. The C++ sibling is derived (`clang` → `clang++`, `gcc` → `g++`) and, for a path, must sit next to the C one:
+
+```sh
+pwsh tools/bootstrap_ndsrecomp.ps1 -Compiler clang
+pwsh tools/bootstrap_ndsrecomp.ps1 -Compiler C:/tools/llvm-mingw/bin/clang.exe
+sh tools/bootstrap_ndsrecomp.sh --compiler clang
+```
+
+CMake caches the compiler, so the scripts refuse to reconfigure a build directory built with a different one; remove `third_party/ndsrecomp/recompiler/build` (and `runner/build`) to switch.
 
 ### 2. Build this project's tools
 

@@ -207,8 +207,9 @@ inventing one and add it here once confirmed.)
 (Windows) or `tools/bootstrap_ndsrecomp.sh` (Linux/macOS); add `-BuildRunner` /
 `--build-runner` to also build the runner. The script inits the submodule, fixes
 the broken `arm-recomp-core` nested URL, stages the toml++ header, generates the
-FreeBIOS + placeholder retail BIOS banks, and builds. Generated banks under
-`third_party/ndsrecomp/generated/` are git-ignored (regenerable).
+FreeBIOS + placeholder retail BIOS banks, and builds. `-Compiler` / `--compiler`
+selects the toolchain (C name given, C++ sibling derived); generated banks
+under `third_party/ndsrecomp/generated/` are git-ignored (regenerable).
 
 Configure applies the tracked patches in `patches/ndsrecomp/` to the submodule
 (idempotently), so the superproject reports it as *modified content* by design:
