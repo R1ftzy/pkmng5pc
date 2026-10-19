@@ -195,11 +195,38 @@ sh tools/play.sh
 | `--rom <path>` | use a specific ROM (`PKMNG5PC_ROM` also works) |
 | `--runner <path>` | use a specific runner (`PKMNG5PC_RUNNER` also works) |
 | `--layout stacked\|separate` | one top-over-bottom window (default) or two windows |
+| `--native` | present the two screens through this project's own `render/` compositor (Vulkan) instead of the runner's SDL blit — see [Native present](#native-present) |
 | `--frames N` | present N frames, print fps and a frame hash, exit — a self-test |
 | `--stats` | print the performance summary on exit |
 | `--sav [<file>]` | keep the battery save at another path; the default is the ROM's own `<rom>.sav`. Aliases: `--save-path`, `--save`; `--no-save` (`-NoSave` in PowerShell) runs a blank cart and writes nothing |
 
 Controls: `arrows` = D-pad, `Z`/`X` = A/B, `A`/`S` = Y/X, `Q`/`W` = L/R, `Enter` = Start, `Backspace` = Select, `Esc` = quit. The bottom-screen window is the touchscreen.
+
+#### Native present
+
+`--native` (`-Native` in PowerShell) is the first wiring of `Plan.md` M8's own
+present/compositor: instead of the runner's fixed 512×768 top-over-bottom SDL
+blit, the two DS screens go to `pkmn::render::Presenter` (`render/`, Vulkan),
+composed by `compose_screens_bgra8()`. It sets `PKMNG5PC_PRESENT=native`, the
+switch the frontend hook reads. The run is otherwise identical — same guest
+execution, input, audio and save behaviour, and the same presented-frame digest,
+so `--frames N --stats` on either path reports the same `frame_fnv`.
+
+It needs a runner built with `PKMNG5PC_NATIVE_PRESENT=ON` (the default when
+`PKMNG5PC_BUILD_RUNNER=ON`), which adds the port's only modification to the
+pinned `ndsrecomp` submodule: a five-site, guarded hook in the vendored
+`runner/src/frontend.cpp`, carried as
+`patches/ndsrecomp/0001-native-present-hook.patch` and applied by configure
+(idempotently — reverting the submodule with `git -C third_party/ndsrecomp
+checkout .` and re-configuring re-applies it). Build with
+`-DPKMNG5PC_NATIVE_PRESENT=OFF` for a completely untouched submodule.
+`docs/adr/0006-ndsrecomp-native-present-hook.md` records the decision.
+
+Because the presenter owns one output surface, `--native` is **stacked only**:
+`--layout separate` is ignored with a warning. On this first step the
+pointer/touch coordinates are not rescaled (the frontend converts them through
+the SDL renderer, which the presenter replaces); keyboard and gamepad input are
+unaffected. Window layout, post-FX and frame decoupling are the rest of M8.
 
 The underlying invocation, if you want to drive it yourself (`tools/play` sets `NDS_GPU2D_THREADED=0` for you — see the workaround note below):
 

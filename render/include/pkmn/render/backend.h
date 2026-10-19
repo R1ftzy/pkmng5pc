@@ -105,6 +105,16 @@ enum class ScreenLayout {
 CanvasBuffer compose_screens(const uint16_t* top, const uint16_t* bottom, ScreenLayout layout,
     uint32_t output_width, uint32_t output_height);
 
+// Same layout, over screens that are already BGRA8. This is the form the
+// runner's frontend hands out (`nds_gpu2d_framebuffer()` is ARGB8888, i.e.
+// BGRA8 in memory), so the bridge into the frontend needs no per-pixel
+// conversion. `*_width` may exceed the native 256 (adaptive wide output);
+// height is always the DS screen height. Both the placement rule and the
+// letterbox come from the same implementation `compose_screens()` uses, so
+// layout still lives in exactly one place.
+CanvasBuffer compose_screens_bgra8(const uint8_t* top, uint32_t top_width, const uint8_t* bottom,
+    uint32_t bottom_width, ScreenLayout layout, uint32_t output_width, uint32_t output_height);
+
 // Expose the BGR555 -> BGRA8 conversion for the compositor and its tests.
 void bgr555_to_bgra8(const uint16_t* src, uint8_t* dst, uint32_t pixels);
 

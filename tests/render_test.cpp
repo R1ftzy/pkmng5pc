@@ -86,3 +86,74 @@ TEST_CASE(render_side_by_side_layout)
     check_pixel(canvas, kScreenWidth, 0, 0, 255, 0);
     check_pixel(canvas, kScreenWidth * 2 - 1, kScreenHeight - 1, 0, 255, 0);
 }
+
+namespace {
+
+// A screen in the runner's own surface format: ARGB8888, i.e. B,G,R,A bytes.
+std::vector<uint8_t> bgra8_screen(uint32_t width, uint8_t r, uint8_t g, uint8_t b)
+{
+    std::vector<uint8_t> screen(static_cast<std::size_t>(width) * kScreenHeight * 4);
+    for (std::size_t pixel = 0; pixel < screen.size() / 4; ++pixel) {
+        screen[pixel * 4 + 0] = b;
+        screen[pixel * 4 + 1] = g;
+        screen[pixel * 4 + 2] = r;
+        screen[pixel * 4 + 3] = 0xFF;
+    }
+    return screen;
+}
+
+} // namespace
+
+TEST_CASE(render_bgra8_stacked_matches_the_runners_canvas)
+{
+    // What -Native actually presents: two 256x192 surfaces into the runner's
+    // 512x768 stacked window, i.e. an exact 2x with no letterbox.
+    const std::vector<uint8_t> top = bgra8_screen(kScreenWidth, 255, 0, 0);
+    const std::vector<uint8_t> bottom = bgra8_screen(kScreenWidth, 0, 0, 255);
+
+    const CanvasBuffer canvas = compose_screens_bgra8(top.data(), kScreenWidth, bottom.data(),
+        kScreenWidth, ScreenLayout::Stacked, kScreenWidth * 2, kScreenHeight * 2 * 2);
+
+    CHECK(canvas.width == kScreenWidth * 2);
+    CHECK(canvas.height == kScreenHeight * 2 * 2);
+    check_pixel(canvas, 0, 0, 255, 0, 0);
+    check_pixel(canvas, kScreenWidth * 2 - 1, kScreenHeight * 2 - 1, 255, 0, 0);
+    check_pixel(canvas, 0, kScreenHeight * 2, 0, 0, 255);
+    check_pixel(canvas, kScreenWidth * 2 - 1, canvas.height - 1, 0, 0, 255);
+}
+
+TEST_CASE(render_bgra8_letterboxes_a_wider_canvas)
+{
+    const std::vector<uint8_t> top = bgra8_screen(kScreenWidth, 255, 0, 0);
+    const std::vector<uint8_t> bottom = bgra8_screen(kScreenWidth, 0, 0, 255);
+
+    // 600x768 still holds the 2x stack, so the 88 px slack is two 44 px bars.
+    const CanvasBuffer canvas = compose_screens_bgra8(top.data(), kScreenWidth, bottom.data(),
+        kScreenWidth, ScreenLayout::Stacked, 600, kScreenHeight * 2 * 2);
+
+    check_pixel(canvas, 0, 0, 12, 12, 16);
+    check_pixel(canvas, 43, 0, 12, 12, 16);
+    check_pixel(canvas, 44, 0, 255, 0, 0);
+    check_pixel(canvas, 555, 0, 255, 0, 0);
+    check_pixel(canvas, 556, 0, 12, 12, 16);
+    check_pixel(canvas, 44, kScreenHeight * 2, 0, 0, 255);
+}
+
+TEST_CASE(render_bgra8_keeps_a_widened_top_screen_from_stretching_the_bottom)
+{
+    // Adaptive wide output (re/config, NDS_ADAPTIVE_TOP): the top surface is
+    // 448 wide while the bottom stays native. At 1x the bottom is centred
+    // inside the widened stack instead of being stretched to 448.
+    const std::vector<uint8_t> top = bgra8_screen(448, 255, 0, 0);
+    const std::vector<uint8_t> bottom = bgra8_screen(kScreenWidth, 0, 0, 255);
+
+    const CanvasBuffer canvas = compose_screens_bgra8(top.data(), 448, bottom.data(), kScreenWidth,
+        ScreenLayout::Stacked, 448, kScreenHeight * 2);
+
+    check_pixel(canvas, 447, 0, 255, 0, 0);
+    check_pixel(canvas, 0, 191, 255, 0, 0);
+    check_pixel(canvas, 95, kScreenHeight, 12, 12, 16);
+    check_pixel(canvas, 96, kScreenHeight, 0, 0, 255);
+    check_pixel(canvas, 351, canvas.height - 1, 0, 0, 255);
+    check_pixel(canvas, 352, kScreenHeight, 12, 12, 16);
+}

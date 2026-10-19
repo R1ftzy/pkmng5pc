@@ -1,0 +1,135 @@
+diff --git a/runner/src/frontend.cpp b/runner/src/frontend.cpp
+index 2595ee5..a8fc497 100644
+--- a/runner/src/frontend.cpp
++++ b/runner/src/frontend.cpp
+@@ -32,6 +32,22 @@
+ #include "melonds_compute/ComputeHost.h"
+ #endif
+ 
++#if defined(PKMNG5PC_NATIVE_PRESENT)
++// pkmng5pc modification of this file (GPL-3.0-or-later, same project; the
++// notice GPLv3 5(a) asks for). Definitions live in the port's own
++// render/src/native_present.cpp, compiled into this executable by
++// cmake/Runner.cmake; see docs/adr/0006-ndsrecomp-native-present-hook.md and
++// patches/ndsrecomp/0001-native-present-hook.patch.
++//
++// Opt-in only: the whole hook compiles out unless the port's build defines
++// PKMNG5PC_NATIVE_PRESENT, so this file still builds standalone in ndsrecomp.
++extern "C" int pkmng5pc_native_present_enabled();
++extern "C" int pkmng5pc_native_present_init(void* sdl_window);
++extern "C" int pkmng5pc_native_present_frame(const uint32_t* top, int top_width,
++                                             const uint32_t* bottom, int bottom_width);
++extern "C" void pkmng5pc_native_present_shutdown();
++#endif
++
+ namespace {
+ // Written per presented frame by the frontend loop, read from the same
+ // thread by the `frontend_stats` debug command at the debug_pump() safe
+@@ -1484,6 +1500,19 @@ bool create_presentation(const NdsFrontendOptions& options,
+                          bool allow_gl_top = true) {
+     presentation.separate =
+         options.screen_layout == NdsScreenLayout::Separate;
++#if defined(PKMNG5PC_NATIVE_PRESENT)
++    // The port's presenter owns one output surface, so the separate
++    // two-window layout is not offered on this path.
++    const bool native_present = pkmng5pc_native_present_enabled() != 0;
++    if (native_present) {
++        presentation.separate = false;
++        std::fprintf(stderr,
++                     "[native] presentation is the port's own presenter "
++                     "(stacked, single window)\n");
++    }
++#else
++    const bool native_present = false;
++#endif
+ #if defined(NDS_HAVE_COMPUTE_RENDERER)
+     const char* direct_selection =
+         std::getenv("NDS_COMPUTE_DIRECT_PRESENT");
+@@ -1521,8 +1550,10 @@ bool create_presentation(const NdsFrontendOptions& options,
+         : kScreenHeight * 2 * kWindowScale;
+     const uint64_t top_window_flags =
+         SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI |
+-        (presentation.gl_top
+-             ? static_cast<uint64_t>(SDL_WINDOW_OPENGL) : 0u);
++        (native_present
++             ? static_cast<uint64_t>(SDL_WINDOW_VULKAN)
++             : (presentation.gl_top
++                        ? static_cast<uint64_t>(SDL_WINDOW_OPENGL) : 0u));
+     presentation.windows[0] = create_window(
+         presentation.separate ? "ndsrecomp - Top Screen"
+                                : "ndsrecomp firmware preview",
+@@ -1535,7 +1566,7 @@ bool create_presentation(const NdsFrontendOptions& options,
+         std::fprintf(stderr, "[sdl] window failed: %s\n", SDL_GetError());
+         return false;
+     }
+-    if (!presentation.gl_top) {
++    if (!native_present && !presentation.gl_top) {
+         presentation.renderers[0] = create_renderer(presentation.windows[0]);
+         if (!presentation.renderers[0]) {
+             std::fprintf(stderr, "[sdl] renderer failed: %s\n", SDL_GetError());
+@@ -1586,6 +1617,14 @@ bool create_presentation(const NdsFrontendOptions& options,
+     }
+ 
+     for (int screen = 0; screen < 2; ++screen) {
++        if (native_present) {
++            // No SDL renderer or texture exists on this path: the presenter
++            // consumes the raw surfaces. The window id still feeds the
++            // existing input/touch plumbing.
++            presentation.window_ids[screen] =
++                SDL_GetWindowID(presentation.windows[screen]);
++            continue;
++        }
+         if (screen == 0 && presentation.gl_top) {
+             presentation.window_ids[screen] =
+                 SDL_GetWindowID(presentation.windows[screen]);
+@@ -1722,6 +1761,22 @@ PresentationTicks present_screens(FrontendPresentation& presentation,
+                                   float virtual_stylus_y,
+                                   const char* savestate_notice) {
+     PresentationTicks ticks{};
++#if defined(PKMNG5PC_NATIVE_PRESENT)
++    // The port's present/compositor replaces the SDL path entirely when it is
++    // selected. Everything above (input sampling, guest execution, audio
++    // pacing, the frame-digest ring) is unchanged -- this only puts pixels on
++    // the screen.
++    if (pkmng5pc_native_present_enabled()) {
++        const uint64_t native_start = SDL_GetPerformanceCounter();
++        if (!pkmng5pc_native_present_frame(top_pixels, top_width, bottom_pixels,
++                                           bottom_width)) {
++            std::fprintf(stderr, "[native] present failed\n");
++            ticks.ok = false;
++        }
++        ticks.upload += SDL_GetPerformanceCounter() - native_start;
++        return ticks;
++    }
++#endif
+     if (presentation.gl_top) {
+ #if defined(NDS_HAVE_COMPUTE_RENDERER)
+         NdsGpu2dDirectFrame direct_frame{};
+@@ -1841,6 +1896,17 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& options) {
+         SDL_Quit();
+         return 1;
+     }
++#if defined(PKMNG5PC_NATIVE_PRESENT)
++    if (pkmng5pc_native_present_enabled()
++        && !pkmng5pc_native_present_init(presentation.windows[0])) {
++        std::fprintf(stderr,
++                     "[native] could not start the port's presenter; "
++                     "rerun without PKMNG5PC_PRESENT=native\n");
++        destroy_presentation(presentation);
++        SDL_Quit();
++        return 1;
++    }
++#endif
+     const int bottom_logical_width = presentation.separate
+         ? presentation.screen_widths[1]
+         : presentation.canvas_width;
+@@ -3737,6 +3803,9 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& options) {
+     nds_compute_host_stop();
+ #endif
+     if (controller) SDL_GameControllerClose(controller);
++#if defined(PKMNG5PC_NATIVE_PRESENT)
++    pkmng5pc_native_present_shutdown();
++#endif
+     destroy_presentation(presentation);
+     SDL_Quit();
+     std::fprintf(stderr, "[sdl] closed after %llu presented frames\n",

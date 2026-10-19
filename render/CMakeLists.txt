@@ -38,7 +38,17 @@ endif()
 pkmng5pc_ensure_sdl3()
 target_link_libraries(pkmn_render PRIVATE SDL3::SDL3)
 
+# Bridge that lets the runner's frontend present through this seam
+# (`render/include/pkmn/render/native_present.h`). It is a separate target
+# because it is runner-specific: the seam library above neither knows nor cares
+# who calls it. `cmake/Runner.cmake` links this into `nds_runner`.
+add_library(pkmn_render_runner_bridge STATIC src/native_present.cpp)
+target_link_libraries(pkmn_render_runner_bridge
+    PUBLIC pkmn::render
+    PRIVATE SDL3::SDL3 pkmn_warnings)
+
 add_executable(pkmn_render_smoke src/smoke_main.cpp)
 target_link_libraries(pkmn_render_smoke PRIVATE pkmn_render pkmn_warnings SDL3::SDL3)
 
 add_library(pkmn::render ALIAS pkmn_render)
+add_library(pkmn::render_runner_bridge ALIAS pkmn_render_runner_bridge)

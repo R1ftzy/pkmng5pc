@@ -1,6 +1,9 @@
 # The renderer seam is ours; Vulkan is the first backend
 
-**Status:** accepted (2026-10-19)
+**Status:** accepted (2026-10-19); partly superseded by
+`docs/adr/0006-ndsrecomp-native-present-hook.md`, which wires the seam into the
+runner's frontend through a tracked, guarded patch and records why the
+"pinned pristine submodule" premise below does not survive that step.
 
 `Plan.md` M8 needs our own present/compositor: the runner's frontend currently
 owns the window, the layout and the present, so there is no place to put

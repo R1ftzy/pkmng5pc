@@ -34,3 +34,9 @@ upstream is redistributed here):
 GPL-3.0-or-later code is kept behind the bridge headers
 `runner/src/gpu3d.h` and `runner/src/wifi.h`. Per-module license attribution in
 upstream `THIRD_PARTY_ATTRIBUTION.md` applies.
+
+The pinned `ndsrecomp` tree carries one local, tracked modification of our own
+(`patches/ndsrecomp/`, applied at configure time when the runner is built and
+inert otherwise): a guarded present hook in `runner/src/frontend.cpp`, whose
+GPLv3 §5(a) change notice is in the file and in the patch. It adds only our own
+code and changes no upstream behaviour.

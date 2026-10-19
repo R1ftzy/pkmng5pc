@@ -15,10 +15,18 @@
 #   sh tools/play.sh                          # play with the ROM's own save
 #   sh tools/play.sh --rom "roms/<your-rom>.nds"
 #   sh tools/play.sh --layout separate
+#   sh tools/play.sh --native                 # present through render/ (Vulkan)
 #   sh tools/play.sh --frames 600 --stats     # present 600 frames, print stats, exit
 #   sh tools/play.sh --sav banks/black.sav    # keep a different save file
 #   sh tools/play.sh --no-save                # blank 512 KiB cart, write nothing
 #   sh tools/play.sh --diagnostics            # keep a perf bundle in banks/play/
+#
+# --native hands the two screens to this project's own present/compositor
+# (`render/`, docs/adr/0006-ndsrecomp-native-present-hook.md) instead of the
+# runner's fixed 512x768 SDL blit. It needs a runner built with
+# PKMNG5PC_NATIVE_PRESENT=ON (the default) and is single-window, so it always
+# presents stacked. Everything else -- guest execution, input, audio, saves,
+# the presented-frame digest -- is the same run either way.
 #
 # Saves are on by default: the run loads the save next to the ROM (<rom>.sav),
 # starts blank when it is missing, and keeps writing it. --sav (alias
@@ -39,6 +47,7 @@ rom=${PKMNG5PC_ROM:-}
 runner=${PKMNG5PC_RUNNER:-}
 bios_dir=bios
 layout=stacked
+native=0
 frames=0
 stats=0
 coverage=0
@@ -53,6 +62,7 @@ while [ $# -gt 0 ]; do
     --runner)   runner=$2; shift 2 ;;
     --bios-dir) bios_dir=$2; shift 2 ;;
     --layout)   layout=$2; shift 2 ;;
+    --native)   native=1; shift ;;
     --frames)   frames=$2; shift 2 ;;
     --save-path) save_path=$2; save_path_set=1; shift 2 ;;
     --sav)      save_path=$2; save_path_set=1; shift 2 ;;
@@ -126,6 +136,12 @@ fi
 
 # --- command ----------------------------------------------------------------
 
+# The port's presenter owns one output surface, so --native is always stacked.
+if [ "$native" -eq 1 ] && [ "$layout" != stacked ]; then
+  echo "play: --native presents one window; ignoring --layout $layout" >&2
+  layout=stacked
+fi
+
 set -- "$runner" "$bios_dir" 250000000 \
   --boot direct --generated-firmware --freebios \
   --rom "$rom" --interactive --screen-layout "$layout"
@@ -146,10 +162,18 @@ if [ "$stats" -eq 1 ] || [ "$frames" -gt 0 ]; then NDS_FRONTEND_STATS=1; export 
 # Same reason as tools/play.ps1: the threaded 2D scanline path wedges one
 # scheduler round at t=83.69 s emulated; run the byte-locked inline path.
 if [ -z "${NDS_GPU2D_THREADED:-}" ]; then NDS_GPU2D_THREADED=0; export NDS_GPU2D_THREADED; fi
+# The frontend hook reads this (render/src/native_present.cpp). Left alone
+# otherwise so the environment stays the caller's.
+if [ "$native" -eq 1 ]; then PKMNG5PC_PRESENT=native; export PKMNG5PC_PRESENT; fi
 
 echo "runner: $runner"
 echo "rom:    $rom"
 echo "banks:  $banks"
+if [ "$native" -eq 1 ]; then
+  echo "present: native (render/ - Vulkan, stacked, single window)"
+else
+  echo "present: runner SDL blit (512x768 top-over-bottom)"
+fi
 if [ -n "$save_path" ]; then
   if [ -e "$save_path" ]; then echo "save:   $save_path"
   else echo "save:   $save_path (new: written when the game saves)"; fi

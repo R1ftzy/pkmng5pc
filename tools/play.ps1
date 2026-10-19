@@ -14,10 +14,18 @@
 #   pwsh tools/play.ps1                       # play with the ROM's own save
 #   pwsh tools/play.ps1 -Rom "roms/<your-rom>.nds"
 #   pwsh tools/play.ps1 -Layout separate
+#   pwsh tools/play.ps1 -Native               # present through render/ (Vulkan)
 #   pwsh tools/play.ps1 -Frames 600 -Stats    # present 600 frames, print stats, exit
 #   pwsh tools/play.ps1 -Sav "banks/black.sav"  # keep a different save file
 #   pwsh tools/play.ps1 -NoSave               # blank 512 KiB cart, write nothing
 #   pwsh tools/play.ps1 -Diagnostics          # keep a perf bundle in banks/play/
+#
+# -Native hands the two screens to this project's own present/compositor
+# (`render/`, docs/adr/0006-ndsrecomp-native-present-hook.md) instead of the
+# runner's fixed 512x768 SDL blit. It needs a runner built with
+# PKMNG5PC_NATIVE_PRESENT=ON (the default) and is single-window, so it always
+# presents stacked. Everything else -- guest execution, input, audio, saves,
+# the presented-frame digest -- is the same run either way.
 #
 # Saves are on by default: the run loads the save next to the ROM (<rom>.sav),
 # starts blank when it is missing, and keeps writing it. -Sav (alias -SavePath)
@@ -35,6 +43,7 @@ param(
   [string]$Runner,
   [string]$BiosDir = 'bios',
   [ValidateSet('stacked', 'separate')][string]$Layout = 'stacked',
+  [switch]$Native,
   [int]$Frames = 0,
   [Alias('SavePath')][string]$Sav,
   [switch]$Save,
@@ -119,6 +128,11 @@ $Rom = (Resolve-Path -LiteralPath $Rom).Path
 if ($NoSave -and ($PSBoundParameters.ContainsKey('Sav') -or $Save)) {
   Fail '-NoSave cannot be combined with -Sav/-Save.'
 }
+# The port's presenter owns one output surface, so -Native is always stacked.
+if ($Native -and $Layout -ne 'stacked') {
+  Write-Host "play: -Native presents one window; ignoring -Layout $Layout" -ForegroundColor Yellow
+  $Layout = 'stacked'
+}
 # The default is the derivation the runner itself would make: the ROM path with
 # a .sav extension, i.e. the save sits next to the ROM. An explicit -Sav/-Save
 # with an empty value names that same file.
@@ -153,10 +167,18 @@ if ($Stats -or $Frames -gt 0) { $env:NDS_FRONTEND_STATS = '1' }
 # latch/execute sequence and is byte-locked to the threaded one by the
 # presented-frame digest ring, so default to it unless the caller overrides.
 if (-not $env:NDS_GPU2D_THREADED) { $env:NDS_GPU2D_THREADED = '0' }
+# The frontend hook reads this (render/src/native_present.cpp). Leave it alone
+# otherwise so the environment stays the caller's.
+if ($Native) { $env:PKMNG5PC_PRESENT = 'native' }
 
 Write-Host "runner: $runner"
 Write-Host "rom:    $Rom"
 Write-Host "banks:  $banks"
+if ($Native) {
+  Write-Host "present: native (render/ - Vulkan, stacked, single window)"
+} else {
+  Write-Host "present: runner SDL blit (512x768 top-over-bottom)"
+}
 if ($savePath) {
   $fresh = if (Test-Path -LiteralPath $savePath) { '' } else { ' (new: written when the game saves)' }
   Write-Host "save:   $savePath$fresh"

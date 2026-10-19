@@ -408,7 +408,11 @@ in-game load accepts the exported file. **Enhancements may begin after this.**
       means our own present loop, decoupled from the runner's frontend.
       *(The seam landed 2026-10-19: `render/backend.h`, `compose_screens()`, a
       Null and a shader-free Vulkan presenter — `docs/adr/0005-vulkan-first-renderer.md`.
-      The compositor itself, and wiring it into the frontend, are what remain.)*
+      The same day the seam was wired to the game: `tools/play -Native` presents
+      through it via a guarded hook in the vendored frontend
+      (`docs/adr/0006-ndsrecomp-native-present-hook.md`). Still open: this
+      milestone's own layout policy beyond stacked-at-integer-scale, post-FX, and
+      the present loop that is decoupled from the runner's frontend.)*
 - [ ] **Layout:** dual-screen layout for arbitrary aspect ratios (stacked,
       side-by-side, ultrawide) with safe areas. Game logic unchanged.
 - [ ] **Frame decoupling:** guest logic stays locked at 60 Hz (no speedup) while
@@ -594,6 +598,27 @@ Newest first. Keep entries short; details and evidence live in `re/notes/`.
   the ARM9 (`tier3_arm9` 21-22 ms/frame on the three titles, against 0.40 on
   Black). `re/notes/recompilation.md` §"The ARM7 aliases generalise to White,
   Black 2 and White 2".
+
+- **2026-10-19 (the game presents through our own renderer, behind
+  `play -Native`)** — the render seam from earlier today is now wired to the
+  running game. `present_screens()` in the vendored frontend is the single
+  present site and has no hook, so the first integration is a five-site,
+  `PKMNG5PC_NATIVE_PRESENT`-guarded patch to it
+  (`patches/ndsrecomp/0001-native-present-hook.patch`, applied idempotently by
+  configure) plus the port's bridge, `render/src/native_present.cpp`: the
+  frontend keeps the window, input, audio, pacing and the digest ring and hands
+  the two raw surfaces to `pkmn::render::Presenter`. `render/` gains
+  `compose_screens_bgra8()` because the surfaces are already ARGB8888/BGRA8
+  (never BGR555), sharing the placement rule and letterbox with the existing
+  `compose_screens()`. Verified on Windows/Black: `tools/play -Native -Frames
+  300 -Stats` reports `[native] presenter=vulkan size=512x768` with no SDL
+  renderer created, and the **identical guest digest** to the SDL path
+  (`frame_fnv=(f462d3ff20fd83f4,06be2b0d14dc4383)`), 0 audio underruns, 41.6 fps
+  presented — the same run, a different presenter. `docs/adr/0006-…` records the
+  decision and why a tracked patch beat both a second window and a from-scratch
+  frontend. **Scope:** Windows, Black only; presentation only (no layout policy,
+  post-FX or frame decoupling yet), `-Native` is stacked-only, and pointer/touch
+  coordinates are not yet rescaled on that path.
 
 - **2026-10-19 (the ARM7 alias work lands, and it is a 33.5% boot win)** — the
   two ARM7 `[[alias]]` blocks in `re/config/black.toml`, disabled since

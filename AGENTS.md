@@ -86,6 +86,7 @@ pkmng5pc/
 ├─ game/                  # recompiled/reimplemented game logic
 ├─ launcher/              # main menu, ROM selection, version switching
 ├─ tests/                 # unit + golden-data tests
+├─ patches/               # tracked local patches to pinned third-party sources
 └─ third_party/           # pinned submodules (ndsrecomp, freebios)
 ```
 
@@ -208,6 +209,14 @@ inventing one and add it here once confirmed.)
 the broken `arm-recomp-core` nested URL, stages the toml++ header, generates the
 FreeBIOS + placeholder retail BIOS banks, and builds. Generated banks under
 `third_party/ndsrecomp/generated/` are git-ignored (regenerable).
+
+Configure applies the tracked patches in `patches/ndsrecomp/` to the submodule
+(idempotently), so the superproject reports it as *modified content* by design:
+currently one — the guarded present hook behind `tools/play -Native`
+(`docs/adr/0006-ndsrecomp-native-present-hook.md`). Revert with
+`git -C third_party/ndsrecomp checkout .` and re-configure. The patched file
+still builds standalone (the hook compiles out without our build's macro), so
+`bootstrap_ndsrecomp.*` needs no change.
 
 - **Unit tests:** format parsers, compression codecs, save checksums.
 - **Golden data:** small, synthetic fixtures only — **never** commit real ROM
