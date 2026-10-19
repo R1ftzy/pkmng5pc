@@ -1155,3 +1155,75 @@ that Black staged move to `re/config/arm7/seeds/` and are shared.
   speed-up transfer, since only White has an interleaved before/after and only at
   one window length. Windows, RelWithDebInfo.
 
+
+### The native present path had no pointer mapping (2026-10-19) - resolved
+
+The `-Native` step (`docs/adr/0006-ndsrecomp-native-present-hook.md`) replaced
+the frontend's SDL renderer with the port's own presenter, and recorded one
+open limitation: pointer/touch coordinates were not rescaled on that path. This
+section records what that cost and how it was closed.
+
+- **Observation (the click was dropped, not mis-mapped).** The frontend turns a
+  pointer event into a stylus coordinate in two steps: first
+  `convert_mouse_event_to_logical_coordinates()` asks
+  `SDL_RenderCoordinatesFromWindow()` for the renderer's logical position, then
+  `set_touch_from_mouse()` (via the stacked-window routing helper) accepts it
+  only if it falls inside the bottom screen's logical rect. The native path
+  creates **no** SDL renderer, so `presentation.renderers[]` is null, the
+  conversion loop finds no renderer for the window id, and the event keeps its
+  raw window pixels. Those are then compared against a logical rect, fail, and
+  `nds_set_touch(0, 0, false)` is issued - a release. So the symptom is a click
+  that never presses, not a click in the wrong place.
+- **Observation (reproduced with the frontend's own test).**
+  `NDS_FRONTEND_SELFTEST_MENU=1` injects one synthetic bottom-screen click at
+  logical (127, 180) and asserts on the resulting counters and frame hashes.
+  Before the fix, `-Native` reported `key_presses=1 touch_presses=0
+  last_touch=(-1,-1)` against the SDL path's `touch_presses=1
+  last_touch=(127,372)`; the same self-test fails on **both** paths for an
+  unrelated reason (its expected frame hashes are firmware-preview values, and
+  `frame_fnv=(02da4c025df80383,02da4c025df80383)` is what both paths present
+  here), so the self-test verdict is not the signal - the counters are.
+- **Observation (a guest read is the corroboration).** A direct probe
+  (`banks/probe_native_touch.py`) reads EXTKEYIN (0x04000136, ARM7) around an
+  injected bottom-screen press. Idle is `0x7F` (bit 6 set = pen up); pressed is
+  `0x3F` on the native path, exactly as on the SDL control. The click reaches
+  the guest's touchscreen, not just the frontend's counter.
+- **Observation (the fix is the inverse of the layout, not a copy of it).**
+  `compose_screens_bgra8()` used to inline its placement maths; it now draws
+  from one `place_screens()` implementation, and `stack_placement()` publishes
+  the enclosing stack rectangle and integer scale. The bridge exposes
+  `pkmng5pc_native_present_logical_point()` = inverse of that placement
+  (including the window-point -> pixel scale for high-DPI, which is what
+  `SDL_RenderCoordinatesFromWindow` applied), and the guarded hook calls it
+  where the renderer conversion used to be. Nothing about the layout rule is
+  duplicated, so the two cannot drift.
+- **Observation (clicks that should not touch, do not).** A raw window-space
+  click at the top screen's centre and one on the letterbox map outside the
+  bottom screen's logical rect, so the frontend's existing routing rejects them;
+  a guest read confirms no pen-down. Verified on both paths with
+  `banks/probe_native_touch_neg.py` (native `[false, true, false]`, SDL
+  identical).
+- **Observation (the guest is unchanged).** Two interleaved 600-frame A/B pairs
+  (`-Native` vs SDL, `-NoSave`): `frame_fnv=(02da4c025df80383,02da4c025df80383)`
+  on all four runs, `underruns=0`, `min_queue_frames=1539`,
+  `presented fps` 54.42/54.42 vs 54.57/54.62. The digest pair is the same one
+  the earlier native-present entry recorded, so presentation still proves the
+  run.
+- **Observation (the unit tests cover the rule).** `render_stack_placement_matches_the_composed_letterbox`
+  asserts the stack rectangle, scale and visibility for the exact 2x fit, a
+  600x768 letterbox, a widened adaptive top screen, side-by-side, and a
+  degenerate size. `pkmn_tests` is 19/19; `ctest` is 33/34 with only the
+  pre-existing `gpu2d_window_test` stack overflow.
+- **Inference (high).** The limitation was structural (the renderer was the
+  only thing that knew how a window pixel related to a DS pixel), and the honest
+  fix is to make that relation part of the compositor's own API. A second
+  implementation in the frontend would have been shorter to write and would have
+  drifted the moment the layout policy grew past stacked-at-integer-scale -
+  which is exactly what `Plan.md` M8 still owes.
+- **Unknown.** Whether the pointer feels right in hand on a touch-only screen
+  (the mapping is proven by counters and a guest read, not by playing), and how
+  it behaves under the adaptive-wide top screen in a live session (the
+  placement rule handles it and the unit test covers the arithmetic, but no live
+  run has used adaptive widths).
+- **Confidence.** High on the mechanism, the parity, and the guest digests.
+  Windows, RelWithDebInfo, Black, boot window.

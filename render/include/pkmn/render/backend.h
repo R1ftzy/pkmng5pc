@@ -115,6 +115,23 @@ CanvasBuffer compose_screens(const uint16_t* top, const uint16_t* bottom, Screen
 CanvasBuffer compose_screens_bgra8(const uint8_t* top, uint32_t top_width, const uint8_t* bottom,
     uint32_t bottom_width, ScreenLayout layout, uint32_t output_width, uint32_t output_height);
 
+// Where the composed two-screen stack lands in the output canvas: the integer
+// scale, and the centred, letterboxed rectangle both screens are drawn inside.
+// Composition and the frontend's pointer mapping both read this, so the
+// inverse of the layout is never a second, drifting copy of the rule.
+struct StackPlacement {
+    uint32_t x = 0;
+    uint32_t y = 0;
+    uint32_t width = 0;
+    uint32_t height = 0;
+    uint32_t scale = 1;
+    // False when the output is too small to show the stack at all.
+    bool visible = false;
+};
+
+StackPlacement stack_placement(uint32_t top_width, uint32_t bottom_width, ScreenLayout layout,
+    uint32_t output_width, uint32_t output_height);
+
 // Expose the BGR555 -> BGRA8 conversion for the compositor and its tests.
 void bgr555_to_bgra8(const uint16_t* src, uint8_t* dst, uint32_t pixels);
 

@@ -39,6 +39,21 @@ int pkmng5pc_native_present_init(void* sdl_window);
 int pkmng5pc_native_present_frame(
     const unsigned int* top, int top_width, const unsigned int* bottom, int bottom_width);
 
+// Map a point in the window's pixel space to the frontend's logical DS space.
+// The frontend normally converts pointer events through the SDL renderer's
+// logical presentation (`SDL_RenderCoordinatesFromWindow`); this path has no
+// renderer, so the compositor's own placement rule answers instead - the exact
+// inverse of what `pkmng5pc_native_present_frame` drew. Returns 1 and fills
+// `x`/`y` with logical stacked-canvas coordinates (top screen at y 0..191,
+// bottom at y 192..383, x centred in the same width the frontend routes
+// against). Returns 0 when the presenter is not live, in which case the caller
+// must leave the event alone.
+//
+// `top_width`/`bottom_width` are the surfaces last presented, so the mapping
+// follows an adaptive wide top screen. Before the first frame the native widths
+// are assumed, which matches the frontend's own initial `screen_widths`.
+int pkmng5pc_native_present_logical_point(float window_x, float window_y, int* x, int* y);
+
 // Release the device. Safe to call more than once, and safe when no presenter
 // was ever brought up.
 void pkmng5pc_native_present_shutdown(void);

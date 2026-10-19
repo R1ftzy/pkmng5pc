@@ -210,11 +210,13 @@ blit, the two DS screens go to `pkmn::render::Presenter` (`render/`, Vulkan),
 composed by `compose_screens_bgra8()`. It sets `PKMNG5PC_PRESENT=native`, the
 switch the frontend hook reads. The run is otherwise identical — same guest
 execution, input, audio and save behaviour, and the same presented-frame digest,
-so `--frames N --stats` on either path reports the same `frame_fnv`.
+so `--frames N --stats` on either path reports the same `frame_fnv`. Pointer
+input is mapped through the same layout rule that composed the frame, so the
+bottom screen is clickable exactly where it is drawn.
 
 It needs a runner built with `PKMNG5PC_NATIVE_PRESENT=ON` (the default when
 `PKMNG5PC_BUILD_RUNNER=ON`), which adds the port's only modification to the
-pinned `ndsrecomp` submodule: a five-site, guarded hook in the vendored
+pinned `ndsrecomp` submodule: a six-site, guarded hook in the vendored
 `runner/src/frontend.cpp`, carried as
 `patches/ndsrecomp/0001-native-present-hook.patch` and applied by configure
 (idempotently — reverting the submodule with `git -C third_party/ndsrecomp
@@ -223,10 +225,11 @@ checkout .` and re-configuring re-applies it). Build with
 `docs/adr/0006-ndsrecomp-native-present-hook.md` records the decision.
 
 Because the presenter owns one output surface, `--native` is **stacked only**:
-`--layout separate` is ignored with a warning. On this first step the
-pointer/touch coordinates are not rescaled (the frontend converts them through
-the SDL renderer, which the presenter replaces); keyboard and gamepad input are
-unaffected. Window layout, post-FX and frame decoupling are the rest of M8.
+`--layout separate` is ignored with a warning. Pointer and touch input work:
+the compositor's placement rule is inverted to turn a window click into a
+stylus coordinate, and a click outside the bottom screen (top screen or
+letterbox) does not touch. Window layout, post-FX and frame decoupling are the
+rest of M8.
 
 The underlying invocation, if you want to drive it yourself (`tools/play` sets `NDS_GPU2D_THREADED=0` for you — see the workaround note below):
 

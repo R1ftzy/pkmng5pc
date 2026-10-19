@@ -36,19 +36,25 @@ through this project's own presenter (`render/`) instead of the frontend's
 fixed 512×768 SDL blit. Recorded in
 `docs/adr/0006-ndsrecomp-native-present-hook.md`.
 
-Five small sites, all behind `#if defined(PKMNG5PC_NATIVE_PRESENT)`:
+Six small sites, all behind `#if defined(PKMNG5PC_NATIVE_PRESENT)`:
 
 1. Forward declarations of the bridge (`render/src/native_present.cpp`).
 2. `create_presentation()`: force the stacked single-window layout, create that
    window with `SDL_WINDOW_VULKAN`, and skip the SDL renderer/texture setup —
    the presenter owns those. Window ids are still registered so the existing
    input and touch plumbing is untouched.
-3. `present_screens()`: forward the raw surfaces to the bridge and return,
+3. `convert_mouse_event_to_logical_coordinates()`: ask the presenter for the
+   window-to-logical conversion instead of `SDL_RenderCoordinatesFromWindow`,
+   which needs the renderer this path does not create. The presenter inverts the
+   same placement rule it composed with, so the touchscreen is clickable exactly
+   where it is drawn.
+4. `present_screens()`: forward the raw surfaces to the bridge and return,
    before any SDL work.
-4. `nds_run_interactive_frontend()`: bring the presenter up after the window
+5. `nds_run_interactive_frontend()`: bring the presenter up after the window
    exists, and fail loudly if it cannot.
-5. The same function's teardown: shut the presenter down before the window is
+6. The same function's teardown: shut the presenter down before the window is
    destroyed.
 
 Nothing above changes guest execution, input, audio, pacing or the
-presented-frame digest ring: it is presentation only.
+presented-frame digest ring: it is presentation, plus the pointer-coordinate
+conversion the replaced renderer used to perform.

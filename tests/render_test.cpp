@@ -157,3 +157,37 @@ TEST_CASE(render_bgra8_keeps_a_widened_top_screen_from_stretching_the_bottom)
     check_pixel(canvas, 351, canvas.height - 1, 0, 0, 255);
     check_pixel(canvas, 352, kScreenHeight, 12, 12, 16);
 }
+
+TEST_CASE(render_stack_placement_matches_the_composed_letterbox)
+{
+    // The stack rectangle is what the compositor draws inside, so the pointer
+    // mapping and the pixels cannot disagree about where a screen is.
+    const StackPlacement exact = stack_placement(
+        kScreenWidth, kScreenWidth, ScreenLayout::Stacked, kScreenWidth * 2, kScreenHeight * 4);
+    CHECK(exact.visible);
+    CHECK(exact.x == 0 && exact.y == 0);
+    CHECK(exact.width == kScreenWidth * 2);
+    CHECK(exact.height == kScreenHeight * 4);
+    CHECK(exact.scale == 2);
+
+    // 600x768: the 2x stack is 512 wide, leaving 44 px bars either side.
+    const StackPlacement wide = stack_placement(
+        kScreenWidth, kScreenWidth, ScreenLayout::Stacked, 600, kScreenHeight * 4);
+    CHECK(wide.x == 44 && wide.y == 0);
+    CHECK(wide.width == kScreenWidth * 2);
+    CHECK(wide.scale == 2);
+
+    // A widened top screen sets the stack width, and the bottom is centred in it.
+    const StackPlacement adaptive
+        = stack_placement(448, kScreenWidth, ScreenLayout::Stacked, 448, kScreenHeight * 2);
+    CHECK(adaptive.x == 0 && adaptive.scale == 1);
+    CHECK(adaptive.width == 448);
+
+    const StackPlacement side_by_side
+        = stack_placement(kScreenWidth, kScreenWidth, ScreenLayout::SideBySide, 512, 192);
+    CHECK(side_by_side.width == 512 && side_by_side.height == 192 && side_by_side.scale == 1);
+
+    const StackPlacement degenerate
+        = stack_placement(kScreenWidth, kScreenWidth, ScreenLayout::Stacked, 0, 0);
+    CHECK(!degenerate.visible);
+}

@@ -28,7 +28,9 @@ presenting. Selection is by `PKMNG5PC_PRESENT=native`, which `tools/play
 The hook is presentation only. The frontend keeps the window, input, touch
 mapping, controllers, audio queue and pacing, and keeps producing the
 presented-frame digest ring — so a `-Native` run and a plain run are the same
-guest run, and the digest still proves it.
+guest run, and the digest still proves it. The one thing the hook does supply is
+the renderer's usual window-to-logical pointer conversion, because this path
+creates no SDL renderer to ask (see "Recorded details").
 
 The whole hook sits inside `#if defined(PKMNG5PC_NATIVE_PRESENT)`, and that
 macro is defined only by this project's build. A patched tree therefore still
@@ -49,7 +51,7 @@ it is a build-time-absent one.
   emulation exposed as a library (another submodule change). Rejected *for now*
   — this ADR is the incremental step that makes the seam real, not the last one.
 - **Fork ndsrecomp** — moves the same diff into a repository we must then keep
-  merged against upstream. Rejected: the diff is five small sites, the guard
+  merged against upstream. Rejected: the diff is six small sites, the guard
   macro keeps it inert for everyone else, and `patches/` is already this
   project's convention for pinned third-party sources, mirrored from
   ndsrecomp's own `runner/vendor/melonds/patches/`.
@@ -73,16 +75,31 @@ configure refuses to guess if the patch applies in neither direction.
   requires canvas extent == swapchain extent, so the bridge resizes the
   presenter from `SDL_GetWindowSizeInPixels()` and composes at that size; the
   integer scale and letterbox are `compose_screens_bgra8()`'s business.
+- **The layout rule has exactly one home, including its inverse.** The
+  compositor draws from `stack_placement()`/`place_screens()` and the pointer
+  mapping reads the same function, so a click cannot drift from the pixels it
+  is aimed at. `stack_placement()` is public because the frontend needs the
+  inverse; `ScreenPlacement` stays internal.
 - **`-Native` is stacked only.** The presenter owns one output surface, so the
   hook forces the stacked layout and `tools/play` warns if `-Layout separate`
   was asked for.
 - **Adaptive wide top works.** The bridge passes the real widths through, and
   `compose_screens_bgra8()` gives each screen its own width at the shared
   integer scale, so a widened top screen does not stretch the bottom one.
-- **Known limitation, this step only:** pointer/touch coordinates are not
-  re-scaled on the native path (the frontend's conversion goes through the SDL
-  renderer, which does not exist here). Keyboard, gamepad and all guest and save
-  behaviour are unaffected.
+- **Pointer/touch is mapped by the compositor.** The frontend normally converts
+  pointer positions through the SDL renderer's logical presentation, and this
+  path has no renderer. `convert_mouse_event_to_logical_coordinates()` therefore
+  asks the presenter instead (`pkmng5pc_native_present_logical_point`), which
+  inverts the *same* placement rule the frame was composed with
+  (`stack_placement()` in `render/src/compose.cpp`) and converts window points
+  to pixels for high-DPI. Clicks on the top screen or the letterbox map outside
+  the bottom screen and are rejected by the frontend's existing routing, so a
+  click can never touch through the wrong screen. Verified with the frontend's
+  own menu self-test (`NDS_FRONTEND_SELFTEST_MENU=1`): `-Native` now reports
+  `touch_presses=1 last_touch=(127,372)` - byte-identical to the SDL path, which
+  reported `0`/`(-1,-1)` before the fix - and a direct guest read agrees on both
+  paths (EXTKEYIN `0x7F` idle -> `0x3F` pen-down on the bottom screen; no
+  pen-down for a top-screen click).
 - **Failure is loud.** If Vulkan cannot come up, `-Native` reports it and exits
   rather than presenting nothing. There is no silent fall back to the SDL blit,
   because the window was created for Vulkan and half-configured presentation is

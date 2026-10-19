@@ -8,6 +8,7 @@
 
 #include <SDL3/SDL.h>
 
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -32,6 +33,11 @@ CanvasBuffer canvas;
 SDL_Window* output_window = nullptr;
 uint32_t output_width = 0;
 uint32_t output_height = 0;
+// The surfaces the last frame was composed from. The pointer mapping reads them
+// so a widened (adaptive) top screen keeps the same rule the pixels were laid
+// out with.
+uint32_t presented_top_width = pkmn::render::kScreenWidth;
+uint32_t presented_bottom_width = pkmn::render::kScreenWidth;
 
 int native_enabled()
 {
@@ -117,10 +123,13 @@ extern "C" int pkmng5pc_native_present_frame(
         return 0;
     }
 
+    presented_top_width
+        = static_cast<uint32_t>(top_width > 0 ? top_width : pkmn::render::kScreenWidth);
+    presented_bottom_width
+        = static_cast<uint32_t>(bottom_width > 0 ? bottom_width : pkmn::render::kScreenWidth);
+
     canvas = pkmn::render::compose_screens_bgra8(reinterpret_cast<const uint8_t*>(top),
-        static_cast<uint32_t>(top_width > 0 ? top_width : pkmn::render::kScreenWidth),
-        reinterpret_cast<const uint8_t*>(bottom),
-        static_cast<uint32_t>(bottom_width > 0 ? bottom_width : pkmn::render::kScreenWidth),
+        presented_top_width, reinterpret_cast<const uint8_t*>(bottom), presented_bottom_width,
         ScreenLayout::Stacked, output_width, output_height);
 
     if (!presenter->present(canvas.view())) {
@@ -128,6 +137,45 @@ extern "C" int pkmng5pc_native_present_frame(
         // this frame rather than presenting a mismatched canvas.
         sync_output_size();
     }
+    return 1;
+}
+
+extern "C" int pkmng5pc_native_present_logical_point(float window_x, float window_y, int* x, int* y)
+{
+    if (!presenter || !output_window || !x || !y || output_width == 0 || output_height == 0) {
+        return 0;
+    }
+
+    // SDL reports pointer positions in window points; the canvas is built in
+    // pixels. They differ on a high-DPI display, and SDL_RenderCoordinatesFromWindow
+    // (which this replaces) applies exactly this conversion.
+    float pixel_x = window_x;
+    float pixel_y = window_y;
+    int window_width = 0;
+    int window_height = 0;
+    if (SDL_GetWindowSize(output_window, &window_width, &window_height) && window_width > 0
+        && window_height > 0) {
+        pixel_x = window_x * static_cast<float>(output_width) / static_cast<float>(window_width);
+        pixel_y = window_y * static_cast<float>(output_height) / static_cast<float>(window_height);
+    }
+    if (pixel_x < 0.0f || pixel_y < 0.0f) {
+        return 0;
+    }
+
+    const pkmn::render::StackPlacement stack = pkmn::render::stack_placement(presented_top_width,
+        presented_bottom_width, ScreenLayout::Stacked, output_width, output_height);
+    if (!stack.visible || stack.scale == 0) {
+        return 0;
+    }
+
+    // The inverse of the compositor's integer scale: the stack's top-left corner
+    // is logical (0,0), and each scale pixels is one logical pixel. Points on the
+    // letterbox land outside the logical canvas, which the frontend's own
+    // routing then rejects as "not a touch" - the same outcome as the SDL path.
+    *x = static_cast<int>(
+        std::floor((pixel_x - static_cast<float>(stack.x)) / static_cast<float>(stack.scale)));
+    *y = static_cast<int>(
+        std::floor((pixel_y - static_cast<float>(stack.y)) / static_cast<float>(stack.scale)));
     return 1;
 }
 

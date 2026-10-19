@@ -73,16 +73,19 @@ namespace {
         }
     }
 
-    // The one placement rule for the already-composed stack: integer scale to
-    // fit, centred, letterboxed. Shared by both source formats.
-    struct StackPlacement {
-        uint32_t scale = 1;
-        uint32_t width = 0;
-        uint32_t height = 0;
+    // Where one screen lands in the canvas. Internal: the public API exposes
+    // only the enclosing stack (`StackPlacement`), because that is all the
+    // pointer mapping needs to invert the layout.
+    struct ScreenPlacement {
         uint32_t x = 0;
         uint32_t y = 0;
+        uint32_t width = 0;
+        uint32_t height = 0;
+        bool visible = false;
     };
 
+    // The one placement rule for the already-composed stack: integer scale to
+    // fit, centred, letterboxed. Shared by both source formats.
     StackPlacement place_stack(
         uint32_t native_w, uint32_t native_h, uint32_t output_width, uint32_t output_height)
     {
@@ -96,7 +99,59 @@ namespace {
         placement.height = std::min(output_height, native_h * scale);
         placement.x = (output_width - placement.width) / 2;
         placement.y = (output_height - placement.height) / 2;
+        placement.visible = placement.width != 0 && placement.height != 0;
         return placement;
+    }
+
+    // The placement of both screens in the composed canvas. `compose_screens_bgra8()`
+    // draws from it and `stack_placement()` reports the enclosing stack, so a
+    // pointer maps back through the very rectangle the pixels were written into.
+    void place_screens(uint32_t top_width, uint32_t bottom_width, ScreenLayout layout,
+        uint32_t output_width, uint32_t output_height, StackPlacement& stack, ScreenPlacement& top,
+        ScreenPlacement& bottom)
+    {
+        stack = StackPlacement {};
+        top = ScreenPlacement {};
+        bottom = ScreenPlacement {};
+        if (output_width == 0 || output_height == 0) {
+            return;
+        }
+
+        if (top_width == 0) {
+            top_width = kScreenWidth;
+        }
+        if (bottom_width == 0) {
+            bottom_width = kScreenWidth;
+        }
+
+        const bool stacked = layout == ScreenLayout::Stacked;
+        const uint32_t native_w
+            = stacked ? std::max(top_width, bottom_width) : top_width + bottom_width;
+        const uint32_t native_h = stacked ? kScreenHeight * 2 : kScreenHeight;
+
+        stack = place_stack(native_w, native_h, output_width, output_height);
+        const uint32_t stack_w = stack.width;
+        const uint32_t stack_h = stack.height;
+
+        // Each screen keeps its own native width at the shared integer scale, so
+        // a widened (adaptive) top screen does not stretch the untouched bottom
+        // one.
+        if (stacked) {
+            const uint32_t screen_h = std::min(stack_h / 2, kScreenHeight * stack.scale);
+            const uint32_t top_w = std::min(stack_w, top_width * stack.scale);
+            const uint32_t bottom_w = std::min(stack_w, bottom_width * stack.scale);
+            top = ScreenPlacement { stack.x + (stack_w - top_w) / 2, stack.y, top_w, screen_h,
+                top_w != 0 && screen_h != 0 };
+            bottom = ScreenPlacement { stack.x + (stack_w - bottom_w) / 2,
+                stack.y + (stack_h - screen_h), bottom_w, screen_h,
+                bottom_w != 0 && screen_h != 0 };
+        } else {
+            const uint32_t top_w = std::min(stack_w, top_width * stack.scale);
+            const uint32_t bottom_w = std::min(stack_w - top_w, bottom_width * stack.scale);
+            top = ScreenPlacement { stack.x, stack.y, top_w, stack_h, top_w != 0 && stack_h != 0 };
+            bottom = ScreenPlacement { stack.x + top_w, stack.y, bottom_w, stack_h,
+                bottom_w != 0 && stack_h != 0 };
+        }
     }
 
 } // namespace
@@ -155,46 +210,28 @@ CanvasBuffer compose_screens_bgra8(const uint8_t* top, uint32_t top_width, const
 {
     CanvasBuffer canvas = make_canvas(output_width, output_height);
 
-    if (output_width == 0 || output_height == 0) {
-        return canvas;
-    }
+    StackPlacement stack;
+    ScreenPlacement top_placement;
+    ScreenPlacement bottom_placement;
+    place_screens(top_width, bottom_width, layout, output_width, output_height, stack,
+        top_placement, bottom_placement);
 
-    if (top_width == 0) {
-        top_width = kScreenWidth;
-    }
-    if (bottom_width == 0) {
-        bottom_width = kScreenWidth;
-    }
-
-    const bool stacked = layout == ScreenLayout::Stacked;
-    const uint32_t native_w
-        = stacked ? std::max(top_width, bottom_width) : top_width + bottom_width;
-    const uint32_t native_h = stacked ? kScreenHeight * 2 : kScreenHeight;
-
-    const StackPlacement placement = place_stack(native_w, native_h, output_width, output_height);
-    const uint32_t stack_w = placement.width;
-    const uint32_t stack_h = placement.height;
-    const uint32_t origin_x = placement.x;
-    const uint32_t origin_y = placement.y;
-
-    // Each screen keeps its own native width at the shared integer scale, so a
-    // widened (adaptive) top screen does not stretch the untouched bottom one.
-    if (stacked) {
-        const uint32_t screen_h = std::min(stack_h / 2, kScreenHeight * placement.scale);
-        const uint32_t top_w = std::min(stack_w, top_width * placement.scale);
-        const uint32_t bottom_w = std::min(stack_w, bottom_width * placement.scale);
-        draw_screen_bgra8(
-            top, top_width, origin_x + (stack_w - top_w) / 2, origin_y, top_w, screen_h, canvas);
-        draw_screen_bgra8(bottom, bottom_width, origin_x + (stack_w - bottom_w) / 2,
-            origin_y + (stack_h - screen_h), bottom_w, screen_h, canvas);
-    } else {
-        const uint32_t top_w = std::min(stack_w, top_width * placement.scale);
-        const uint32_t bottom_w = std::min(stack_w - top_w, bottom_width * placement.scale);
-        draw_screen_bgra8(top, top_width, origin_x, origin_y, top_w, stack_h, canvas);
-        draw_screen_bgra8(
-            bottom, bottom_width, origin_x + top_w, origin_y, bottom_w, stack_h, canvas);
-    }
+    draw_screen_bgra8(top, top_width ? top_width : kScreenWidth, top_placement.x, top_placement.y,
+        top_placement.width, top_placement.height, canvas);
+    draw_screen_bgra8(bottom, bottom_width ? bottom_width : kScreenWidth, bottom_placement.x,
+        bottom_placement.y, bottom_placement.width, bottom_placement.height, canvas);
     return canvas;
+}
+
+StackPlacement stack_placement(uint32_t top_width, uint32_t bottom_width, ScreenLayout layout,
+    uint32_t output_width, uint32_t output_height)
+{
+    StackPlacement stack;
+    ScreenPlacement top_placement;
+    ScreenPlacement bottom_placement;
+    place_screens(top_width, bottom_width, layout, output_width, output_height, stack,
+        top_placement, bottom_placement);
+    return stack;
 }
 
 } // namespace pkmn::render

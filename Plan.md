@@ -410,9 +410,11 @@ in-game load accepts the exported file. **Enhancements may begin after this.**
       Null and a shader-free Vulkan presenter — `docs/adr/0005-vulkan-first-renderer.md`.
       The same day the seam was wired to the game: `tools/play -Native` presents
       through it via a guarded hook in the vendored frontend
-      (`docs/adr/0006-ndsrecomp-native-present-hook.md`). Still open: this
-      milestone's own layout policy beyond stacked-at-integer-scale, post-FX, and
-      the present loop that is decoupled from the runner's frontend.)*
+      (`docs/adr/0006-ndsrecomp-native-present-hook.md`). Pointer/touch maps
+      through the same placement rule the compositor draws with. Still open:
+      this milestone's own layout policy beyond stacked-at-integer-scale,
+      post-FX, and the present loop that is decoupled from the runner's
+      frontend.)*
 - [ ] **Layout:** dual-screen layout for arbitrary aspect ratios (stacked,
       side-by-side, ultrawide) with safe areas. Game logic unchanged.
 - [ ] **Frame decoupling:** guest logic stays locked at 60 Hz (no speedup) while
@@ -617,8 +619,28 @@ Newest first. Keep entries short; details and evidence live in `re/notes/`.
   presented — the same run, a different presenter. `docs/adr/0006-…` records the
   decision and why a tracked patch beat both a second window and a from-scratch
   frontend. **Scope:** Windows, Black only; presentation only (no layout policy,
-  post-FX or frame decoupling yet), `-Native` is stacked-only, and pointer/touch
-  coordinates are not yet rescaled on that path.
+  post-FX or frame decoupling yet), and `-Native` is stacked-only.
+
+- **2026-10-19 (native present is clickable: the layout rule is inverted, not
+  duplicated)** - the one open limitation of the `-Native` step above is closed.
+  The frontend converts pointer events through `SDL_RenderCoordinatesFromWindow`,
+  and the native path deliberately creates no SDL renderer, so a click never
+  became a stylus coordinate (`touch_presses=0`). The fix is not a second copy of
+  the layout maths in the frontend: `compose_screens_bgra8()` now draws from a
+  single `place_screens()`/`stack_placement()` pair, and the bridge exposes
+  `pkmng5pc_native_present_logical_point()` as the **inverse** of that same
+  placement (including the window-point to pixel scale for high-DPI), which the
+  guarded hook calls where it would have called the renderer. Clicks outside the
+  bottom screen fall through the frontend's existing routing, so the top screen
+  and the letterbox cannot touch. Verified on Windows/Black: the frontend's own
+  `NDS_FRONTEND_SELFTEST_MENU=1` drive reports `touch_presses=1
+  last_touch=(127,372)` on `-Native` - byte-identical to the SDL path, and `0`
+  before the change - a direct guest read agrees (EXTKEYIN `0x7F` -> `0x3F`
+  pen-down on the bottom screen, no pen-down for a top-screen click), and two
+  interleaved 600-frame A/B pairs keep `frame_fnv=(02da4c025df80383,
+  02da4c025df80383)` with 0 underruns on both paths. **Scope:** Windows, Black;
+  the touch mapping is proven by the frontend's self-test and a guest ADC read,
+  not by hand-playing a touch-only screen.
 
 - **2026-10-19 (the ARM7 alias work lands, and it is a 33.5% boot win)** — the
   two ARM7 `[[alias]]` blocks in `re/config/black.toml`, disabled since

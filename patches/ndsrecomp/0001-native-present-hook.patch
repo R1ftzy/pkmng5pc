@@ -1,8 +1,8 @@
 diff --git a/runner/src/frontend.cpp b/runner/src/frontend.cpp
-index 2595ee5..a8fc497 100644
+index 2595ee5..502cddf 100644
 --- a/runner/src/frontend.cpp
 +++ b/runner/src/frontend.cpp
-@@ -32,6 +32,22 @@
+@@ -32,6 +32,25 @@
  #include "melonds_compute/ComputeHost.h"
  #endif
  
@@ -19,13 +19,50 @@ index 2595ee5..a8fc497 100644
 +extern "C" int pkmng5pc_native_present_init(void* sdl_window);
 +extern "C" int pkmng5pc_native_present_frame(const uint32_t* top, int top_width,
 +                                             const uint32_t* bottom, int bottom_width);
++extern "C" int pkmng5pc_native_present_logical_point(float window_x,
++                                                     float window_y, int* x,
++                                                     int* y);
 +extern "C" void pkmng5pc_native_present_shutdown();
 +#endif
 +
  namespace {
  // Written per presented frame by the frontend loop, read from the same
  // thread by the `frontend_stats` debug command at the debug_pump() safe
-@@ -1484,6 +1500,19 @@ bool create_presentation(const NdsFrontendOptions& options,
+@@ -1314,6 +1333,33 @@ void convert_mouse_event_to_logical_coordinates(
+         }
+         return nullptr;
+     };
++#if defined(PKMNG5PC_NATIVE_PRESENT)
++    // No SDL renderer exists on the port's present path, so the conversion the
++    // renderer would do is asked of the presenter instead: it is the inverse of
++    // the composition it just presented. Without this a click never becomes a
++    // stylus coordinate (the routing below then sees renderer pixels).
++    if (pkmng5pc_native_present_enabled()) {
++        if (event.type == SDL_MOUSEBUTTONDOWN ||
++            event.type == SDL_MOUSEBUTTONUP) {
++            int x = 0;
++            int y = 0;
++            if (pkmng5pc_native_present_logical_point(
++                    event.button.x, event.button.y, &x, &y)) {
++                event.button.x = static_cast<float>(x);
++                event.button.y = static_cast<float>(y);
++            }
++        } else if (event.type == SDL_MOUSEMOTION) {
++            int x = 0;
++            int y = 0;
++            if (pkmng5pc_native_present_logical_point(
++                    event.motion.x, event.motion.y, &x, &y)) {
++                event.motion.x = static_cast<float>(x);
++                event.motion.y = static_cast<float>(y);
++            }
++        }
++        return;
++    }
++#endif
+     if (event.type == SDL_MOUSEBUTTONDOWN ||
+         event.type == SDL_MOUSEBUTTONUP) {
+         if (SDL_Renderer* renderer =
+@@ -1484,6 +1530,19 @@ bool create_presentation(const NdsFrontendOptions& options,
                           bool allow_gl_top = true) {
      presentation.separate =
          options.screen_layout == NdsScreenLayout::Separate;
@@ -45,7 +82,7 @@ index 2595ee5..a8fc497 100644
  #if defined(NDS_HAVE_COMPUTE_RENDERER)
      const char* direct_selection =
          std::getenv("NDS_COMPUTE_DIRECT_PRESENT");
-@@ -1521,8 +1550,10 @@ bool create_presentation(const NdsFrontendOptions& options,
+@@ -1521,8 +1580,10 @@ bool create_presentation(const NdsFrontendOptions& options,
          : kScreenHeight * 2 * kWindowScale;
      const uint64_t top_window_flags =
          SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI |
@@ -58,7 +95,7 @@ index 2595ee5..a8fc497 100644
      presentation.windows[0] = create_window(
          presentation.separate ? "ndsrecomp - Top Screen"
                                 : "ndsrecomp firmware preview",
-@@ -1535,7 +1566,7 @@ bool create_presentation(const NdsFrontendOptions& options,
+@@ -1535,7 +1596,7 @@ bool create_presentation(const NdsFrontendOptions& options,
          std::fprintf(stderr, "[sdl] window failed: %s\n", SDL_GetError());
          return false;
      }
@@ -67,7 +104,7 @@ index 2595ee5..a8fc497 100644
          presentation.renderers[0] = create_renderer(presentation.windows[0]);
          if (!presentation.renderers[0]) {
              std::fprintf(stderr, "[sdl] renderer failed: %s\n", SDL_GetError());
-@@ -1586,6 +1617,14 @@ bool create_presentation(const NdsFrontendOptions& options,
+@@ -1586,6 +1647,14 @@ bool create_presentation(const NdsFrontendOptions& options,
      }
  
      for (int screen = 0; screen < 2; ++screen) {
@@ -82,7 +119,7 @@ index 2595ee5..a8fc497 100644
          if (screen == 0 && presentation.gl_top) {
              presentation.window_ids[screen] =
                  SDL_GetWindowID(presentation.windows[screen]);
-@@ -1722,6 +1761,22 @@ PresentationTicks present_screens(FrontendPresentation& presentation,
+@@ -1722,6 +1791,22 @@ PresentationTicks present_screens(FrontendPresentation& presentation,
                                    float virtual_stylus_y,
                                    const char* savestate_notice) {
      PresentationTicks ticks{};
@@ -105,7 +142,7 @@ index 2595ee5..a8fc497 100644
      if (presentation.gl_top) {
  #if defined(NDS_HAVE_COMPUTE_RENDERER)
          NdsGpu2dDirectFrame direct_frame{};
-@@ -1841,6 +1896,17 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& options) {
+@@ -1841,6 +1926,17 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& options) {
          SDL_Quit();
          return 1;
      }
@@ -123,7 +160,7 @@ index 2595ee5..a8fc497 100644
      const int bottom_logical_width = presentation.separate
          ? presentation.screen_widths[1]
          : presentation.canvas_width;
-@@ -3737,6 +3803,9 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& options) {
+@@ -3737,6 +3833,9 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& options) {
      nds_compute_host_stop();
  #endif
      if (controller) SDL_GameControllerClose(controller);
