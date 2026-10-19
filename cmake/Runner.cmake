@@ -26,21 +26,10 @@ if(NOT _pkmng5pc_bank_bodies)
         "      --recompiler third_party/ndsrecomp/recompiler/build/nds_recompile\n")
 endif()
 
-include(FetchContent)
-
-set(SDL_TESTS OFF CACHE BOOL "" FORCE)
-set(SDL_EXAMPLES OFF CACHE BOOL "" FORCE)
-set(SDL_SHARED OFF CACHE BOOL "" FORCE)
-set(SDL_STATIC ON CACHE BOOL "" FORCE)
-
-FetchContent_Declare(SDL3
-    GIT_REPOSITORY https://github.com/libsdl-org/SDL.git
-    GIT_TAG release-3.4.18
-    GIT_SHALLOW TRUE)
-FetchContent_MakeAvailable(SDL3)
-
-set(SDL3_DIR "${CMAKE_SOURCE_DIR}/cmake/sdl3-shim" CACHE PATH
-    "Config-package shim for ndsrecomp's find_package(SDL3 CONFIG REQUIRED)" FORCE)
+# SDL3 is shared with the renderer; the helper fetches it once and points
+# find_package at the config shim (see cmake/HostDeps.cmake).
+include(HostDeps)
+pkmng5pc_ensure_sdl3()
 
 # ndsrecomp options. Cache-set with FORCE so they win over the defaults their
 # CMakeLists declares.

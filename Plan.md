@@ -402,6 +402,9 @@ in-game load accepts the exported file. **Enhancements may begin after this.**
       two DS screens, replacing the runner's fixed 512×768 top-over-bottom
       present. One home for layout, aspect ratio, and post-FX. Owning this also
       means our own present loop, decoupled from the runner's frontend.
+      *(The seam landed 2026-10-19: `render/backend.h`, `compose_screens()`, a
+      Null and a shader-free Vulkan presenter — `docs/adr/0005-vulkan-first-renderer.md`.
+      The compositor itself, and wiring it into the frontend, are what remain.)*
 - [ ] **Layout:** dual-screen layout for arbitrary aspect ratios (stacked,
       side-by-side, ultrawide) with safe areas. Game logic unchanged.
 - [ ] **Frame decoupling:** guest logic stays locked at 60 Hz (no speedup) while
@@ -588,6 +591,17 @@ Newest first. Keep entries short; details and evidence live in `re/notes/`.
   (`frame_fnv=(f462d3ff20fd83f4,06be2b0d14dc4383)` in all four interleaved runs).
   **Scope:** Windows, Black only; the A/B is a boot window and the ARM9 ITCM span
   still interprets.
+
+- **2026-10-19 (the renderer seam exists; Vulkan is the first backend)** —
+  `render/` adds `pkmn::render::Presenter` behind `render/backend.h` — the single
+  place allowed to name a GPU API — plus `compose_screens()` as the one home for
+  dual-screen layout. The first backend is Vulkan and is deliberately
+  shader-free (staging buffer → `vkCmdCopyBufferToImage` → present), so the seam
+  can be built and exercised with no Vulkan SDK and no shader compiler; entry
+  points are resolved at run time and a missing driver degrades to a Null
+  presenter. `docs/adr/0005-vulkan-first-renderer.md` records the decision and the
+  verification. **This is the seam, not M8:** GPU-side
+  compositing, resolution policy, frame decoupling and post-FX remain open.
 
 - **2026-10-18 (Black reaches gameplay — played by hand past the sync-facade
   halt)** — the NEW GAME transition used to park the ARM9 forever in the sync

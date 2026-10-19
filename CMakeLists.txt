@@ -12,14 +12,22 @@ endif()
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-include(cmake/CompilerWarnings.cmake)
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
+
+include(CompilerWarnings)
 
 option(PKMNG5PC_BUILD_TESTS "Build unit tests" ON)
 option(PKMNG5PC_BUILD_TOOLS "Build local extraction tools" ON)
 option(PKMNG5PC_BUILD_RUNNER
     "Build the ndsrecomp runner and its SDL3 dependency (needs generated title banks)" OFF)
+option(PKMNG5PC_BUILD_RENDER
+    "Build the render seam and its GPU backends" ON)
 
 add_subdirectory(rom)
+
+if(PKMNG5PC_BUILD_RENDER)
+    add_subdirectory(render)
+endif()
 
 if(PKMNG5PC_BUILD_TOOLS)
     add_subdirectory(tools)
@@ -31,5 +39,5 @@ if(PKMNG5PC_BUILD_TESTS)
 endif()
 
 if(PKMNG5PC_BUILD_RUNNER)
-    include(cmake/Runner.cmake)
+    include(Runner)
 endif()

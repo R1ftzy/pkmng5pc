@@ -9,6 +9,13 @@ add_executable(pkmn_tests
 
 target_link_libraries(pkmn_tests PRIVATE pkmn::core pkmn_warnings)
 
+# The render seam is optional; its tests join the suite only when it is built.
+# SDL3 is needed because the presenter factory reaches the Vulkan backend.
+if(TARGET pkmn::render)
+    target_sources(pkmn_tests PRIVATE render_test.cpp)
+    target_link_libraries(pkmn_tests PRIVATE pkmn::render SDL3::SDL3)
+endif()
+
 target_compile_definitions(pkmn_tests PRIVATE
     PKMNG5PC_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
 )
