@@ -43,6 +43,7 @@ from tui.model import (
     title_identity,
 )
 from tui.picker import Picker
+from tui.recomp import RecompStats, collect_recomp_stats, read_bank_stats
 from tui.terminal import (
     MouseEvent,
     Terminal,
@@ -163,6 +164,7 @@ class App:
         self.last_save = 0.0
         self.last_size = (0, 0)
         self._job_revision = 0
+        self._recomp_cache: tuple[tuple[str, str, str], float, RecompStats] | None = None
         self.sha1_cache: dict[tuple[str, int, int], str] = {}
         self.sha1_pending: set[tuple[str, int, int]] = set()
         self.sha1_errors: dict[tuple[str, int, int], str] = {}
@@ -196,6 +198,7 @@ class App:
         self.s.rom_path = self.repo.store(info.path)
         self.s.rom_dir = self.repo.store(info.path.parent)
         self.ensure_sha1()
+        self.invalidate_recomp()
         if announce:
             self.set_toast(f"Selected {info.display_name}", "success")
         self.touch()
@@ -342,6 +345,50 @@ class App:
             if requested_sha1s != cached_sha1s:
                 problems.append("extra title SHA-1s differ from the cache")
         return problems
+
+    def recomp_stats(self, force: bool = False) -> RecompStats:
+        info = self.selected_rom()
+        sha1 = self.current_sha1()
+        key = (
+            str(self.repo.resolve(self.s.banks_dir)),
+            sha1 or "",
+            info.code if info else "",
+            str(info.path.parent) if info else "",
+        )
+        now = time.monotonic()
+        cached = self._recomp_cache
+        if not force and cached and cached[0] == key and now - cached[1] < 3.0:
+            return cached[2]
+        banks = read_bank_stats(self.repo.resolve(self.s.banks_dir))
+        if info is None:
+            stats = RecompStats(
+                banks=banks,
+                warnings=("select a ROM to match runtime evidence",),
+            )
+        elif sha1 is None:
+            stats = RecompStats(
+                banks=banks,
+                warnings=("selected ROM is still hashing; runtime evidence will appear when it finishes",),
+            )
+        else:
+            stats = collect_recomp_stats(
+                self.repo.root,
+                self.repo.resolve(self.s.banks_dir),
+                sha1,
+                info.code if info else None,
+                info.path.parent if info else None,
+            )
+        self._recomp_cache = (key, now, stats)
+        return stats
+
+    def wait_for_sha1(self, timeout: float = 15.0) -> None:
+        deadline = time.monotonic() + timeout
+        while self.sha1_state()[0] == "pending" and time.monotonic() < deadline:
+            time.sleep(0.02)
+
+    def invalidate_recomp(self) -> None:
+        self._recomp_cache = None
+        self.dirty = True
 
     def _choice(
         self,
@@ -561,6 +608,7 @@ class App:
         )
 
     def quickstart_finished(self, job: Job) -> None:
+        self.invalidate_recomp()
         self.set_toast("Quickstart finished", "success", seconds=7)
 
     def show_review(
@@ -587,6 +635,8 @@ class App:
         bankgen = self.repo.bankgen_path(self.s.preset)
         runner, runner_preset = self.repo.find_runner(self.s.preset)
         recompiler = self.repo.recompiler_path
+        preset = self.repo.preset_info(self.s.preset)
+        recomp = self.recomp_stats()
         sha_state, sha_value = self.sha1_state()
         cache = self.cache()
         mismatches = self.cache_mismatches(cache)
@@ -635,11 +685,14 @@ class App:
         rom_rows.append("SHA-1: " + sha_label)
 
         build_rows = [
-            f"Preset: {self.s.preset or '(none)'}",
+            f"Preset: {preset.display_name}  [{preset.name}]"
+            + ("  ·  recommended" if preset.recommended else ""),
+            f"Build type: {preset.build_type}  ·  compiler: {preset.compiler}",
+            f"Profile: {preset.description}",
             f"Build tests: {on_off(self.s.build_tests)}  ·  host tools: {on_off(self.s.build_tools)}",
             f"Build render: {on_off(self.s.build_render)}  ·  runner: {on_off(self.s.build_runner)}",
             f"Native present: {on_off(self.s.native_present)}",
-            f"Banks directory: {self.repo.display(banks)}  ({bank_count} shard files)",
+            f"Banks directory: {self.repo.display(banks)}  ({bank_count} shard files, {format_count(recomp.banks.total_functions)} functions)",
             f"Extra bank dirs: {extra_dirs}",
             f"Extra SHA-1s: {extra_sha1s}",
             f"Build directory: {self.repo.display(self.repo.build_dir(self.s.preset))}",
@@ -663,6 +716,60 @@ class App:
             f"Overlay seeds: {self.s.overlay_seeds or default_seeds or '(none)'}",
             f"Shards: {self.s.shards}  ·  overlays: {on_off(self.s.overlays)}  ·  emit only: {on_off(self.s.emit_only)}",
         ]
+
+        recomp_rows: list[str] = []
+        if recomp.banks.total_functions:
+            group_count = len(recomp.banks.groups)
+            recomp_rows.append(
+                f"Recompiled functions: {format_count(recomp.banks.total_functions)} "
+                f"({format_count(recomp.banks.arm9_functions)} ARM9, "
+                f"{format_count(recomp.banks.arm7_functions)} ARM7) across "
+                f"{group_count} bank group{'s' if group_count != 1 else ''}"
+            )
+            recomp_rows.append(
+                f"Dispatch rows: {format_count(recomp.banks.dispatch_entries)}  ·  "
+                f"bank headers generated {format_timestamp(recomp.banks.generated_at)}"
+            )
+        else:
+            recomp_rows.append("Recompiled functions: no generated banks in the selected directory")
+        if recomp.coverage or recomp.perf:
+            share = recomp.interpreter_share
+            if share is None:
+                entries = recomp.coverage.entries if recomp.coverage else recomp.perf.entries
+                recomp_rows.append(
+                    f"Runtime dispatch: {format_count(entries)} interpreter entries; share unavailable"
+                )
+            else:
+                native_text, interpreter_text = format_share(share)
+                source = (
+                    "dispatcher events in the latest matching run"
+                    if recomp.coverage
+                    else "Tier-3 counters; no matching coverage manifest"
+                )
+                recomp_rows.append(
+                    f"Runtime dispatch: {native_text} native  ·  {interpreter_text} interpreter "
+                    f"({source})"
+                )
+            if recomp.coverage:
+                recomp_rows.append(
+                    f"Interpreter seen: {format_count(recomp.coverage.distinct)} distinct fallback targets, "
+                    f"{format_count(recomp.coverage.entries)} entries, "
+                    f"{format_count(recomp.coverage.insns)} instructions"
+                )
+            else:
+                recomp_rows.append(
+                    "Interpreter seen: fallback targets not measured; keep the coverage manifest on Play"
+                )
+            recomp_rows.append(
+                f"Evidence: build {recomp.build_id or '(unknown)'} at "
+                f"{format_timestamp(recomp.observed_at)}"
+            )
+        else:
+            recomp_rows.append(
+                "Runtime dispatch: not measured; enable Coverage and Diagnostics on Play and run once"
+            )
+        for warning in recomp.warnings:
+            recomp_rows.append("Evidence note: " + warning)
 
         bootstrap_rows = [
             f"Standalone runner: {on_off(self.s.bootstrap_runner)}  ·  SDL3: {on_off(self.s.bootstrap_sdl3)}",
@@ -701,6 +808,7 @@ class App:
             ("ACTION", action_rows),
             ("ROM", rom_rows),
             ("BUILD", build_rows),
+            ("RECOMPILATION", recomp_rows),
             ("TITLE BANKS", bank_rows),
             ("BOOTSTRAP", bootstrap_rows),
             ("PLAY", play_rows),
@@ -767,6 +875,7 @@ class App:
             self.s.rom_path = self.repo.store(path)
             self.s.rom_dir = self.repo.store(path.parent)
             self.ensure_sha1()
+            self.invalidate_recomp()
             self.set_toast(
                 f"Selected {info.display_name}" if info else f"Selected {path.name}", "success"
             )
@@ -875,7 +984,8 @@ class App:
     def render_chrome(self, width: int) -> list[str]:
         term = self.terminal
         left = "  " + term.bold(term.cyan("pkmng5pc")) + term.dim("  launcher")
-        right = term.dim(f"{platform_label()} · {self.s.preset or 'no preset'}")
+        preset_name = self.repo.preset_info(self.s.preset).display_name if self.s.preset else "no preset"
+        right = term.dim(f"{platform_label()} · {preset_name}")
         if visible_len(right) > width // 2:
             right = ""
         lines = [pad_between(left, right, width), "  " + term.dim(term.rule(width - 4))]
@@ -923,6 +1033,148 @@ class App:
             return "ok", f"{info.display_name}{code}", str(info.path)
         return "error", info.display_name, str(info.path)
 
+    def recomp_items(self, detailed: bool = False) -> list[Item]:
+        term = self.terminal
+        stats = self.recomp_stats()
+        banks = stats.banks
+        items = [Item("recomp-label", "RECOMPILATION", kind="section")]
+        if banks.total_functions:
+            cpu = "  ·  ".join(
+                part
+                for part in (
+                    f"{format_count(banks.arm9_functions)} ARM9" if banks.arm9_functions else "",
+                    f"{format_count(banks.arm7_functions)} ARM7" if banks.arm7_functions else "",
+                )
+                if part
+            )
+            items.append(
+                Item(
+                    "recomp-functions",
+                    "Recompiled functions",
+                    kind="info",
+                    value=term.green(f"{format_count(banks.total_functions)} functions")
+                    + (term.dim(f"  {cpu}") if detailed else ""),
+                    hint="Total functions emitted in the current bank headers; static output, not a completion estimate.",
+                    preview=[
+                        f"Total: {format_count(banks.total_functions)} functions in {len(banks.groups)} bank group(s).",
+                        cpu or "No CPU split available.",
+                        f"Bank headers generated {format_timestamp(banks.generated_at)}.",
+                    ],
+                )
+            )
+            if detailed:
+                items.append(
+                    Item(
+                        "recomp-dispatch",
+                        "Dispatch rows",
+                        kind="info",
+                        value=format_count(banks.dispatch_entries),
+                        hint="Address/mode rows the runner binary-searches when control transfers between recompiled code.",
+                    )
+                )
+        else:
+            items.append(
+                Item(
+                    "recomp-functions",
+                    "Recompiled functions",
+                    kind="info",
+                    value=term.yellow("not generated"),
+                    hint="Generate title banks on Setup; the count comes from the nds_recompile bank headers.",
+                )
+            )
+        if stats.coverage or stats.perf:
+            share = stats.interpreter_share
+            if share is None:
+                entries = stats.coverage.entries if stats.coverage else stats.perf.entries
+                value = term.yellow(f"{format_count(entries)} interpreter entries")
+                hint = "Runtime counters are available, but no dispatcher denominator was recorded."
+            else:
+                native_text, interpreter_text = format_share(share)
+                value = term.green(f"{native_text} native") + term.dim(
+                    f"  ·  {interpreter_text} interpreter"
+                )
+                hint = (
+                    "Share of dispatcher events in the latest matching run; direct C calls are not in the denominator."
+                    if stats.coverage
+                    else "Performance bundle only; the share uses Tier-3 counters because no coverage manifest matched."
+                )
+            items.append(
+                Item(
+                    "recomp-runtime",
+                    "Runtime dispatch",
+                    kind="info",
+                    value=value,
+                    hint=hint,
+                )
+            )
+            if stats.coverage:
+                items.append(
+                    Item(
+                        "recomp-fallback",
+                        "Interpreter coverage",
+                        kind="info",
+                        value=(
+                            f"{format_count(stats.coverage.entries)} entries  ·  "
+                            f"{format_count(stats.coverage.distinct)} targets  ·  "
+                            f"{format_count(stats.coverage.insns)} insns"
+                        ),
+                        hint="Tier-3 entry events, distinct guest targets (ARM9 + ARM7) and interpreted instructions in the latest coverage manifest.",
+                    )
+                )
+            else:
+                items.append(
+                    Item(
+                        "recomp-fallback",
+                        "Interpreter coverage",
+                        kind="info",
+                        value=term.yellow("not measured"),
+                        hint="Keep the coverage manifest on Play so the launcher can count interpreter entries and fallback targets.",
+                    )
+                )
+            if detailed:
+                build = stats.build_id or "unknown build"
+                items.append(
+                    Item(
+                        "recomp-evidence",
+                        "Last evidence",
+                        kind="info",
+                        value=f"{build}  ·  {format_timestamp(stats.observed_at)}",
+                        hint="Build id and timestamp of the latest coverage/performance evidence; files stay local and git-ignored.",
+                    )
+                )
+        else:
+            items.append(
+                Item(
+                    "recomp-runtime",
+                    "Runtime dispatch",
+                    kind="info",
+                    value=term.yellow("not measured"),
+                    hint="Enable Coverage and Diagnostics on Play and run once to measure interpreter use.",
+                )
+            )
+        if not detailed and (stats.coverage or stats.perf):
+            build = stats.build_id or "unknown build"
+            items.append(
+                Item(
+                    "recomp-evidence",
+                    "Last evidence",
+                    kind="info",
+                    value=f"{build}  ·  {format_timestamp(stats.observed_at)}",
+                    hint="Timestamp of the latest coverage/performance evidence shown above; a Play run without coverage or diagnostics does not replace it.",
+                )
+            )
+        for warning in stats.warnings:
+            items.append(
+                Item(
+                    "recomp-warning",
+                    "Evidence note",
+                    kind="info",
+                    value=term.yellow(warning),
+                    hint="Recompilation evidence may not describe the selected ROM and current bank set.",
+                )
+            )
+        return items
+
     def home_view(self, width: int) -> PageView:
         term = self.terminal
         rom_state, rom_value, rom_hint = self.rom_status()
@@ -930,13 +1182,26 @@ class App:
         bank_count = len(Repo.bank_files(banks))
         runner, runner_preset = self.repo.find_runner(self.s.preset)
         recompiler = self.repo.recompiler_path
+        preset = self.repo.preset_info(self.s.preset)
         rom_color = {"ok": term.green, "warning": term.yellow, "error": term.red}[rom_state]
         items = [
             Item("next", "", kind="notice", value=term.cyan(self.next_step())),
             Item("status", "STATUS", kind="section"),
             Item("rom", "ROM", kind="info", value=rom_color(rom_value), hint=rom_hint),
             Item("folder", "ROM folder", kind="info", value=self.s.rom_dir),
-            Item("preset", "Build preset", kind="info", value=self.s.preset),
+            Item(
+                "preset",
+                "Build profile",
+                kind="info",
+                value=term.cyan(preset.display_name) + term.dim(f"  ·  {preset.compiler}"),
+                hint=f"{preset.name} · {preset.description}",
+                preview=[
+                    f"Preset: {preset.name}",
+                    f"Build type: {preset.build_type}  ·  compiler: {preset.compiler}",
+                    f"Recommended: {'yes' if preset.recommended else 'no'}",
+                    preset.description,
+                ],
+            ),
             Item(
                 "banks",
                 "Title banks",
@@ -971,42 +1236,55 @@ class App:
                 ),
                 hint="Setup page -> Bootstrap recompiler.",
             ),
-            Item("quick", "QUICK ACTIONS", kind="section"),
-            Item(
-                "quickstart",
-                "Quickstart",
-                kind="action",
-                hint="Build only the missing pieces, then play. You review every command before it runs.",
-                preview=["Finish setup and play in one run.", "Missing steps are added automatically."],
-                on_activate=self.quickstart_action,
-            ),
-            self._action(
-                "play",
-                "Play now",
-                lambda: play_command(self.repo, self.s),
-                "Start the game with the current Play settings.",
-                self.play_finished,
-            ),
-            self._action(
-                "configure-build",
-                "Configure & build",
-                lambda: configure_and_build_commands(
-                    self.repo, self.s, self.sha1_for_configure()
-                ),
-                "Configure CMake with the current Build options, then build the selected preset.",
-                self.build_finished,
-            ),
-            Item(
-                "choose-rom",
-                "Choose ROM…",
-                kind="action",
-                hint="Browse folders and pick a .nds/.srl file.",
-                on_activate=self.open_rom_picker,
-            ),
-            self._nav("setup", "Generate title banks…", "setup", "Open Setup for bank generation."),
-            self._nav("build", "Build settings…", "build", "Open the Build options page."),
         ]
-        subtitle = f"{len(self.roms)} ROM(s) · {self.s.preset}"
+        items.extend(self.recomp_items())
+        items.extend(
+            [
+                Item("quick", "QUICK ACTIONS", kind="section"),
+                Item(
+                    "quickstart",
+                    "Quickstart",
+                    kind="action",
+                    hint="Build only the missing pieces, then play. You review every command before it runs.",
+                    preview=[
+                        "Finish setup and play in one run.",
+                        "Missing steps are added automatically.",
+                    ],
+                    on_activate=self.quickstart_action,
+                ),
+                self._action(
+                    "play",
+                    "Play now",
+                    lambda: play_command(self.repo, self.s),
+                    "Start the game with the current Play settings.",
+                    self.play_finished,
+                ),
+                self._action(
+                    "configure-build",
+                    "Configure & build",
+                    lambda: configure_and_build_commands(
+                        self.repo, self.s, self.sha1_for_configure()
+                    ),
+                    "Configure CMake with the current Build options, then build the selected preset.",
+                    self.build_finished,
+                ),
+                Item(
+                    "choose-rom",
+                    "Choose ROM…",
+                    kind="action",
+                    hint="Browse folders and pick a .nds/.srl file.",
+                    on_activate=self.open_rom_picker,
+                ),
+                self._nav(
+                    "setup",
+                    "Generate title banks…",
+                    "setup",
+                    "Open Setup for bank generation.",
+                ),
+                self._nav("build", "Build settings…", "build", "Open the Build options page."),
+            ]
+        )
+        subtitle = f"{len(self.roms)} ROM(s) · {preset.display_name}"
         return PageView("Dashboard", subtitle, items)
 
     def rom_view(self, width: int) -> PageView:
@@ -1164,14 +1442,55 @@ class App:
         sha_state, sha_value = self.sha1_state()
         digest = self.current_sha1()
         mismatches = self.cache_mismatches(cache)
+        preset = self.repo.preset_info(self.s.preset)
+        recomp = self.recomp_stats()
         items: list[Item] = [
-            Item("preset-label", "BUILD PRESET", kind="section"),
+            Item("preset-label", "BUILD PROFILE", kind="section"),
             self._choice(
                 "preset",
-                "Preset",
+                "Profile",
                 "preset",
-                [(name, name) for name in self.repo.presets],
-                "Configure/build preset. RelWithDebInfo is the recommended runner build.",
+                [
+                    (
+                        name,
+                        self.repo.preset_info(name).display_name
+                        + (
+                            " · recommended"
+                            if self.repo.preset_info(name).recommended
+                            else ""
+                        ),
+                    )
+                    for name in self.repo.presets
+                ],
+                f"{preset.build_type}: {preset.description}",
+            ),
+            Item(
+                "preset-type",
+                "Build type",
+                kind="info",
+                value=preset.build_type,
+                hint="CMAKE_BUILD_TYPE selected by the profile.",
+            ),
+            Item(
+                "preset-compiler",
+                "Compiler",
+                kind="info",
+                value=preset.compiler,
+                hint="C / C++ compiler pinned by the preset; changing it later needs a fresh build directory.",
+            ),
+            Item(
+                "preset-id",
+                "Preset ID",
+                kind="info",
+                value=preset.name,
+                hint="Exact CMake configure/build/test preset name used by the commands.",
+            ),
+            Item(
+                "preset-description",
+                "Profile details",
+                kind="info",
+                value=preset.description,
+                hint="Debug is unoptimised; Release is fastest; RelWithDebInfo is the recommended play build.",
             ),
             Item("options-label", "CMAKE OPTIONS", kind="section"),
             self._toggle(
@@ -1210,7 +1529,11 @@ class App:
                 "banks-dir",
                 "Banks directory",
                 lambda: self.s.banks_dir,
-                lambda value: (setattr(self.s, "banks_dir", value), self.touch()),
+                lambda value: (
+                    setattr(self.s, "banks_dir", value),
+                    self.touch(),
+                    self.invalidate_recomp(),
+                ),
                 "Choose banks directory",
                 "The bank directory compiled into the runner; must contain *_[0-9][0-9].c shards.",
             ),
@@ -1219,7 +1542,10 @@ class App:
                 "Bank set",
                 kind="info",
                 value=(
-                    term.green(f"{bank_count} shard files") + term.dim(f"  {self.repo.display(banks)}")
+                    term.green(
+                        f"{bank_count} shards  ·  {format_count(recomp.banks.total_functions)} functions"
+                    )
+                    + term.dim(f"  {self.repo.display(banks)}")
                     if bank_count
                     else term.red(f"missing  {self.repo.display(banks)}")
                 ),
@@ -1337,7 +1663,8 @@ class App:
                 ),
             ]
         )
-        subtitle = f"{self.s.preset} · {self.repo.display(banks)}"
+        items.extend(self.recomp_items(detailed=True))
+        subtitle = f"{preset.display_name} · {self.repo.display(banks)}"
         return PageView("Build", subtitle, items)
 
     def play_view(self, width: int) -> PageView:
@@ -1410,13 +1737,13 @@ class App:
                     "coverage",
                     "Keep coverage manifest",
                     "coverage",
-                    "Keep the coverage manifest instead of passing --no-coverage-manifest.",
+                    "Keep the coverage manifest beside the ROM; the launcher pairs it with the diagnostics bundle for the recompilation panel.",
                 ),
                 self._toggle(
                     "diagnostics-flag",
                     "Diagnostics bundle",
                     "diagnostics",
-                    "Write a performance bundle into banks/play.",
+                    "Write a performance bundle into banks/play for the recompilation panel.",
                 ),
                 Item("advanced", "ADVANCED", kind="section"),
                 self._text(
@@ -1646,6 +1973,7 @@ class App:
         output = self.s.bank_out or default_bank_out(info)
         self.s.banks_dir = self.repo.store(self.repo.resolve(output))
         self.touch()
+        self.invalidate_recomp()
         self.set_toast(f"Build banks dir set to {self.s.banks_dir}", "success")
 
     def help_view(self, width: int) -> PageView:
@@ -1676,6 +2004,17 @@ class App:
         for line in workflow:
             for wrapped in wrap_text(line, text_width):
                 items.append(Item("", "", kind="raw", value=wrapped))
+        items.append(Item("recomp", "RECOMPILATION", kind="section"))
+        recomp_notes = [
+            "Functions counts headers in the selected banks directory. That is static recompiler output, not a completion estimate.",
+            "Runtime evidence pairs the latest coverage manifest for the selected ROM SHA-1 with the performance log from the same run stamp and build id.",
+            "Interpreter share = Tier-3 entries / (Tier-3 entries + dispatcher events). Direct recompiled C calls are not in that denominator.",
+            "Coverage entries are cumulative for a run; performance rows are interval deltas. Missing, mismatched or stale evidence is labeled, never estimated.",
+            "On Play, enable Keep coverage manifest and Diagnostics bundle, then run once. Coverage lands beside the ROM; performance bundles go to banks/play.",
+        ]
+        for line in recomp_notes:
+            for wrapped in wrap_text(line, text_width):
+                items.append(Item("", "", kind="raw", value=wrapped))
         items.append(Item("notes", "NOTES", kind="section"))
         notes = [
             "Quickstart on Home builds only the missing pieces, then plays; every action opens a final review of the full configuration first.",
@@ -1701,6 +2040,7 @@ class App:
         self.set_toast(f"Build finished for {self.s.preset}", "success")
 
     def play_finished(self, job: Job) -> None:
+        self.invalidate_recomp()
         self.set_toast("Play session ended", "success")
 
     def bootstrap_finished(self, job: Job) -> None:
@@ -1711,6 +2051,7 @@ class App:
         if output:
             self.s.banks_dir = self.repo.store(output)
             self.touch()
+            self.invalidate_recomp()
             self.set_toast(f"Banks generated in {self.s.banks_dir}", "success", seconds=7)
 
     def render_page(self, width: int, height: int) -> list[str]:
@@ -2364,6 +2705,23 @@ class App:
             except OSError:
                 pass
         self.running = False
+
+
+def format_count(value: int) -> str:
+    return f"{value:,}"
+
+
+def format_timestamp(value: float | None) -> str:
+    if not value:
+        return "unknown time"
+    return time.strftime("%Y-%m-%d %H:%M", time.localtime(value))
+
+
+def format_share(interpreter_share: float) -> tuple[str, str]:
+    share = max(0.0, min(100.0, interpreter_share))
+    if 0.0 < share < 0.01:
+        return ">99.99%", "<0.01%"
+    return f"{100.0 - share:.2f}%", f"{share:.2f}%"
 
 
 def validate_frames(value: str) -> str | None:

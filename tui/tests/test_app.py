@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import sys
 import tempfile
 import unittest
@@ -10,7 +12,7 @@ from pathlib import Path
 from tui.app import App
 from tui.commands import Command
 from tui.model import Repo, Settings
-from tui.terminal import MouseEvent, Terminal
+from tui.terminal import MouseEvent, Terminal, strip_ansi
 
 
 def make_app(temp: Path, settings: Settings) -> tuple[App, Repo]:
@@ -158,10 +160,24 @@ class ReviewTests(unittest.TestCase):
 
             self.assertEqual(
                 names,
-                ["ACTION", "ROM", "BUILD", "TITLE BANKS", "BOOTSTRAP", "PLAY", "COMMANDS", "FINAL CHECK"],
+                [
+                    "ACTION",
+                    "ROM",
+                    "BUILD",
+                    "RECOMPILATION",
+                    "TITLE BANKS",
+                    "BOOTSTRAP",
+                    "PLAY",
+                    "COMMANDS",
+                    "FINAL CHECK",
+                ],
             )
             for expected in [
-                "Preset: test-debug",
+                "Preset: Test Debug  [test-debug]",
+                "Build type: Debug",
+                "Profile:",
+                "Recompiled functions: no generated banks",
+                "Runtime dispatch: not measured",
                 "ROM folder: roms",
                 "Build tests: ON",
                 "host tools: ON",
@@ -227,6 +243,133 @@ class ReviewTests(unittest.TestCase):
             app.handle_mouse(MouseEvent("press", "left", 5, y))
 
             self.assertEqual(app.s.build_tests, not before)
+
+
+class RecompDisplayTests(unittest.TestCase):
+    def test_home_and_review_show_bank_and_runtime_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            banks = root / "banks" / "black"
+            banks.mkdir(parents=True)
+            (banks / "irbo_arm9_main.h").write_text(
+                "/* Total functions: 12 */\n", encoding="utf-8"
+            )
+            (banks / "irbo_arm9_main_00.c").write_text("", encoding="utf-8")
+            (banks / "irbo_arm9_main_dispatch.c").write_text(
+                "const unsigned g_dispatch_irbo_arm9_main_len = 20u;\n",
+                encoding="utf-8",
+            )
+            (banks / "irbo_arm7_main.h").write_text(
+                "/* Total functions: 3 */\n", encoding="utf-8"
+            )
+            (banks / "irbo_arm7_main_00.c").write_text("", encoding="utf-8")
+            (banks / "irbo_arm7_main_dispatch.c").write_text(
+                "const unsigned g_dispatch_irbo_arm7_main_len = 5u;\n",
+                encoding="utf-8",
+            )
+            rom = root / "roms" / "test.nds"
+            rom.parent.mkdir()
+            rom.write_bytes(b"TEST ROM" + b"\x00" * 4 + b"IRBO" + b"\x00" * 16)
+            play = root / "banks" / "play"
+            play.mkdir()
+            sha1 = hashlib.sha1(rom.read_bytes()).hexdigest()
+            coverage = {
+                "kind": "ndsrecomp-tier3-coverage",
+                "schema": 4,
+                "rom_sha1": sha1,
+                "build_id": "test-build",
+                "static_coverage": {
+                    "tier3_entries9": 10,
+                    "tier3_entries7": 0,
+                    "tier3_insns9": 100,
+                    "tier3_insns7": 0,
+                },
+                "entry_points_arm9": [
+                    {"addr": "0x02000000", "mode": "arm"},
+                    {"addr": "0x02000000", "mode": "arm"},
+                ],
+                "entry_points_arm7": [],
+            }
+            coverage_path = play / "test-coverage-20260101-120000.json"
+            coverage_path.write_text(json.dumps(coverage), encoding="utf-8")
+            performance = [
+                {
+                    "kind": "session",
+                    "rom_sha1": sha1,
+                    "build_id": "test-build",
+                },
+                {
+                    "kind": "perf",
+                    "tier3_delta": {
+                        "arm9": {"entries": 10, "instructions": 100},
+                        "arm7": {"entries": 0, "instructions": 0},
+                    },
+                    "dispatch_delta": {
+                        "arm9": {"dispatch_total": 990},
+                        "arm7": {"dispatch_total": 0},
+                    },
+                },
+            ]
+            (play / "performance-20260101-120000.jsonl").write_text(
+                "\n".join(json.dumps(row) for row in performance) + "\n",
+                encoding="utf-8",
+            )
+            settings = Settings(
+                preset="test-debug",
+                rom_path="roms/test.nds",
+                banks_dir="banks/black",
+            )
+            app, _ = make_app(root, settings)
+            app.wait_for_sha1()
+            self.assertEqual(app.current_sha1(), sha1)
+            app.invalidate_recomp()
+
+            stats = app.recomp_stats()
+            self.assertEqual(stats.banks.total_functions, 15)
+            self.assertEqual(stats.banks.dispatch_entries, 25)
+            self.assertAlmostEqual(stats.interpreter_share or 0.0, 1.0)
+
+            app.set_page("home")
+            home = "\n".join(strip_ansi(line) for line in app.render(100, 40))
+            self.assertIn("Recompiled functions", home)
+            self.assertIn("15 functions", home)
+            self.assertIn("99.00% native", home)
+            self.assertIn("1.00% interpreter", home)
+            self.assertIn("Interpreter coverage", home)
+            self.assertIn("Last evidence", home)
+
+            app.show_review(
+                "Play",
+                [Command("demo", [sys.executable, "-c", "pass"], root)],
+                None,
+            )
+            review = "\n".join(strip_ansi(line) for line in app.render(100, 40))
+            self.assertIn("RECOMPILATION", review)
+            self.assertIn("Recompiled functions: 15", review)
+            rows = dict(
+                app.review_sections(
+                    "Play",
+                    [Command("demo", [sys.executable, "-c", "pass"], root)],
+                )
+            )["RECOMPILATION"]
+            self.assertTrue(
+                any("Runtime dispatch: 99.00% native" in row for row in rows)
+            )
+
+    def test_build_profile_shows_a_readable_preset_label(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            app, _ = make_app(Path(temp), Settings(preset="test-debug"))
+            app.set_page("build")
+
+            rendered = "\n".join(strip_ansi(line) for line in app.render(100, 44))
+
+            self.assertIn("BUILD PROFILE", rendered)
+            self.assertIn("Test Debug", rendered)
+            self.assertIn("Build type", rendered)
+            self.assertIn("Debug", rendered)
+            self.assertIn("Preset ID", rendered)
+            self.assertIn("test-debug", rendered)
+            self.assertIn("system default", rendered)
 
 
 class QuickstartActionTests(unittest.TestCase):

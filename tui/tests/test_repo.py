@@ -7,7 +7,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tui.model import Repo, host_family, load_presets, preferred_preset_names
+from tui.model import (
+    Repo,
+    fallback_preset_info,
+    host_family,
+    load_preset_infos,
+    load_presets,
+    preferred_preset_names,
+)
 
 
 class RepoPathTests(unittest.TestCase):
@@ -112,3 +119,62 @@ class PresetLoadingTests(unittest.TestCase):
             names = load_presets(Path(temp) / "CMakePresets.json")
 
         self.assertEqual(names, preferred_preset_names())
+
+    def test_infos_carry_readable_labels_descriptions_and_compiler(self) -> None:
+        family = host_family()
+        payload = {
+            "configurePresets": [
+                {
+                    "name": "base",
+                    "hidden": True,
+                    "cacheVariables": {
+                        "CMAKE_C_COMPILER": {
+                            "type": "FILEPATH",
+                            "value": "clang",
+                        },
+                        "CMAKE_CXX_COMPILER": "clang++",
+                    },
+                },
+                {
+                    "name": f"{family}-relwithdebinfo",
+                    "displayName": "Fast + Symbols",
+                    "description": "Best for play and profiling.",
+                    "inherits": "base",
+                    "cacheVariables": {"CMAKE_BUILD_TYPE": "RelWithDebInfo"},
+                },
+                {
+                    "name": f"{family}-debug",
+                    "displayName": "Slow + Symbols",
+                    "cacheVariables": {"CMAKE_BUILD_TYPE": "Debug"},
+                },
+            ]
+        }
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "CMakePresets.json"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            infos = load_preset_infos(path)
+
+        self.assertEqual(
+            [info.name for info in infos],
+            [f"{family}-relwithdebinfo", f"{family}-debug"],
+        )
+        fast, debug = infos
+        self.assertEqual(fast.display_name, "Fast + Symbols")
+        self.assertEqual(fast.build_type, "RelWithDebInfo")
+        self.assertEqual(fast.compiler, "clang / clang++")
+        self.assertEqual(fast.description, "Best for play and profiling.")
+        self.assertTrue(fast.recommended)
+        self.assertEqual(debug.display_name, "Slow + Symbols")
+        self.assertEqual(debug.build_type, "Debug")
+        self.assertEqual(debug.compiler, "system default")
+        self.assertIn("Unoptimised", debug.description)
+        self.assertFalse(debug.recommended)
+
+    def test_missing_preset_file_has_readable_fallback_info(self) -> None:
+        info = fallback_preset_info("linux-relwithdebinfo")
+
+        self.assertEqual(info.display_name, "Linux RelWithDebInfo")
+        self.assertEqual(info.build_type, "RelWithDebInfo")
+        self.assertEqual(info.compiler, "system default")
+        self.assertTrue(info.recommended)
+        self.assertIn("Recommended", info.description)

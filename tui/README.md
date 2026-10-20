@@ -10,7 +10,7 @@ Complete and verified locally on Windows. The launcher is pure Python, so it
 starts without the C++ build; `--check` and `--snapshot` also work without an
 interactive terminal.
 
-- `python -m unittest discover -s tui/tests` runs 51 tests (one
+- `python -m unittest discover -s tui/tests` runs 64 tests (one
   platform-specific case is skipped).
 - The Windows native console reader was exercised with injected mouse records:
   left press, release and wheel-up decoded correctly through
@@ -20,6 +20,11 @@ interactive terminal.
   and Unicode/ASCII glyphs — render without line overflow. 36 final-review
   renders were checked at the same sizes and modes, scrolled to the top, middle
   and bottom.
+- The recompilation panel was checked against the local Black bank set: 11,989
+  emitted functions, 24,553 interpreter entries, 134 distinct targets and
+  0.09% interpreter for the paired coverage/performance run. The panel also
+  reported the older coverage as predating the current bank headers. Generated
+  banks, manifests and logs stay local and are never committed.
 - `python tui/launcher.py --check` detects the local presets, ROM folder, tools,
   banks and runner, and exits 0 when a readable ROM is present.
 
@@ -81,6 +86,11 @@ Status summary and quick actions: Quickstart, Play now, Configure & build,
 Choose ROM, Generate title banks and Build settings. The first line names the
 next missing step for a full play setup.
 
+The **RECOMPILATION** block shows emitted function counts (ARM9/ARM7), the
+runtime native/interpreter split, interpreter coverage (entries, distinct
+fallback targets, instructions) and the evidence build/time. Missing,
+mismatched or stale evidence is labeled instead of estimated.
+
 **Quickstart** fills the gaps automatically: bootstrap the recompiler when a
 runner rebuild needs it, build `pkmn_bankgen` if needed, generate missing title
 banks, build the runner when needed, then play. It only adds the steps that are
@@ -104,10 +114,14 @@ The SHA-1 is computed in a background thread and passed to Configure as
 
 ### Build (3)
 
-- Preset selection (`windows-*` on Windows, `linux-*` on Unix).
+- Human-readable profile selection (`windows-*` on Windows, `linux-*` on Unix),
+  with build type, compiler, description, recommended state and the exact CMake
+  preset ID. The ID remains the value used by the commands.
 - CMake toggles: unit tests, host tools, render layer, ndsrecomp runner and
   native present. Passed explicitly on every Configure.
 - Banks directory, bank-set status and the auto-detected runner title SHA-1.
+- Detailed recompilation state: function totals, dispatch rows, runtime
+  interpreter share, interpreter coverage and evidence freshness.
 - Multi-title advanced fields for `NDS_TITLE_BANK_DIRS` and
   `NDS_TITLE_ROM_SHA1S` (semicolon separated; leave blank to keep the cache).
 - Actions: Configure, Build, Configure & build and Run tests. Each action opens
@@ -121,12 +135,15 @@ The SHA-1 is computed in a background thread and passed to Configure as
 - Native present through `render/` (Vulkan); it forces the stacked layout.
 - Frame limit (`0` runs until the window is closed).
 - Save mode: default beside the ROM, a custom file, or off (blank cart).
-- Diagnostics: stats, coverage manifest and a performance bundle.
+- Diagnostics: stats, coverage manifest and a performance bundle. Coverage is
+  written beside the ROM; the performance bundle goes to `banks/play`. Both feed
+  the RECOMPILATION panel.
 - Extra runner arguments, runner/bank status and Play.
 
 Play always passes the discovered runner and the selected bank directory
 explicitly. The game window owns keyboard focus while it is open; close it to
-return to the log.
+return to the log. With diagnostics off, the panel reports runtime state as
+**not measured** rather than showing an old or guessed value.
 
 ### Setup (5)
 
@@ -138,7 +155,8 @@ return to the log.
 
 ### Help (6)
 
-Keys, the recommended workflow and the local-state/legal notes.
+Keys, the recommended workflow, recompilation-metric definitions and the
+local-state/legal notes.
 
 ## Keys
 
@@ -154,14 +172,42 @@ Keys, the recommended workflow and the local-state/legal notes.
 | Final review | `Up`/`Down`/`PgUp`/`PgDn`/`Home`/`End` scroll, `Enter` run, `Esc` cancel; `Run`/`Cancel` are clickable |
 | Job log | `Esc`/`Ctrl+C` cancel while running; `Up`/`Down`/`PgUp`/`PgDn`/`Home` scroll; `End`/`F` follow; `Enter` return after it finishes |
 
+## Recompilation state
+
+Home, Build and the final review read the same local evidence. The launcher does
+not invent a completion percentage:
+
+- **Recompiled functions** is the sum of the `Total functions` marker in the
+  selected banks directory's `*_arm9_*.h` / `*_arm7_*.h` headers. It is static
+  recompiler output, not a completion estimate.
+- **Dispatch rows** is the sum of the generated `g_dispatch_*_len` arrays the
+  runner binary-searches when control transfers between recompiled code.
+- **Runtime evidence** pairs the latest coverage manifest for the selected
+  ROM's SHA-1 with the `performance-*.jsonl` log from the same run stamp and
+  build ID. Coverage manifests are read from `banks/play` and from the selected
+  ROM's folder; performance bundles are read from `banks/play`.
+- **Interpreter share** is `Tier-3 entries / (Tier-3 entries + dispatcher
+  events)` for that run. Direct calls into recompiled C are not in the
+  denominator, so the percentage describes dispatcher traffic, not wall time.
+- **Interpreter coverage** shows the Tier-3 entry events, distinct fallback
+  targets and interpreted instruction count in the cumulative coverage
+  manifest.
+
+The evidence row shows the build ID and timestamp. The panel warns when the
+latest coverage belongs to a different ROM, predates the current bank set, or
+has no performance log from the same run. With no matching evidence the value
+is **not measured** (or **still hashing** while the selected ROM's SHA-1 is
+computed). Enable **Keep coverage manifest** and **Diagnostics bundle** on Play,
+run once, then return to Home or Build.
+
 ## Final review
 
 Every action that starts a process — Configure, Build, tests, bootstrap, bank
 generation, Play and Quickstart — first opens a scrollable **FINAL REVIEW**. It
-lists the action, ROM and SHA-1, build and cache state, bank settings, bootstrap
-options, play settings, every exact command with its working directory, and a
-final check. Nothing runs until `Enter` or the `Run` button is used. `Esc` or
-`Cancel` returns without starting anything.
+lists the action, ROM and SHA-1, build and cache state, recompilation evidence,
+bank settings, bootstrap options, play settings, every exact command with its
+working directory, and a final check. Nothing runs until `Enter` or the `Run`
+button is used. `Esc` or `Cancel` returns without starting anything.
 
 The review is also the complete settings screen: advanced multi-title fields,
 derived title config/overlay seed paths, resolved save path, extra arguments and

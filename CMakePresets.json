@@ -15,6 +15,7 @@
     {
       "name": "windows-debug",
       "displayName": "Windows Debug",
+      "description": "Unoptimised Windows build with full symbols. Use for debugging; slowest in game.",
       "inherits": "base",
       "condition": {
         "type": "equals",
@@ -30,6 +31,7 @@
     {
       "name": "windows-release",
       "displayName": "Windows Release",
+      "description": "Optimised Windows build without debug symbols. Fastest for play; harder to diagnose crashes.",
       "inherits": "base",
       "condition": {
         "type": "equals",
@@ -45,6 +47,7 @@
     {
       "name": "windows-relwithdebinfo",
       "displayName": "Windows RelWithDebInfo",
+      "description": "Optimised Windows build with debug symbols. Recommended for play and profiling.",
       "inherits": "base",
       "condition": {
         "type": "equals",
@@ -60,6 +63,7 @@
     {
       "name": "linux-debug",
       "displayName": "Linux Debug",
+      "description": "Unoptimised Linux build with full symbols. Use for debugging; slowest in game.",
       "inherits": "base",
       "condition": {
         "type": "equals",
@@ -73,6 +77,7 @@
     {
       "name": "linux-release",
       "displayName": "Linux Release",
+      "description": "Optimised Linux build without debug symbols. Fastest for play; harder to diagnose crashes.",
       "inherits": "base",
       "condition": {
         "type": "equals",
@@ -86,6 +91,7 @@
     {
       "name": "linux-relwithdebinfo",
       "displayName": "Linux RelWithDebInfo",
+      "description": "Optimised Linux build with debug symbols. Recommended for play and profiling.",
       "inherits": "base",
       "condition": {
         "type": "equals",

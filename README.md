@@ -4,7 +4,55 @@ A clean native PC (Windows/Linux) reimplementation of Pokémon Black/White and B
 
 This repository contains **no game content**. You must own and supply the ROMs.
 
-## Quick start (Windows)
+## Quick start
+
+```sh
+python tui/launcher.py
+```
+
+The terminal launcher is the recommended path. Put your own ROM in `roms/` (or browse anywhere on the ROM page), then choose **Quickstart** on Home. It adds only the missing bootstrap, host-tool, title-bank and runner steps, shows a final review of every command, and launches the game.
+
+Prefer the individual commands? See [Manual setup (Windows)](#manual-setup-windows).
+
+---
+**Controls** (the live window's keyboard map):
+
+| Keys | Button |
+| --- | --- |
+| `arrows` | D-pad |
+| `Z` / `X` | A / B |
+| `A` / `S` | Y / X |
+| `Q` / `W` | L / R |
+| `Enter` | Start |
+| `Backspace` | Select |
+| `Esc` | quit |
+
+The bottom-screen window is the touchscreen.
+
+## Terminal launcher (TUI)
+
+`tui/` is a dependency-free Python 3.10+ terminal UI for the local workflow. It wraps the existing CMake presets, `tools/bootstrap_ndsrecomp.*`, `pkmn_bankgen` and `tools/play.*`; it does not emulate the game or ship game content. It is the recommended path; the equivalent manual commands are in [Manual setup (Windows)](#manual-setup-windows).
+
+```sh
+python tui/launcher.py
+```
+---
+- **Home / ROM / Build / Play / Setup / Help** pages cover ROM selection, build options, title-bank generation and launching the runner from one menu.
+- **Quickstart** on Home adds only the missing bootstrap/tool/bank/runner steps, then launches the game.
+- Full mouse support: click tabs, rows, review buttons and browser entries; the wheel scrolls pages, logs and reviews.
+- Every process action opens a **Final review** showing every current setting, recompilation evidence and the exact commands; nothing runs until it is confirmed.
+- Build profiles have readable labels, build types, compiler details and descriptions instead of raw preset IDs; the exact CMake preset name stays visible for command parity.
+- The **RECOMPILATION** panel reads the local bank headers, coverage manifests and performance logs: functions emitted, dispatch rows, native/interpreter share, interpreter coverage, evidence build/time and freshness warnings. Missing or mismatched evidence is labeled, never estimated.
+- Interactive folder and ROM browser with header preview; the selected ROM's SHA-1 is computed in the background and passed to Configure.
+- Live command log with cancel, scroll and follow.
+- Preferences persist in the git-ignored `tui/.state.json` (paths and UI state only).
+- `--check` prints detected tools, ROMs, banks and runner paths; `--snapshot [PAGE]` renders a page non-interactively.
+
+The launcher's own tests need no ROM: `python -m unittest discover -s tui/tests`. See [`tui/README.md`](tui/README.md) for keys, options and the recommended workflow.
+
+Verified locally on Windows: 64 launcher tests, 72 page-layout snapshots, 36 final-review renders, `--check`, and a native-console mouse/key smoke test.
+
+## Manual setup (Windows)
 
 ```sh
 # 1. Bootstrap the recompiler submodule (once; inits ndsrecomp, builds nds_recompile)
@@ -29,42 +77,7 @@ cmake --build --preset windows-relwithdebinfo
 pwsh tools/play.ps1
 ```
 
-**Controls** (the live window's keyboard map):
-
-| Keys | Button |
-| --- | --- |
-| `arrows` | D-pad |
-| `Z` / `X` | A / B |
-| `A` / `S` | Y / X |
-| `Q` / `W` | L / R |
-| `Enter` | Start |
-| `Backspace` | Select |
-| `Esc` | quit |
-
-The bottom-screen window is the touchscreen.
-
 On Linux / macOS the same steps use `sh tools/bootstrap_ndsrecomp.sh`, the `linux-*` presets, the tools without the `.exe` suffix, and `sh tools/play.sh`. The full detail behind each step is in [Build](#build), [Runner](#runner-the-bootable-build) and [Run](#5-run).
-
-## Terminal launcher (TUI)
-
-`tui/` is a dependency-free Python 3.10+ terminal UI for the local workflow. It wraps the existing CMake presets, `tools/bootstrap_ndsrecomp.*`, `pkmn_bankgen` and `tools/play.*`; it does not emulate the game or ship game content. It is an alternative to running the commands above by hand.
-
-```sh
-python tui/launcher.py
-```
-
-- **Home / ROM / Build / Play / Setup / Help** pages cover ROM selection, build options, title-bank generation and launching the runner from one menu.
-- **Quickstart** on Home adds only the missing bootstrap/tool/bank/runner steps, then launches the game.
-- Full mouse support: click tabs, rows, review buttons and browser entries; the wheel scrolls pages, logs and reviews.
-- Every process action opens a **Final review** showing every current setting and the exact commands; nothing runs until it is confirmed.
-- Interactive folder and ROM browser with header preview; the selected ROM's SHA-1 is computed in the background and passed to Configure.
-- Live command log with cancel, scroll and follow.
-- Preferences persist in the git-ignored `tui/.state.json` (paths and UI state only).
-- `--check` prints detected tools, ROMs, banks and runner paths; `--snapshot [PAGE]` renders a page non-interactively.
-
-The launcher's own tests need no ROM: `python -m unittest discover -s tui/tests`. See [`tui/README.md`](tui/README.md) for keys, options and the recommended workflow.
-
-Verified locally on Windows: 51 launcher tests, 72 page-layout snapshots, 36 final-review renders, `--check`, and a native-console mouse/key smoke test.
 
 ## Layout
 
@@ -102,7 +115,7 @@ cmake --build --preset windows-debug
 ctest --preset windows-debug
 ```
 
-Presets (`CMakePresets.json`): `windows-debug`, `windows-release`, `linux-debug`, `linux-release`. Output goes to `build/<preset>/`; the test binary is `build/<preset>/tests/pkmn_tests[.exe]`, the tools are under `build/<preset>/tools/`.
+Presets (`CMakePresets.json`): `windows-debug`, `windows-release`, `windows-relwithdebinfo`, `linux-debug`, `linux-release`, `linux-relwithdebinfo`. Output goes to `build/<preset>/`; the test binary is `build/<preset>/tests/pkmn_tests[.exe]`, the tools are under `build/<preset>/tools/`. The TUI shows their human-readable names, build types, compilers and descriptions while keeping the raw preset name for the actual commands.
 
 Once the runner is enabled, `ctest` also runs `ndsrecomp`'s own tests. Two of those are environment-sensitive on Windows and can fail without affecting the runner — see [Troubleshooting](#troubleshooting).
 

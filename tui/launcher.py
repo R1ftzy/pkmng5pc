@@ -149,6 +149,7 @@ def main(argv: list[str] | None = None) -> int:
     terminal = Terminal(color=not args.no_color, ascii_only=args.ascii)
     if args.snapshot:
         app = App(repo, settings, terminal, args.state, persist=False)
+        app.wait_for_sha1()
         app.set_page(args.snapshot)
         lines = app.render(max(60, args.width), max(18, args.height))
         sys.stdout.write("\n".join(lines) + "\n")

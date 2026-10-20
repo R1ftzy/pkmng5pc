@@ -45,6 +45,162 @@ def default_preset(presets: list[str]) -> str:
     return presets[0] if presets else ""
 
 
+BUILD_TYPE_DESCRIPTIONS = {
+    "Debug": "Unoptimised build with full symbols. Use for debugging; slowest in game.",
+    "Release": "Optimised build without debug symbols. Fastest for play; harder to diagnose crashes.",
+    "RelWithDebInfo": "Optimised build with debug symbols. Recommended for play and profiling.",
+}
+PRESET_PART_LABELS = {
+    "debug": "Debug",
+    "release": "Release",
+    "relwithdebinfo": "RelWithDebInfo",
+}
+BUILD_TYPE_SUFFIXES = {
+    "debug": "Debug",
+    "release": "Release",
+    "relwithdebinfo": "RelWithDebInfo",
+}
+
+
+@dataclass(frozen=True)
+class PresetInfo:
+    name: str
+    display_name: str
+    build_type: str
+    compiler: str
+    description: str
+    recommended: bool
+
+
+def pretty_preset_name(name: str) -> str:
+    parts = [part for part in name.split("-") if part]
+    return " ".join(PRESET_PART_LABELS.get(part.lower(), part.capitalize()) for part in parts)
+
+
+def preset_build_type(name: str, cache: dict[str, str] | None = None) -> str:
+    if cache:
+        value = cache.get("CMAKE_BUILD_TYPE")
+        if isinstance(value, str) and value.strip():
+            value = value.strip()
+            for known in BUILD_TYPE_DESCRIPTIONS:
+                if value.lower() == known.lower():
+                    return known
+            return value
+    lowered = name.lower()
+    for suffix, build_type in BUILD_TYPE_SUFFIXES.items():
+        if lowered == suffix or lowered.endswith(f"-{suffix}"):
+            return build_type
+    return "Unknown"
+
+
+def preset_compiler(cache: dict[str, str] | None) -> str:
+    cache = cache or {}
+    c = cache.get("CMAKE_C_COMPILER", "").strip()
+    cxx = cache.get("CMAKE_CXX_COMPILER", "").strip()
+    if c and cxx:
+        return f"{c} / {cxx}"
+    if cxx:
+        return cxx
+    if c:
+        return c
+    return "system default"
+
+
+def fallback_preset_info(name: str) -> PresetInfo:
+    build_type = preset_build_type(name)
+    display_name = pretty_preset_name(name)
+    return PresetInfo(
+        name=name,
+        display_name=display_name,
+        build_type=build_type,
+        compiler="system default",
+        description=BUILD_TYPE_DESCRIPTIONS.get(
+            build_type, f"{display_name} build profile."
+        ),
+        recommended=build_type == "RelWithDebInfo",
+    )
+
+
+def _cache_text(value: object) -> str:
+    if isinstance(value, dict):
+        value = value.get("value", "")
+    if isinstance(value, bool):
+        return "ON" if value else "OFF"
+    return str(value).strip()
+
+
+def _preset_cache_variables(
+    name: str, entries: dict[str, dict], seen: set[str]
+) -> dict[str, str]:
+    if name in seen:
+        return {}
+    seen = seen | {name}
+    entry = entries.get(name, {})
+    inherited = entry.get("inherits")
+    if isinstance(inherited, list):
+        parents = inherited
+    elif isinstance(inherited, str):
+        parents = [inherited]
+    else:
+        parents = []
+    cache: dict[str, str] = {}
+    for parent in parents:
+        if isinstance(parent, str):
+            cache.update(_preset_cache_variables(parent, entries, seen))
+    variables = entry.get("cacheVariables")
+    if isinstance(variables, dict):
+        cache.update({str(key): _cache_text(value) for key, value in variables.items()})
+    return cache
+
+
+def load_preset_infos(path: Path, fallback: list[str] | None = None) -> list[PresetInfo]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    entries = {
+        entry["name"]: entry
+        for entry in data.get("configurePresets", [])
+        if isinstance(entry, dict) and isinstance(entry.get("name"), str)
+    }
+    infos: list[PresetInfo] = []
+    for entry in data.get("configurePresets", []):
+        if not isinstance(entry, dict):
+            continue
+        name = entry.get("name")
+        if not isinstance(name, str) or entry.get("hidden"):
+            continue
+        if not name.startswith(f"{host_family()}-"):
+            continue
+        cache = _preset_cache_variables(name, entries, set())
+        build_type = preset_build_type(name, cache)
+        display_name = entry.get("displayName")
+        if not isinstance(display_name, str) or not display_name.strip():
+            display_name = pretty_preset_name(name)
+        description = entry.get("description")
+        if not isinstance(description, str) or not description.strip():
+            description = BUILD_TYPE_DESCRIPTIONS.get(
+                build_type, f"{display_name} build profile."
+            )
+        infos.append(
+            PresetInfo(
+                name=name,
+                display_name=display_name.strip(),
+                build_type=build_type,
+                compiler=preset_compiler(cache),
+                description=description.strip(),
+                recommended=build_type == "RelWithDebInfo",
+            )
+        )
+    if not infos:
+        names = list(fallback or preferred_preset_names())
+        infos = [fallback_preset_info(name) for name in names]
+    seen: set[str] = set()
+    return [info for info in infos if not (info.name in seen or seen.add(info.name))]
+
+
 @dataclass(frozen=True)
 class RomInfo:
     path: Path
@@ -165,23 +321,7 @@ def default_overlay_seeds(info: RomInfo | None) -> str:
 
 
 def load_presets(path: Path, fallback: list[str] | None = None) -> list[str]:
-    names: list[str] = []
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        data = {}
-    for entry in data.get("configurePresets", []):
-        if not isinstance(entry, dict):
-            continue
-        name = entry.get("name")
-        if not isinstance(name, str) or entry.get("hidden"):
-            continue
-        if name.startswith(f"{host_family()}-"):
-            names.append(name)
-    if not names:
-        names = list(fallback or preferred_preset_names())
-    seen: set[str] = set()
-    return [name for name in names if not (name in seen or seen.add(name))]
+    return [info.name for info in load_preset_infos(path, fallback)]
 
 
 class Repo:
@@ -195,6 +335,16 @@ class Repo:
     @property
     def presets(self) -> list[str]:
         return load_presets(self.root / "CMakePresets.json")
+
+    @property
+    def preset_infos(self) -> list[PresetInfo]:
+        return load_preset_infos(self.root / "CMakePresets.json")
+
+    def preset_info(self, name: str) -> PresetInfo:
+        for info in self.preset_infos:
+            if info.name == name:
+                return info
+        return fallback_preset_info(name)
 
     @property
     def default_preset(self) -> str:
