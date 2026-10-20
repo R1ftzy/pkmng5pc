@@ -62,6 +62,10 @@ __pycache__/
 *.pyc
 *.log
 
+# TUI launcher local settings (paths and preferences only)
+tui/.state.json
+tui/.state.json.tmp
+
 # Vendored ndsrecomp: regenerable generated banks + local perf output
 third_party/ndsrecomp/generated/
 third_party/ndsrecomp/perf-results/

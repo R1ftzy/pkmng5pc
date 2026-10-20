@@ -45,10 +45,32 @@ The bottom-screen window is the touchscreen.
 
 On Linux / macOS the same steps use `sh tools/bootstrap_ndsrecomp.sh`, the `linux-*` presets, the tools without the `.exe` suffix, and `sh tools/play.sh`. The full detail behind each step is in [Build](#build), [Runner](#runner-the-bootable-build) and [Run](#5-run).
 
+## Terminal launcher (TUI)
+
+`tui/` is a dependency-free Python 3.10+ terminal UI for the local workflow. It wraps the existing CMake presets, `tools/bootstrap_ndsrecomp.*`, `pkmn_bankgen` and `tools/play.*`; it does not emulate the game or ship game content. It is an alternative to running the commands above by hand.
+
+```sh
+python tui/launcher.py
+```
+
+- **Home / ROM / Build / Play / Setup / Help** pages cover ROM selection, build options, title-bank generation and launching the runner from one menu.
+- **Quickstart** on Home adds only the missing bootstrap/tool/bank/runner steps, then launches the game.
+- Full mouse support: click tabs, rows, review buttons and browser entries; the wheel scrolls pages, logs and reviews.
+- Every process action opens a **Final review** showing every current setting and the exact commands; nothing runs until it is confirmed.
+- Interactive folder and ROM browser with header preview; the selected ROM's SHA-1 is computed in the background and passed to Configure.
+- Live command log with cancel, scroll and follow.
+- Preferences persist in the git-ignored `tui/.state.json` (paths and UI state only).
+- `--check` prints detected tools, ROMs, banks and runner paths; `--snapshot [PAGE]` renders a page non-interactively.
+
+The launcher's own tests need no ROM: `python -m unittest discover -s tui/tests`. See [`tui/README.md`](tui/README.md) for keys, options and the recommended workflow.
+
+Verified locally on Windows: 51 launcher tests, 72 page-layout snapshots, 36 final-review renders, `--check`, and a native-console mouse/key smoke test.
+
 ## Layout
 
 - `rom/` — ROM & Nitro format layer (headers, NitroFS/FNT/FAT, NARC, codecs)
 - `tools/` — local tooling: `romdump` (extraction), `bankgen` (title banks)
+- `tui/` — dependency-free terminal launcher for ROM, build, banks and play options
 - `re/` — reverse-engineering notes and evidence
 - `tests/` — unit and golden-data tests
 - `cmake/` — build integration: the `ndsrecomp` runner + SDL3 superbuild
