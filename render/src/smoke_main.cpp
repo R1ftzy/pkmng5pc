@@ -11,6 +11,7 @@
 #include <SDL3/SDL.h>
 
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -45,6 +46,8 @@ int main(int argc, char** argv)
     uint32_t width = 512;
     uint32_t height = 768;
     bool vsync = true;
+    bool list_gpus = false;
+    std::string gpu = "auto";
 
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
@@ -57,6 +60,10 @@ int main(int argc, char** argv)
             width = static_cast<uint32_t>(std::strtoul(next(), nullptr, 10));
         } else if (arg == "--height") {
             height = static_cast<uint32_t>(std::strtoul(next(), nullptr, 10));
+        } else if (arg == "--gpu") {
+            gpu = next();
+        } else if (arg == "--list-gpus") {
+            list_gpus = true;
         } else if (arg == "--no-vsync") {
             vsync = false;
         } else if (arg == "--validation") {
@@ -65,6 +72,25 @@ int main(int argc, char** argv)
             std::fprintf(stderr, "unknown argument: %s\n", arg.c_str());
             return 2;
         }
+    }
+
+    if (list_gpus) {
+        const std::vector<GpuInfo> gpus = enumerate_gpus();
+        std::printf("# index\tname\ttype\tapi\tmemory_mib\tdriver\n");
+        for (const GpuInfo& info : gpus) {
+            std::string name = info.name;
+            for (char& c : name) {
+                if (c == '\t' || c == '\n' || c == '\r') {
+                    c = ' ';
+                }
+            }
+            std::printf("%u\t%s\t%s\t%u.%u.%u\t%llu\t%u\n", info.index, name.c_str(),
+                to_string(info.type), (info.api_version >> 22) & 0x7Fu,
+                (info.api_version >> 12) & 0x3FFu, info.api_version & 0xFFFu,
+                static_cast<unsigned long long>(info.memory_bytes / (1024ull * 1024ull)),
+                info.driver_version);
+        }
+        return gpus.empty() ? 1 : 0;
     }
     const bool validation = [&] {
         for (int i = 1; i < argc; ++i) {
@@ -95,6 +121,7 @@ int main(int argc, char** argv)
     config.kind = kind;
     config.vsync = vsync;
     config.validation = validation;
+    config.gpu = gpu;
 
     Window handle;
     handle.sdl_window = window;
@@ -134,9 +161,12 @@ int main(int argc, char** argv)
 
         fill_test_screen(top, 0x1F, presented);
         fill_test_screen(bottom, 0x10, presented);
-        CanvasBuffer canvas = compose_screens(top.data(), bottom.data(), ScreenLayout::Stacked,
-            presenter->width(), presenter->height());
-        if (!presenter->present(canvas.view())) {
+        const StackPlacement placement = stack_placement(kScreenWidth, kScreenWidth,
+            ScreenLayout::Stacked, presenter->width(), presenter->height());
+        CanvasBuffer canvas = compose_screens(
+            top.data(), bottom.data(), ScreenLayout::Stacked, kScreenWidth, kScreenHeight * 2);
+        const PresentTarget target { placement.x, placement.y, placement.width, placement.height };
+        if (!presenter->present(canvas.view(), target)) {
             // Swapchain out of date: re-derive the size and try again.
             int w = 0;
             int h = 0;

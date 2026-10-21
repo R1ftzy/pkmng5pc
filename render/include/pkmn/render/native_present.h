@@ -16,6 +16,8 @@
 //
 // Selection is by environment (`PKMNG5PC_PRESENT=native`, set by `tools/play
 // -Native`) so the frontend needs no new command-line surface.
+// `PKMNG5PC_GPU` selects the Vulkan adapter (`auto`, `discrete`, `integrated`,
+// `index:<n>`, or a name substring).
 //
 // Surfaces are handed over exactly as the frontend already has them: ARGB8888
 // (BGRA8 in memory) rows of `height` 192, `width` 256 or the adaptive wide
@@ -27,10 +29,11 @@ extern "C" {
 // frontend calls it every frame.
 int pkmng5pc_native_present_enabled(void);
 
-// Bring up the presenter on an SDL window created with SDL_WINDOW_VULKAN.
-// Returns 1 on success, 0 on failure (the caller reports it and must not
-// present through the bridge).
-int pkmng5pc_native_present_init(void* sdl_window);
+// Bring up one presenter per window. `bottom_window` is ignored (and may be
+// null) in stacked mode; in separate mode both windows must have been created
+// with SDL_WINDOW_VULKAN. Returns 1 on success, 0 on failure (the caller
+// reports it and must not present through the bridge).
+int pkmng5pc_native_present_init(void* top_window, void* bottom_window, int separate);
 
 // Compose and present one frame. Returns 1 when the frame is handled (including
 // a skipped frame after a recoverable swapchain error) and 0 if no presenter is
@@ -39,20 +42,22 @@ int pkmng5pc_native_present_init(void* sdl_window);
 int pkmng5pc_native_present_frame(
     const unsigned int* top, int top_width, const unsigned int* bottom, int bottom_width);
 
-// Map a point in the window's pixel space to the frontend's logical DS space.
+// Map a point in a window's pixel space to the frontend's logical DS space.
 // The frontend normally converts pointer events through the SDL renderer's
 // logical presentation (`SDL_RenderCoordinatesFromWindow`); this path has no
 // renderer, so the compositor's own placement rule answers instead - the exact
 // inverse of what `pkmng5pc_native_present_frame` drew. Returns 1 and fills
-// `x`/`y` with logical stacked-canvas coordinates (top screen at y 0..191,
-// bottom at y 192..383, x centred in the same width the frontend routes
-// against). Returns 0 when the presenter is not live, in which case the caller
-// must leave the event alone.
+// `x`/`y` with logical canvas coordinates: in stacked mode the top screen is at
+// y 0..191 and the bottom at y 192..383; in separate mode each window maps to
+// its own screen at y 0..191. `window_id` selects the output in separate mode.
+// Returns 0 when the presenter is not live, in which case the caller must leave
+// the event alone.
 //
 // `top_width`/`bottom_width` are the surfaces last presented, so the mapping
-// follows an adaptive wide top screen. Before the first frame the native widths
-// are assumed, which matches the frontend's own initial `screen_widths`.
-int pkmng5pc_native_present_logical_point(float window_x, float window_y, int* x, int* y);
+// follows an adaptive wide screen. Before the first frame the native widths are
+// assumed, which matches the frontend's own initial `screen_widths`.
+int pkmng5pc_native_present_logical_point(
+    unsigned int window_id, float window_x, float window_y, int* x, int* y);
 
 // Release the device. Safe to call more than once, and safe when no presenter
 // was ever brought up.

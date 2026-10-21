@@ -6,9 +6,9 @@
 namespace pkmn::render {
 namespace {
 
-    constexpr uint8_t kLetterboxR = 12;
-    constexpr uint8_t kLetterboxG = 12;
-    constexpr uint8_t kLetterboxB = 16;
+    constexpr uint8_t kLetterboxB = static_cast<uint8_t>(kLetterboxBgra & 0xFFu);
+    constexpr uint8_t kLetterboxG = static_cast<uint8_t>((kLetterboxBgra >> 8) & 0xFFu);
+    constexpr uint8_t kLetterboxR = static_cast<uint8_t>((kLetterboxBgra >> 16) & 0xFFu);
 
     void fill_letterbox(CanvasBuffer& canvas)
     {
@@ -23,13 +23,20 @@ namespace {
         }
     }
 
+    void ensure_canvas(CanvasBuffer& canvas, uint32_t width, uint32_t height)
+    {
+        if (canvas.width != width || canvas.height != height) {
+            canvas.width = width;
+            canvas.height = height;
+            canvas.bytes.assign(static_cast<std::size_t>(width) * height * 4, 0);
+        }
+        fill_letterbox(canvas);
+    }
+
     CanvasBuffer make_canvas(uint32_t width, uint32_t height)
     {
         CanvasBuffer canvas;
-        canvas.width = width;
-        canvas.height = height;
-        canvas.bytes.assign(static_cast<std::size_t>(width) * height * 4, 0);
-        fill_letterbox(canvas);
+        ensure_canvas(canvas, width, height);
         return canvas;
     }
 
@@ -205,10 +212,11 @@ CanvasBuffer compose_screens(const uint16_t* top, const uint16_t* bottom, Screen
     return canvas;
 }
 
-CanvasBuffer compose_screens_bgra8(const uint8_t* top, uint32_t top_width, const uint8_t* bottom,
-    uint32_t bottom_width, ScreenLayout layout, uint32_t output_width, uint32_t output_height)
+void compose_screens_bgra8_into(CanvasBuffer& canvas, const uint8_t* top, uint32_t top_width,
+    const uint8_t* bottom, uint32_t bottom_width, ScreenLayout layout, uint32_t output_width,
+    uint32_t output_height)
 {
-    CanvasBuffer canvas = make_canvas(output_width, output_height);
+    ensure_canvas(canvas, output_width, output_height);
 
     StackPlacement stack;
     ScreenPlacement top_placement;
@@ -220,6 +228,34 @@ CanvasBuffer compose_screens_bgra8(const uint8_t* top, uint32_t top_width, const
         top_placement.width, top_placement.height, canvas);
     draw_screen_bgra8(bottom, bottom_width ? bottom_width : kScreenWidth, bottom_placement.x,
         bottom_placement.y, bottom_placement.width, bottom_placement.height, canvas);
+}
+
+CanvasBuffer compose_screens_bgra8(const uint8_t* top, uint32_t top_width, const uint8_t* bottom,
+    uint32_t bottom_width, ScreenLayout layout, uint32_t output_width, uint32_t output_height)
+{
+    CanvasBuffer canvas;
+    compose_screens_bgra8_into(
+        canvas, top, top_width, bottom, bottom_width, layout, output_width, output_height);
+    return canvas;
+}
+
+void compose_screen_bgra8_into(CanvasBuffer& canvas, const uint8_t* screen, uint32_t width,
+    uint32_t output_width, uint32_t output_height)
+{
+    ensure_canvas(canvas, output_width, output_height);
+    if (!screen || width == 0 || output_width == 0 || output_height == 0) {
+        return;
+    }
+    const StackPlacement placement = place_stack(width, kScreenHeight, output_width, output_height);
+    draw_screen_bgra8(
+        screen, width, placement.x, placement.y, placement.width, placement.height, canvas);
+}
+
+CanvasBuffer compose_screen_bgra8(
+    const uint8_t* screen, uint32_t width, uint32_t output_width, uint32_t output_height)
+{
+    CanvasBuffer canvas;
+    compose_screen_bgra8_into(canvas, screen, width, output_width, output_height);
     return canvas;
 }
 
@@ -232,6 +268,15 @@ StackPlacement stack_placement(uint32_t top_width, uint32_t bottom_width, Screen
     place_screens(top_width, bottom_width, layout, output_width, output_height, stack,
         top_placement, bottom_placement);
     return stack;
+}
+
+StackPlacement fit_placement(
+    uint32_t source_width, uint32_t source_height, uint32_t output_width, uint32_t output_height)
+{
+    if (source_width == 0 || source_height == 0) {
+        return StackPlacement {};
+    }
+    return place_stack(source_width, source_height, output_width, output_height);
 }
 
 } // namespace pkmn::render

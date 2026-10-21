@@ -12,6 +12,7 @@ option(PKMNG5PC_RENDER_VULKAN "Build the Vulkan renderer backend" ON)
 add_library(pkmn_render STATIC
     src/backend.cpp
     src/compose.cpp
+    src/gpu_info.cpp
     src/vulkan_functions.cpp
 )
 

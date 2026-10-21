@@ -487,6 +487,7 @@ class Terminal:
             "\x05": "ctrl-e",
             "\x15": "ctrl-u",
             "\x04": "ctrl-d",
+            "\x12": "ctrl-r",
         }
         return mapping.get(char, char)
 

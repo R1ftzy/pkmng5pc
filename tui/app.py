@@ -21,6 +21,7 @@ from tui.commands import (
     save_label,
     test_command,
 )
+from tui.fps import RunnerFpsProbe
 from tui.model import (
     PLAY_LAYOUTS,
     SAVE_MODES,
@@ -44,6 +45,18 @@ from tui.model import (
 )
 from tui.picker import Picker
 from tui.recomp import RecompStats, collect_recomp_stats, read_bank_stats
+from tui.specs import (
+    GpuSpec,
+    cpu_name,
+    format_bytes,
+    gpu_label,
+    gpu_value,
+    list_gpus,
+    resolve_gpu,
+    selected_gpu_text,
+    system_specs_lines,
+    total_memory_bytes,
+)
 from tui.terminal import (
     MouseEvent,
     Terminal,
@@ -66,6 +79,7 @@ PAGE_NAMES = {
     "setup": "Setup",
     "help": "Help",
 }
+PLAY_BUTTON = "[Ctrl+R Play]"
 SELECTABLE = {"toggle", "choice", "text", "folder", "action", "rom"}
 BUILDER = Callable[[], Command | list[Command]]
 
@@ -153,8 +167,11 @@ class App:
         self.last_job: Job | None = None
         self.job_success: Callable[[Job], None] | None = None
         self.tab_hits: list[tuple[int, int, int, str]] = []
+        self.play_hit: tuple[int, int, int] | None = None
         self.row_hits: dict[int, str] = {}
         self.review_hits: list[tuple[int, int, int, str]] = []
+        self.runner_fps = RunnerFpsProbe()
+        self._fps_revision = 0
         self.log_follow = True
         self.log_back = 0
         self.toast: tuple[str, str, float] | None = None
@@ -165,6 +182,7 @@ class App:
         self.last_size = (0, 0)
         self._job_revision = 0
         self._recomp_cache: tuple[tuple[str, str, str], float, RecompStats] | None = None
+        self._gpu_cache: tuple[str, list[GpuSpec]] | None = None
         self.sha1_cache: dict[tuple[str, int, int], str] = {}
         self.sha1_pending: set[tuple[str, int, int]] = set()
         self.sha1_errors: dict[tuple[str, int, int], str] = {}
@@ -611,6 +629,12 @@ class App:
         self.invalidate_recomp()
         self.set_toast("Quickstart finished", "success", seconds=7)
 
+    def play_builder(self) -> Command:
+        return play_command(self.repo, self.s)
+
+    def play_now(self) -> None:
+        self.run_or_message(self.play_builder, "Play", self.play_finished)
+
     def show_review(
         self,
         title: str,
@@ -778,6 +802,7 @@ class App:
 
         play_rows = [
             f"Layout: {self.s.play_layout}  ·  native present: {on_off(self.s.play_native)}",
+            f"GPU: {selected_gpu_text(self.s.play_gpu, self.gpu_specs())}  ·  applies to native present",
             f"Frame limit: {self.s.frames if self.s.frames else '0 (until closed)'}",
             f"Save mode: {self.s.save_mode}  ·  resolved save: {save_label(self.s, self.repo, info)}",
             f"Stats: {on_off(self.s.stats)}  ·  coverage: {on_off(self.s.coverage)}  ·  diagnostics: {on_off(self.s.diagnostics)}",
@@ -890,6 +915,41 @@ class App:
         self.mode = "message"
         self.dirty = True
 
+    def gpu_specs(self) -> list[GpuSpec]:
+        tool, _ = self.repo.find_render_smoke(self.s.preset)
+        try:
+            stamp = tool.stat().st_mtime_ns if tool else 0
+        except OSError:
+            stamp = 0
+        key = f"{tool}:{stamp}"
+        if self._gpu_cache is None or self._gpu_cache[0] != key:
+            self._gpu_cache = (key, list_gpus(tool))
+        return self._gpu_cache[1]
+
+    def selected_gpu(self) -> GpuSpec | None:
+        return resolve_gpu(self.s.play_gpu, self.gpu_specs())
+
+    def gpu_options(self) -> list[tuple[str, str]]:
+        options = [
+            ("auto", "Auto (prefer discrete)"),
+            ("discrete", "Discrete only"),
+            ("integrated", "Integrated only"),
+        ]
+        options.extend((gpu_value(spec), gpu_label(spec)) for spec in self.gpu_specs())
+        return options
+
+    def show_system_specs(self) -> None:
+        tool, _ = self.repo.find_render_smoke(self.s.preset)
+        lines = system_specs_lines(
+            preset=self.s.preset,
+            layout=self.s.play_layout,
+            native=self.s.play_native,
+            gpu_preference=self.s.play_gpu,
+            gpus=self.gpu_specs(),
+            render_tool=tool,
+        )
+        self.show_message("System specs", "\n".join(lines))
+
     def run(self) -> None:
         with self.terminal:
             while self.running:
@@ -933,6 +993,18 @@ class App:
         if size != self.last_size:
             self.last_size = size
             self.dirty = True
+        self.poll_runner_fps()
+
+    def poll_runner_fps(self) -> None:
+        job = self.active_job
+        playing = bool(job and job.current_label == "Play")
+        if playing:
+            self.runner_fps.start()
+        else:
+            self.runner_fps.stop()
+        if self.runner_fps.revision != self._fps_revision:
+            self._fps_revision = self.runner_fps.revision
+            self.dirty = True
 
     def maybe_save(self) -> None:
         if not self.persist or not self.settings_dirty:
@@ -959,6 +1031,7 @@ class App:
     def render(self, width: int | None = None, height: int | None = None) -> list[str]:
         width, height = width or self.terminal.size()[0], height or self.terminal.size()[1]
         self.tab_hits.clear()
+        self.play_hit = None
         self.row_hits.clear()
         self.review_hits.clear()
         if width < 60 or height < 18:
@@ -1004,7 +1077,21 @@ class App:
             self.tab_hits.append((3, x, x + width_here - 1, page))
             x += width_here + 1
             tabs.append(tab)
-        lines.append(clip("  " + " ".join(tabs), width))
+        tab_line = "  " + " ".join(tabs)
+        tab_end = visible_len(tab_line)
+        if self.mode == "page" and width - tab_end >= len(PLAY_BUTTON) + 2:
+            gap = width - tab_end - len(PLAY_BUTTON)
+            button_x = tab_end + gap
+            self.play_hit = (3, button_x, button_x + len(PLAY_BUTTON) - 1)
+            button = (
+                term.style(PLAY_BUTTON, color="black", background="green", bold=True)
+                if term.color
+                else PLAY_BUTTON
+            )
+            lines.append(tab_line + (" " * gap) + button)
+        else:
+            self.play_hit = None
+            lines.append(clip(tab_line, width))
         lines.append("  " + term.dim(term.rule(width - 4)))
         return lines
 
@@ -1255,7 +1342,7 @@ class App:
                 self._action(
                     "play",
                     "Play now",
-                    lambda: play_command(self.repo, self.s),
+                    self.play_builder,
                     "Start the game with the current Play settings.",
                     self.play_finished,
                 ),
@@ -1274,6 +1361,13 @@ class App:
                     kind="action",
                     hint="Browse folders and pick a .nds/.srl file.",
                     on_activate=self.open_rom_picker,
+                ),
+                Item(
+                    "home-system-info",
+                    "System specs",
+                    kind="action",
+                    hint="Show CPU, memory, OS and Vulkan adapters.",
+                    on_activate=self.show_system_specs,
                 ),
                 self._nav(
                     "setup",
@@ -1674,6 +1768,18 @@ class App:
         runner, runner_preset = self.repo.find_runner(self.s.preset)
         banks = self.repo.resolve(self.s.banks_dir)
         native_cached = cache_bool(cache, "PKMNG5PC_NATIVE_PRESENT")
+        gpus = self.gpu_specs()
+        gpu = self.selected_gpu()
+        gpu_text = selected_gpu_text(self.s.play_gpu, gpus)
+        gpu_suffix = ""
+        if gpu is not None:
+            details = f"{format_bytes(gpu.memory_mib * 1024**2)}  ·  Vulkan {gpu.api}"
+            if self.s.play_gpu in ("", "auto", "discrete", "integrated"):
+                gpu_suffix = f"  ·  {gpu.kind}  ·  {details}"
+            else:
+                gpu_suffix = f"  ·  {details}"
+        elif not gpus:
+            gpu_suffix = "  ·  adapter list unavailable (build render)"
         items: list[Item] = [
             Item("presentation", "PRESENTATION", kind="section"),
             self._choice(
@@ -1681,13 +1787,27 @@ class App:
                 "Screen layout",
                 "play_layout",
                 [(value, value) for value in PLAY_LAYOUTS],
-                "Stacked is one window; separate uses two windows. Native present is always stacked.",
+                "Stacked is one window; separate opens one window per screen.",
             ),
             self._toggle(
                 "play-native",
                 "Native present",
                 "play_native",
-                "Present through render/ (Vulkan). The layout is forced to stacked.",
+                "Present through render/ (Vulkan). Uses the GPU choice below.",
+            ),
+            self._choice(
+                "play-gpu",
+                "GPU",
+                "play_gpu",
+                self.gpu_options(),
+                "Vulkan adapter for Native present. The runner's SDL path ignores this.",
+            ),
+            Item(
+                "gpu-selected",
+                "Adapter",
+                kind="info",
+                value=term.cyan(gpu_text) + term.dim(gpu_suffix),
+                hint="Detected through the Vulkan loader; the runner logs the adapter it actually uses.",
             ),
             self._text(
                 "frames",
@@ -1755,9 +1875,30 @@ class App:
                     "Shell-style tokens appended to the play command.",
                     empty_label="(none)",
                 ),
+                Item("system", "SYSTEM", kind="section"),
+                Item("cpu", "CPU", kind="info", value=cpu_name()),
+                Item("memory", "Memory", kind="info", value=format_bytes(total_memory_bytes())),
+                Item(
+                    "system-info",
+                    "Show system specs",
+                    kind="action",
+                    hint="CPU, memory, OS and Vulkan adapters.",
+                    on_activate=self.show_system_specs,
+                ),
                 Item("run", "RUN", kind="section"),
             ]
         )
+        if not self.s.play_native and self.s.play_gpu != "auto":
+            items.append(
+                Item(
+                    "gpu-warning",
+                    "",
+                    kind="notice",
+                    value=term.yellow(
+                        "GPU choice applies to Native present; the SDL path uses the system default adapter."
+                    ),
+                )
+            )
         native_warning = ""
         if self.s.play_native and native_cached is False:
             native_warning = "  ·  cache has native present OFF"
@@ -1796,7 +1937,7 @@ class App:
             self._action(
                 "play",
                 "Play",
-                lambda: play_command(self.repo, self.s),
+                self.play_builder,
                 "Launch the live SDL window. Close it or press Esc there to return.",
                 self.play_finished,
             )
@@ -1984,7 +2125,8 @@ class App:
         ]
         key_lines = [
             "Up/Down move · Left/Right change · Enter activate · Space toggle",
-            "Mouse: click a tab or row, wheel scrolls; click a selected browser row to open it",
+            "Ctrl+R starts Play from any page; the final review still comes first",
+            "Mouse: click a tab, the Play button or a row, wheel scrolls; click a selected browser row to open it",
             "Final review: Enter Run, Esc Cancel, Up/Down scroll; Run/Cancel are clickable",
             "Tab / Shift+Tab change page · 1-6 jump · H/R/B/P/S shortcuts",
             "? help · L last log · Q quit · Esc closes a dialog",
@@ -2198,7 +2340,7 @@ class App:
         if self.page == "help":
             text = "↑↓ scroll · Tab page · 1-6 jump · Q quit"
         else:
-            text = "↑↓ move · ←→ change · Enter activate · mouse · Tab page · ? help · Q quit"
+            text = "↑↓ move · ←→ change · Enter activate · Ctrl+R Play · mouse · Tab page · ? help · Q quit"
         if self.terminal.ascii:
             text = (
                 text.replace("↑↓", "up/down")
@@ -2225,6 +2367,17 @@ class App:
         if job.current_label and job.active:
             header += term.dim(f"  ·  {job.current_label}")
         header += term.dim(f"  ·  {job.elapsed:.1f}s")
+        if job.current_label == "Play":
+            if self.runner_fps.fps is not None:
+                header += term.green(f"  ·  {self.runner_fps.fps:.1f} FPS")
+            elif job.active:
+                if self.runner_fps.connected:
+                    label = "fps sampling"
+                elif job.elapsed < 5.0:
+                    label = "fps waiting"
+                else:
+                    label = "fps unavailable"
+                header += term.dim(f"  ·  {label}")
         lines.append(clip(header, width))
         lines.append("  " + term.dim(term.rule(width - 4)))
         log_height = max(3, height - 9)
@@ -2488,6 +2641,10 @@ class App:
             self.dirty = True
 
     def handle_page_click(self, event: MouseEvent) -> None:
+        hit = self.play_hit
+        if hit is not None and event.y == hit[0] and hit[1] <= event.x <= hit[2]:
+            self.play_now()
+            return
         for y, x0, x1, page in self.tab_hits:
             if event.y == y and x0 <= event.x <= x1:
                 self.set_page(page)
@@ -2509,6 +2666,9 @@ class App:
     def handle_page_key(self, key: str) -> None:
         if key in ("q", "Q", "ctrl-c"):
             self.quit()
+            return
+        if key == "ctrl-r":
+            self.play_now()
             return
         if key in ("?", "help"):
             self.set_page("help")

@@ -8,10 +8,12 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from tui.app import App
-from tui.commands import Command
+from tui.app import App, PLAY_BUTTON
+from tui.commands import Command, Job
 from tui.model import Repo, Settings
+from tui.specs import GpuSpec
 from tui.terminal import MouseEvent, Terminal, strip_ansi
 
 
@@ -245,6 +247,88 @@ class ReviewTests(unittest.TestCase):
             self.assertEqual(app.s.build_tests, not before)
 
 
+class PlayButtonTests(unittest.TestCase):
+    def test_ctrl_r_opens_the_play_review(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            app, _ = make_app(Path(temp), Settings(preset="test-debug"))
+            calls: list[bool] = []
+
+            with patch.object(App, "play_now", lambda self: calls.append(True)):
+                app.handle_key("ctrl-r")
+
+            self.assertEqual(calls, [True])
+
+    def test_play_button_is_clickable(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            app, _ = make_app(Path(temp), Settings(preset="test-debug"))
+            lines = app.render(100, 34)
+            hit = app.play_hit
+            self.assertIsNotNone(hit)
+            assert hit is not None
+            self.assertEqual(
+                strip_ansi(lines[hit[0] - 1])[hit[1] : hit[2] + 1], PLAY_BUTTON
+            )
+            calls: list[bool] = []
+
+            with patch.object(App, "play_now", lambda self: calls.append(True)):
+                app.handle_mouse(MouseEvent("press", "left", hit[1], hit[0]))
+
+            self.assertEqual(calls, [True])
+
+    def test_play_page_names_the_auto_selected_adapter(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            app, _ = make_app(Path(temp), Settings(preset="test-debug"))
+            gpus = [
+                GpuSpec(0, "Arc Graphics", "integrated", "1.4.325", 9008, "1"),
+                GpuSpec(1, "RTX 4060", "discrete", "1.4.341", 7956, "2"),
+            ]
+            app.set_page("play")
+
+            with patch.object(App, "gpu_specs", return_value=gpus):
+                self.assertEqual(app.selected_gpu(), gpus[1])
+                text = strip_ansi("\n".join(app.render(120, 40)))
+
+            self.assertIn("RTX 4060", text)
+            self.assertIn("Auto (prefer discrete)", text)
+
+    def test_job_header_shows_the_runner_fps(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            app, _ = make_app(Path(temp), Settings(preset="test-debug"))
+            command = Command("Play", [sys.executable, "-c", "pass"], Path(temp))
+            app.job = Job([command], "Play")
+            app.job.current_label = "Play"
+            app.mode = "job"
+            app.runner_fps.fps = 59.7
+            app.runner_fps.connected = True
+
+            text = strip_ansi("\n".join(app.render(100, 30)))
+
+            self.assertIn("59.7 FPS", text)
+
+    def test_job_header_does_not_invent_a_frame_rate(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            app, _ = make_app(Path(temp), Settings(preset="test-debug"))
+            command = Command("Play", [sys.executable, "-c", "pass"], Path(temp))
+            app.job = Job([command], "Play")
+            app.job.current_label = "Play"
+            app.job.started_at -= 6.0
+            app.mode = "job"
+
+            text = strip_ansi("\n".join(app.render(100, 30)))
+
+            self.assertIn("fps unavailable", text)
+            self.assertNotIn("FPS", text)
+
+    def test_play_button_hides_when_the_header_is_too_narrow(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            app, _ = make_app(Path(temp), Settings(preset="test-debug"))
+
+            text = strip_ansi("\n".join(app.render(60, 24)))
+
+            self.assertNotIn("[Ctrl+R Play]", text)
+            self.assertIsNone(app.play_hit)
+
+
 class RecompDisplayTests(unittest.TestCase):
     def test_home_and_review_show_bank_and_runtime_state(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -416,6 +500,46 @@ class QuickstartActionTests(unittest.TestCase):
             self.assertFalse(app.s.build_tools)
             self.assertFalse(app.s.build_render)
             self.assertFalse(app.s.build_runner)
+
+
+class PlayViewGpuTests(unittest.TestCase):
+    def test_gpu_choice_and_system_specs_show_the_detected_adapter(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            app, _ = make_app(Path(temp), Settings(preset="test-debug"))
+            gpu = GpuSpec(
+                index=1,
+                name="Test GPU",
+                kind="discrete",
+                api="1.4.0",
+                memory_mib=8192,
+                driver="42",
+            )
+            app.s.play_native = True
+            app.s.play_gpu = "index:1"
+
+            with (
+                patch("tui.app.list_gpus", return_value=[gpu]),
+                patch("tui.app.cpu_name", return_value="Test CPU"),
+                patch("tui.app.total_memory_bytes", return_value=16 * 1024**3),
+            ):
+                view = app.play_view(120)
+                items = {item.key: item for item in view.items}
+                self.assertIn("#1 Test GPU", items["gpu-selected"].value)
+                self.assertIn("Test CPU", items["cpu"].value)
+                app.show_system_specs()
+
+            self.assertIn("Test GPU", app.message.body)
+            self.assertIn("Vulkan 1.4.0", app.message.body)
+            self.assertIn("native present", app.message.body)
+
+    def test_stacked_layout_does_not_warn_about_gpu_when_native(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            app, _ = make_app(Path(temp), Settings(preset="test-debug"))
+            app.s.play_native = True
+            app.s.play_gpu = "discrete"
+            with patch("tui.app.list_gpus", return_value=[]):
+                view = app.play_view(120)
+            self.assertNotIn("gpu-warning", {item.key for item in view.items})
 
 
 if __name__ == "__main__":

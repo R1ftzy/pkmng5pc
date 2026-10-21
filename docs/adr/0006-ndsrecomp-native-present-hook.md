@@ -71,18 +71,34 @@ configure refuses to guess if the patch applies in neither direction.
   produces BGR555, so composition over BGRA8 lives beside it as
   `compose_screens_bgra8()`. Both share the placement rule and the letterbox, so
   layout still has one home.
-- **The canvas is built at the window's pixel size.** The Vulkan presenter
-  requires canvas extent == swapchain extent, so the bridge resizes the
-  presenter from `SDL_GetWindowSizeInPixels()` and composes at that size; the
-  integer scale and letterbox are `compose_screens_bgra8()`'s business.
+- **The canvas stays at native resolution.** The bridge composes at the native
+  stack size (the widest screen by 384) or at one screen's 192-row surface in
+  the separate layout, then hands the presenter a `PresentTarget` rectangle in
+  output pixels. `Presenter::present(canvas, target)` clears the swapchain to
+  the letterbox colour and scales the canvas into that rectangle with a
+  nearest-neighbour `vkCmdBlitImage`. A window resize therefore rebuilds the
+  swapchain once; it no longer re-composites the whole window every frame. This
+  is what keeps a fullscreen 2560×1600 native run at the same
+  presentation cost as the 512×768 window (`present` stayed around 0.4 ms per
+  frame, versus 9.2 ms with the old full-window CPU composite).
 - **The layout rule has exactly one home, including its inverse.** The
-  compositor draws from `stack_placement()`/`place_screens()` and the pointer
-  mapping reads the same function, so a click cannot drift from the pixels it
-  is aimed at. `stack_placement()` is public because the frontend needs the
-  inverse; `ScreenPlacement` stays internal.
-- **`-Native` is stacked only.** The presenter owns one output surface, so the
-  hook forces the stacked layout and `tools/play` warns if `-Layout separate`
-  was asked for.
+  compositor draws from `stack_placement()`/`place_screens()` (and
+  `fit_placement()` for one screen) and the pointer mapping reads the same
+  functions, so a click cannot drift from the pixels it is aimed at.
+  `stack_placement()` and `fit_placement()` are public because the frontend
+  needs the inverse; `ScreenPlacement` stays internal.
+- **`-Native` supports both layouts.** Stacked uses one window and one
+  presenter. Separate creates a Vulkan window per screen and two presenters; the
+  bridge composes each screen at its own native size and presents it into that
+  window's integer-scaled rectangle. `tools/play` forwards `-Layout separate`
+  unchanged, so the old force-stacked behaviour is gone.
+- **The Vulkan adapter is selectable.** `Config::gpu` / `PKMNG5PC_GPU` accepts
+  `auto` (prefer a discrete device), `discrete`, `integrated`, `index:<n>`, or
+  a case-insensitive name substring; `-Gpu` / `--gpu` pass it through. The
+  presenter logs the adapter it actually selected. `enumerate_gpus()` exposes
+  the same device list to the smoke tool (`--list-gpus`) and the launcher, and
+  the launcher shows CPU, memory, OS and adapter details without touching the
+  game loop.
 - **Adaptive wide top works.** The bridge passes the real widths through, and
   `compose_screens_bgra8()` gives each screen its own width at the shared
   integer scale, so a widened top screen does not stretch the bottom one.
@@ -91,13 +107,15 @@ configure refuses to guess if the patch applies in neither direction.
   path has no renderer. `convert_mouse_event_to_logical_coordinates()` therefore
   asks the presenter instead (`pkmng5pc_native_present_logical_point`), which
   inverts the *same* placement rule the frame was composed with
-  (`stack_placement()` in `render/src/compose.cpp`) and converts window points
-  to pixels for high-DPI. Clicks on the top screen or the letterbox map outside
-  the bottom screen and are rejected by the frontend's existing routing, so a
-  click can never touch through the wrong screen. Verified with the frontend's
-  own menu self-test (`NDS_FRONTEND_SELFTEST_MENU=1`): `-Native` now reports
-  `touch_presses=1 last_touch=(127,372)` - byte-identical to the SDL path, which
-  reported `0`/`(-1,-1)` before the fix - and a direct guest read agrees on both
+  (`stack_placement()`/`fit_placement()` in `render/src/compose.cpp`) and
+  converts window points to pixels for high-DPI. The window id selects the
+  output in the separate layout. Clicks on the top screen or the letterbox map
+  outside the bottom screen and are rejected by the frontend's existing
+  routing, so a click can never touch through the wrong screen. Verified with
+  the frontend's own menu self-test (`NDS_FRONTEND_SELFTEST_MENU=1`):
+  `-Native` reports `touch_presses=1`, and separate reports
+  `last_touch=(127,180)` (the bottom window's own logical space); the SDL path
+  reported `0`/`(-1,-1)` before the fix. A direct guest read agrees on both
   paths (EXTKEYIN `0x7F` idle -> `0x3F` pen-down on the bottom screen; no
   pen-down for a top-screen click).
 - **Failure is loud.** If Vulkan cannot come up, `-Native` reports it and exits

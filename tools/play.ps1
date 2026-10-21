@@ -15,6 +15,8 @@
 #   pwsh tools/play.ps1 -Rom "roms/<your-rom>.nds"
 #   pwsh tools/play.ps1 -Layout separate
 #   pwsh tools/play.ps1 -Native               # present through render/ (Vulkan)
+#   pwsh tools/play.ps1 -Native -Gpu discrete # pick the discrete Vulkan adapter
+#   pwsh tools/play.ps1 -Native -Gpu "index:1" # or pin a listed adapter
 #   pwsh tools/play.ps1 -Frames 600 -Stats    # present 600 frames, print stats, exit
 #   pwsh tools/play.ps1 -Sav "banks/black.sav"  # keep a different save file
 #   pwsh tools/play.ps1 -NoSave               # blank 512 KiB cart, write nothing
@@ -29,9 +31,11 @@
 # -Native hands the two screens to this project's own present/compositor
 # (`render/`, docs/adr/0006-ndsrecomp-native-present-hook.md) instead of the
 # runner's fixed 512x768 SDL blit. It needs a runner built with
-# PKMNG5PC_NATIVE_PRESENT=ON (the default) and is single-window, so it always
-# presents stacked. Everything else -- guest execution, input, audio, saves,
-# the presented-frame digest -- is the same run either way.
+# PKMNG5PC_NATIVE_PRESENT=ON (the default). Stacked uses one window; separate
+# opens one window per screen. -Gpu picks the Vulkan adapter for -Native:
+# auto (prefer discrete), discrete, integrated, index:<n>, or a name substring.
+# Everything else -- guest execution, input, audio, saves, the presented-frame
+# digest -- is the same run either way.
 #
 # Saves are on by default: the run loads the save next to the ROM (<rom>.sav),
 # starts blank when it is missing, and keeps writing it. -Sav (alias -SavePath)
@@ -51,6 +55,7 @@ param(
   [string]$Banks = 'banks/black',
   [ValidateSet('stacked', 'separate')][string]$Layout = 'stacked',
   [switch]$Native,
+  [string]$Gpu = '',
   [int]$Frames = 0,
   [Alias('SavePath')][string]$Sav,
   [switch]$Save,
@@ -64,6 +69,10 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $root = Split-Path -Parent $PSScriptRoot
+
+if (-not $Gpu) {
+  $Gpu = if ($env:PKMNG5PC_GPU) { $env:PKMNG5PC_GPU } else { 'auto' }
+}
 
 function Fail([string]$message) {
   Write-Host "play: $message" -ForegroundColor Red
@@ -137,10 +146,10 @@ $Rom = (Resolve-Path -LiteralPath $Rom).Path
 if ($NoSave -and ($PSBoundParameters.ContainsKey('Sav') -or $Save)) {
   Fail '-NoSave cannot be combined with -Sav/-Save.'
 }
-# The port's presenter owns one output surface, so -Native is always stacked.
-if ($Native -and $Layout -ne 'stacked') {
-  Write-Host "play: -Native presents one window; ignoring -Layout $Layout" -ForegroundColor Yellow
-  $Layout = 'stacked'
+# GPU choice belongs to the port's Vulkan presenter; the runner's SDL path has
+# no adapter-selection hook. Say so rather than silently ignoring the flag.
+if (-not $Native -and $Gpu -ne 'auto') {
+  Write-Host "play: -Gpu applies to -Native; the SDL path uses the system default adapter" -ForegroundColor Yellow
 }
 # The default is the derivation the runner itself would make: the ROM path with
 # a .sav extension, i.e. the save sits next to the ROM. An explicit -Sav/-Save
@@ -178,15 +187,18 @@ if ($Stats -or $Frames -gt 0) { $env:NDS_FRONTEND_STATS = '1' }
 if (-not $env:NDS_GPU2D_THREADED) { $env:NDS_GPU2D_THREADED = '0' }
 # The frontend hook reads this (render/src/native_present.cpp). Leave it alone
 # otherwise so the environment stays the caller's.
-if ($Native) { $env:PKMNG5PC_PRESENT = 'native' }
+if ($Native) {
+  $env:PKMNG5PC_PRESENT = 'native'
+  $env:PKMNG5PC_GPU = $Gpu
+}
 
 Write-Host "runner: $runner"
 Write-Host "rom:    $Rom"
 Write-Host "banks:  $banks"
 if ($Native) {
-  Write-Host "present: native (render/ - Vulkan, stacked, single window)"
+  Write-Host "present: native (render/ - Vulkan, $Layout, gpu=$Gpu)"
 } else {
-  Write-Host "present: runner SDL blit (512x768 top-over-bottom)"
+  Write-Host "present: runner SDL blit ($Layout)"
 }
 if ($savePath) {
   $fresh = if (Test-Path -LiteralPath $savePath) { '' } else { ' (new: written when the game saves)' }

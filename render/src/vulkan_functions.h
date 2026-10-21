@@ -59,9 +59,15 @@ namespace pkmn::render::vk {
     X(vkResetCommandBuffer)                                                                        \
     X(vkCmdPipelineBarrier)                                                                        \
     X(vkCmdCopyBufferToImage)                                                                      \
+    X(vkCmdBlitImage)                                                                              \
+    X(vkCmdClearColorImage)                                                                        \
     X(vkCreateBuffer)                                                                              \
     X(vkDestroyBuffer)                                                                             \
     X(vkGetBufferMemoryRequirements)                                                               \
+    X(vkCreateImage)                                                                               \
+    X(vkDestroyImage)                                                                              \
+    X(vkGetImageMemoryRequirements)                                                                \
+    X(vkBindImageMemory)                                                                           \
     X(vkAllocateMemory)                                                                            \
     X(vkFreeMemory)                                                                                \
     X(vkMapMemory)                                                                                 \

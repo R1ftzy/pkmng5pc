@@ -30,7 +30,8 @@ def host_family() -> str:
 
 def platform_label() -> str:
     if os.name == "nt":
-        return f"Windows {sys.getwindowsversion().major}"
+        version = sys.getwindowsversion()
+        return f"Windows {11 if version.build >= 22000 else version.major}"
     return sys.platform
 
 
@@ -377,6 +378,24 @@ class Repo:
         suffix = ".exe" if os.name == "nt" else ""
         return self.build_dir(preset) / "tools" / f"pkmn_bankgen{suffix}"
 
+    def render_smoke_path(self, preset: str) -> Path:
+        suffix = ".exe" if os.name == "nt" else ""
+        return self.build_dir(preset) / "render" / f"pkmn_render_smoke{suffix}"
+
+    def find_render_smoke(self, preset: str) -> tuple[Path | None, str | None]:
+        order: list[str] = []
+        for name in [preset, *preferred_preset_names()]:
+            if name and name not in order:
+                order.append(name)
+        for name in order:
+            candidate = self.render_smoke_path(name)
+            if candidate.is_file():
+                return candidate, name
+        for candidate in sorted((self.root / "build").glob("*/render/pkmn_render_smoke*")):
+            if candidate.is_file():
+                return candidate, candidate.parents[1].name
+        return None, None
+
     def runner_path(self, preset: str) -> Path:
         suffix = ".exe" if os.name == "nt" else ""
         return (
@@ -477,6 +496,7 @@ class Settings:
     extra_sha1s: str = ""
     play_layout: str = "stacked"
     play_native: bool = False
+    play_gpu: str = "auto"
     save_mode: str = "default"
     save_path: str = ""
     frames: int = 0
@@ -531,6 +551,8 @@ class Settings:
             self.banks_dir = "banks/black"
         if self.play_layout not in PLAY_LAYOUTS:
             self.play_layout = "stacked"
+        if not self.play_gpu.strip():
+            self.play_gpu = "auto"
         if self.save_mode not in SAVE_MODES:
             self.save_mode = "default"
         self.frames = max(0, min(int(self.frames), 10_000_000))

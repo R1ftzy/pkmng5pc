@@ -711,6 +711,27 @@ Newest first. Keep entries short; details and evidence live in `re/notes/`.
   the touch mapping is proven by the frontend's self-test and a guest ADC read,
   not by hand-playing a touch-only screen.
 
+- **2026-10-20 (native separate, flat present cost, explicit GPU choice)** — the
+  launcher's separate layout reached `-Native` but the frontend hook forced one
+  output and `tools/play` rewrote `-Layout separate` to stacked, so both TUI
+  choices ran the same mode. At the same time the bridge composed the whole
+  window on the CPU and the presenter required canvas extent == swapchain
+  extent, so resizing made the per-frame present cost grow with the window.
+  The hook now passes the layout through and can create two windows/presenters;
+  `Presenter::present()` takes a `PresentTarget` rectangle, the bridge composes
+  at the fixed native size and clears the swapchain to `kLetterboxBgra`, and
+  the Vulkan backend blits with `vkCmdBlitImage(VK_FILTER_NEAREST)`. Present
+  cost is ~0.4 ms/frame at both 512×768 and borderless fullscreen instead of
+  9.2 ms at 2560×1600. `PKMNG5PC_GPU` / `-Gpu` selects `auto` (prefer
+  discrete), `discrete`, `integrated`, `index:<n>` or a name substring; the
+  presenter logs the adapter and `pkmn_render_smoke --list-gpus` backs the
+  launcher's Play-page CPU/RAM/OS/adapter display. Verified on Windows/Black:
+  `frame_fnv=(fe6fa9d527bbb99b,06be2b0d14dc4383)` is unchanged at default and
+  borderless-fullscreen sizes, separate mode opens two `512x384` presenters and
+  routes touch to the bottom window (`last_touch=(127,180)`), and auto selects
+  the RTX 4060 over the Arc iGPU. **Scope:** Windows; the Linux path is wired
+  through the same seam but not measured here.
+
 - **2026-10-19 (the ARM7 alias work lands, and it is a 33.5% boot win)** — the
   two ARM7 `[[alias]]` blocks in `re/config/black.toml`, disabled since
   2026-10-16 because declaring them hung the boot, are enabled again with the

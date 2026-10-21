@@ -16,6 +16,8 @@
 #   sh tools/play.sh --rom "roms/<your-rom>.nds"
 #   sh tools/play.sh --layout separate
 #   sh tools/play.sh --native                 # present through render/ (Vulkan)
+#   sh tools/play.sh --native --gpu discrete  # pick the discrete Vulkan adapter
+#   sh tools/play.sh --native --gpu index:1   # or pin a listed adapter
 #   sh tools/play.sh --frames 600 --stats     # present 600 frames, print stats, exit
 #   sh tools/play.sh --sav banks/black.sav    # keep a different save file
 #   sh tools/play.sh --no-save                # blank 512 KiB cart, write nothing
@@ -30,9 +32,11 @@
 # --native hands the two screens to this project's own present/compositor
 # (`render/`, docs/adr/0006-ndsrecomp-native-present-hook.md) instead of the
 # runner's fixed 512x768 SDL blit. It needs a runner built with
-# PKMNG5PC_NATIVE_PRESENT=ON (the default) and is single-window, so it always
-# presents stacked. Everything else -- guest execution, input, audio, saves,
-# the presented-frame digest -- is the same run either way.
+# PKMNG5PC_NATIVE_PRESENT=ON (the default). Stacked uses one window; separate
+# opens one window per screen. --gpu picks the Vulkan adapter for --native:
+# auto (prefer discrete), discrete, integrated, index:<n>, or a name substring.
+# Everything else -- guest execution, input, audio, saves, the presented-frame
+# digest -- is the same run either way.
 #
 # Saves are on by default: the run loads the save next to the ROM (<rom>.sav),
 # starts blank when it is missing, and keeps writing it. --sav (alias
@@ -55,6 +59,7 @@ bios_dir=bios
 banks_dir=banks/black
 layout=stacked
 native=0
+gpu=${PKMNG5PC_GPU:-auto}
 frames=0
 stats=0
 coverage=0
@@ -71,6 +76,7 @@ while [ $# -gt 0 ]; do
     --banks)    banks_dir=$2; shift 2 ;;
     --layout)   layout=$2; shift 2 ;;
     --native)   native=1; shift ;;
+    --gpu)      gpu=$2; shift 2 ;;
     --frames)   frames=$2; shift 2 ;;
     --save-path) save_path=$2; save_path_set=1; shift 2 ;;
     --sav)      save_path=$2; save_path_set=1; shift 2 ;;
@@ -149,10 +155,10 @@ fi
 
 # --- command ----------------------------------------------------------------
 
-# The port's presenter owns one output surface, so --native is always stacked.
-if [ "$native" -eq 1 ] && [ "$layout" != stacked ]; then
-  echo "play: --native presents one window; ignoring --layout $layout" >&2
-  layout=stacked
+# GPU choice belongs to the port's Vulkan presenter; the runner's SDL path has
+# no adapter-selection hook. Say so rather than silently ignoring the flag.
+if [ "$native" -eq 0 ] && [ "$gpu" != auto ]; then
+  echo "play: --gpu applies to --native; the SDL path uses the system default adapter" >&2
 fi
 
 set -- "$runner" "$bios_dir" 250000000 \
@@ -177,15 +183,19 @@ if [ "$stats" -eq 1 ] || [ "$frames" -gt 0 ]; then NDS_FRONTEND_STATS=1; export 
 if [ -z "${NDS_GPU2D_THREADED:-}" ]; then NDS_GPU2D_THREADED=0; export NDS_GPU2D_THREADED; fi
 # The frontend hook reads this (render/src/native_present.cpp). Left alone
 # otherwise so the environment stays the caller's.
-if [ "$native" -eq 1 ]; then PKMNG5PC_PRESENT=native; export PKMNG5PC_PRESENT; fi
+if [ "$native" -eq 1 ]; then
+  PKMNG5PC_PRESENT=native
+  PKMNG5PC_GPU=$gpu
+  export PKMNG5PC_PRESENT PKMNG5PC_GPU
+fi
 
 echo "runner: $runner"
 echo "rom:    $rom"
 echo "banks:  $banks"
 if [ "$native" -eq 1 ]; then
-  echo "present: native (render/ - Vulkan, stacked, single window)"
+  echo "present: native (render/ - Vulkan, $layout, gpu=$gpu)"
 else
-  echo "present: runner SDL blit (512x768 top-over-bottom)"
+  echo "present: runner SDL blit ($layout)"
 fi
 if [ -n "$save_path" ]; then
   if [ -e "$save_path" ]; then echo "save:   $save_path"

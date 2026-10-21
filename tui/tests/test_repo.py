@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -91,6 +92,22 @@ class RunnerDiscoveryTests(unittest.TestCase):
 
             self.assertEqual(found, runner)
             self.assertEqual(preset, "test-debug")
+
+
+class RenderToolDiscoveryTests(unittest.TestCase):
+    def test_falls_back_to_another_build_preset(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            suffix = ".exe" if os.name == "nt" else ""
+            tool = root / "build" / "custom-preset" / "render" / f"pkmn_render_smoke{suffix}"
+            tool.parent.mkdir(parents=True)
+            tool.write_bytes(b"")
+            repo = Repo(root)
+
+            found, preset = repo.find_render_smoke("missing-preset")
+
+            self.assertEqual(found, tool)
+            self.assertEqual(preset, "custom-preset")
 
 
 class PresetLoadingTests(unittest.TestCase):

@@ -16,9 +16,10 @@ This ADR fixes two things: **where the seam is**, and **which backend is first**
 ## The seam
 
 `pkmn::render::Presenter` owns a device and one output surface. The port hands it
-a finished BGRA8 canvas of the output size; the presenter puts pixels on the
-screen. Nothing above `render/backend.h` names Vulkan/D3D/GL, and nothing below
-it names the game — the same rule the HAL already follows (`AGENTS.md` §5).
+a finished BGRA8 canvas and a `PresentTarget` rectangle in output pixels; the
+presenter scales and letterboxes on the GPU and puts pixels on the screen.
+Nothing above `render/backend.h` names Vulkan/D3D/GL, and nothing below it names
+the game — the same rule the HAL already follows (`AGENTS.md` §5).
 
 `create_presenter()` never returns null and never throws on a missing driver: an
 unavailable backend degrades to a **Null presenter**, and `init()` reports
@@ -40,14 +41,15 @@ build produces the Null backend when Vulkan is switched off.
 
 ## The backend is deliberately shader-free to start
 
-The Vulkan presenter uploads the canvas through a staging buffer and copies it
-into the swapchain image (`vkCmdCopyBufferToImage`), then presents. There is no
-pipeline, no descriptor set and no shader module — and therefore no
-`glslc`/`glslangValidator` build dependency. The point is to exercise the whole
-seam (device, surface, swapchain, resize, out-of-date/recreate, present,
-validation layer when installed) against the DS's real CPU-side 2D/3D output
-before any GPU-side compositing exists. GPU-side work replaces the copy in place
-when the compositor lands; the seam does not move.
+The Vulkan presenter uploads the canvas through a staging buffer, copies it into
+a device-local image (`vkCmdCopyBufferToImage`), and scales it into the swapchain
+with a nearest-neighbour `vkCmdBlitImage`. There is no pipeline, no descriptor
+set and no shader module — and therefore no `glslc`/`glslangValidator` build
+dependency. The point is to exercise the whole seam (device selection, surface,
+swapchain, resize, out-of-date/recreate, present, validation layer when
+installed) against the DS's real CPU-side 2D/3D output before any GPU-side
+compositing exists. The blit is the first GPU-side stage; shader-based post-FX
+replaces it when the compositor lands, without moving the seam.
 
 Consequences of that choice, recorded so they are not mistaken for oversights:
 

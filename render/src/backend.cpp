@@ -32,7 +32,7 @@ namespace {
         }
         uint32_t width() const override { return width_; }
         uint32_t height() const override { return height_; }
-        bool present(const Canvas&) override { return true; }
+        bool present(const Canvas&, const PresentTarget&) override { return true; }
         BackendKind kind() const override { return BackendKind::Null; }
 
     private:

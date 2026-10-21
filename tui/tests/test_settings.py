@@ -22,6 +22,7 @@ class SettingsLoadTests(unittest.TestCase):
         self.assertEqual(settings.rom_dir, "roms")
         self.assertEqual(settings.banks_dir, "banks/black")
         self.assertEqual(settings.play_layout, "stacked")
+        self.assertEqual(settings.play_gpu, "auto")
         self.assertEqual(settings.save_mode, "default")
         self.assertEqual(settings.frames, 0)
         self.assertEqual(settings.shards, 8)
@@ -41,6 +42,7 @@ class SettingsLoadTests(unittest.TestCase):
             "rom_dir": "",
             "banks_dir": "",
             "play_layout": "wide",
+            "play_gpu": "   ",
             "save_mode": "sometimes",
             "frames": -4,
             "shards": 1,
@@ -54,6 +56,7 @@ class SettingsLoadTests(unittest.TestCase):
         self.assertEqual(settings.rom_dir, "roms")
         self.assertEqual(settings.banks_dir, "banks/black")
         self.assertEqual(settings.play_layout, "stacked")
+        self.assertEqual(settings.play_gpu, "auto")
         self.assertEqual(settings.save_mode, "default")
         self.assertEqual(settings.frames, 0)
         self.assertEqual(settings.shards, 2)
@@ -95,6 +98,7 @@ class SettingsRoundTripTests(unittest.TestCase):
             extra_sha1s=f"{'a' * 40};{'b' * 40}",
             play_layout="separate",
             play_native=True,
+            play_gpu="index:1",
             save_mode="custom",
             save_path="saves/run.sav",
             frames=120,

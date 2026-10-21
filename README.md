@@ -39,8 +39,10 @@ python tui/launcher.py
 ---
 - **Home / ROM / Build / Play / Setup / Help** pages cover ROM selection, build options, title-bank generation and launching the runner from one menu.
 - **Quickstart** on Home adds only the missing bootstrap/tool/bank/runner steps, then launches the game.
-- Full mouse support: click tabs, rows, review buttons and browser entries; the wheel scrolls pages, logs and reviews.
+- `Ctrl+R` or the **Play button** in the header starts Play from any page (still through the final review).
+- Full mouse support: click tabs, the Play button, rows, review buttons and browser entries; the wheel scrolls pages, logs and reviews.
 - Every process action opens a **Final review** showing every current setting, recompilation evidence and the exact commands; nothing runs until it is confirmed.
+- The job header shows the runner's **live presented FPS** while the game runs, sampled from its play-mode debug surface; when that surface is unavailable it says so instead of guessing.
 - Build profiles have readable labels, build types, compiler details and descriptions instead of raw preset IDs; the exact CMake preset name stays visible for command parity.
 - The **RECOMPILATION** panel reads the local bank headers, coverage manifests and performance logs: functions emitted, dispatch rows, native/interpreter share, interpreter coverage, evidence build/time and freshness warnings. Missing or mismatched evidence is labeled, never estimated.
 - Interactive folder and ROM browser with header preview; the selected ROM's SHA-1 is computed in the background and passed to Configure.
@@ -50,7 +52,7 @@ python tui/launcher.py
 
 The launcher's own tests need no ROM: `python -m unittest discover -s tui/tests`. See [`tui/README.md`](tui/README.md) for keys, options and the recommended workflow.
 
-Verified locally on Windows: 64 launcher tests, 72 page-layout snapshots, 36 final-review renders, `--check`, and a native-console mouse/key smoke test.
+Verified locally on Windows: 90 launcher tests, 72 page-layout snapshots, 36 final-review renders, `--check`, and a native-console mouse/key smoke test.
 
 ## Manual setup (Windows)
 
@@ -266,6 +268,7 @@ sh tools/play.sh
 | `--banks <dir>` | check that title banks exist in `<dir>` instead of `banks/black` (`-Banks` in PowerShell); should match the directory the runner was configured with |
 | `--layout stacked\|separate` | one top-over-bottom window (default) or two windows |
 | `--native` | present the two screens through this project's own `render/` compositor (Vulkan) instead of the runner's SDL blit — see [Native present](#native-present) |
+| `--gpu <choice>` | Vulkan adapter for `--native`: `auto` (prefer discrete), `discrete`, `integrated`, `index:<n>`, or a name substring (`-Gpu` in PowerShell) |
 | `--frames N` | present N frames, print fps and a frame hash, exit — a self-test |
 | `--stats` | print the performance summary on exit |
 | `--sav [<file>]` | keep the battery save at another path; the default is the ROM's own `<rom>.sav`. Aliases: `--save-path`, `--save`; `--no-save` (`-NoSave` in PowerShell) runs a blank cart and writes nothing |
@@ -294,11 +297,25 @@ checkout .` and re-configuring re-applies it). Build with
 `-DPKMNG5PC_NATIVE_PRESENT=OFF` for a completely untouched submodule.
 `docs/adr/0006-ndsrecomp-native-present-hook.md` records the decision.
 
-Because the presenter owns one output surface, `--native` is **stacked only**:
-`--layout separate` is ignored with a warning. Pointer and touch input work:
-the compositor's placement rule is inverted to turn a window click into a
-stylus coordinate, and a click outside the bottom screen (top screen or
-letterbox) does not touch. Window layout, post-FX and frame decoupling are the
+`--native` supports both layouts. Stacked uses one window; `--layout separate`
+opens one window per screen. The bridge composes at the native stack size (or
+one screen's native size), uploads that fixed-size canvas, and lets the GPU
+blit it into the window with nearest-neighbour scaling and a letterbox. A
+window resize therefore rebuilds the swapchain but does not re-composite the
+whole window on the CPU, which keeps the fullscreen presentation cost flat.
+Pointer and touch input work in both layouts: the compositor's placement rule
+is inverted to turn a window click into a stylus coordinate (the window id
+selects the screen in separate mode), and a click outside the bottom screen
+(top screen or letterbox) does not touch.
+
+`--gpu` (or `PKMNG5PC_GPU`) selects the Vulkan adapter. `auto` prefers a
+discrete GPU over an integrated one; `discrete`, `integrated`, `index:<n>` and
+a case-insensitive device-name substring are also accepted. The presenter logs
+the adapter it actually uses, and `build/<preset>/render/pkmn_render_smoke
+--list-gpus` prints the same list. The launcher shows the host CPU, memory, OS
+and detected adapters on its Play page and passes the selection through.
+Adapter choice applies to the native Vulkan presenter; the runner's SDL path
+has no equivalent hook. Window layout, post-FX and frame decoupling are the
 rest of M8.
 
 The underlying invocation, if you want to drive it yourself (`tools/play` sets `NDS_GPU2D_THREADED=0` for you — see the workaround note below):

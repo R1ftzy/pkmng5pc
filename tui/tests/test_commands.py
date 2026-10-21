@@ -8,7 +8,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tui.commands import Command, Job, LaunchError, _extra_tokens, quickstart_commands
+from tui.commands import (
+    Command,
+    Job,
+    LaunchError,
+    _extra_tokens,
+    play_command,
+    quickstart_commands,
+)
 from tui.model import Repo, Settings
 
 
@@ -93,6 +100,49 @@ def make_quickstart_repo(temp: Path) -> tuple[Repo, Path]:
     repo.recompiler_path.parent.mkdir(parents=True, exist_ok=True)
     repo.recompiler_path.write_text("", encoding="utf-8")
     return repo, rom
+
+
+class PlayCommandTests(unittest.TestCase):
+    def make_command(self, **changes: object) -> tuple[Command, Repo]:
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        repo, rom = make_quickstart_repo(Path(temp.name))
+        settings = Settings(
+            preset="test-debug",
+            rom_path=repo.store(rom),
+            banks_dir="banks/black",
+            **changes,
+        )
+        return play_command(repo, settings, require_artifacts=False), repo
+
+    def test_native_separate_keeps_the_layout_and_passes_the_gpu(self) -> None:
+        command, _ = self.make_command(
+            play_native=True, play_layout="separate", play_gpu="index:1"
+        )
+        if os.name == "nt":
+            self.assertIn("-Native", command.argv)
+            self.assertIn("-Layout", command.argv)
+            self.assertEqual(command.argv[command.argv.index("-Layout") + 1], "separate")
+            self.assertEqual(command.argv[command.argv.index("-Gpu") + 1], "index:1")
+        else:
+            self.assertIn("--native", command.argv)
+            self.assertIn("--layout", command.argv)
+            self.assertEqual(command.argv[command.argv.index("--layout") + 1], "separate")
+            self.assertEqual(command.argv[command.argv.index("--gpu") + 1], "index:1")
+
+    def test_auto_gpu_is_passed_and_stacked_layout_adds_no_layout_flag(self) -> None:
+        command, _ = self.make_command(play_native=True, play_gpu="auto")
+        if os.name == "nt":
+            self.assertEqual(command.argv[command.argv.index("-Gpu") + 1], "auto")
+        else:
+            self.assertEqual(command.argv[command.argv.index("--gpu") + 1], "auto")
+        self.assertNotIn("-Layout", command.argv)
+        self.assertNotIn("--layout", command.argv)
+
+    def test_gpu_is_not_passed_without_native_present(self) -> None:
+        command, _ = self.make_command(play_native=False, play_gpu="discrete")
+        self.assertNotIn("-Gpu", command.argv)
+        self.assertNotIn("--gpu", command.argv)
 
 
 class QuickstartTests(unittest.TestCase):

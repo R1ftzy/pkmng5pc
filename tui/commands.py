@@ -310,7 +310,8 @@ def play_command(repo: Repo, settings: Settings, require_artifacts: bool = True)
         ]
         if settings.play_native:
             argv.append("-Native")
-        elif settings.play_layout == "separate":
+            argv.extend(["-Gpu", settings.play_gpu or "auto"])
+        if settings.play_layout == "separate":
             argv.extend(["-Layout", "separate"])
         if settings.frames > 0:
             argv.extend(["-Frames", str(settings.frames)])
@@ -340,7 +341,8 @@ def play_command(repo: Repo, settings: Settings, require_artifacts: bool = True)
         ]
         if settings.play_native:
             argv.append("--native")
-        elif settings.play_layout == "separate":
+            argv.extend(["--gpu", settings.play_gpu or "auto"])
+        if settings.play_layout == "separate":
             argv.extend(["--layout", "separate"])
         if settings.frames > 0:
             argv.extend(["--frames", str(settings.frames)])

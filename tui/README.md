@@ -10,7 +10,7 @@ Complete and verified locally on Windows. The launcher is pure Python, so it
 starts without the C++ build; `--check` and `--snapshot` also work without an
 interactive terminal.
 
-- `python -m unittest discover -s tui/tests` runs 64 tests (one
+- `python -m unittest discover -s tui/tests` runs 90 tests (one
   platform-specific case is skipped).
 - The Windows native console reader was exercised with injected mouse records:
   left press, release and wheel-up decoded correctly through
@@ -139,11 +139,16 @@ The SHA-1 is computed in a background thread and passed to Configure as
   written beside the ROM; the performance bundle goes to `banks/play`. Both feed
   the RECOMPILATION panel.
 - Extra runner arguments, runner/bank status and Play.
+- `Ctrl+R` or the `[Ctrl+R Play]` button in the header starts Play from any
+  page; the final review still comes first.
 
 Play always passes the discovered runner and the selected bank directory
 explicitly. The game window owns keyboard focus while it is open; close it to
-return to the log. With diagnostics off, the panel reports runtime state as
-**not measured** rather than showing an old or guessed value.
+return to the log. While the Play step runs, the job header shows the runner's
+live presented FPS, sampled from its play-mode debug surface on
+`127.0.0.1:19842` (`frontend_stats`); if that surface is unavailable the header
+says so instead of guessing. With diagnostics off, the panel reports runtime
+state as **not measured** rather than showing an old or guessed value.
 
 ### Setup (5)
 
@@ -164,13 +169,14 @@ local-state/legal notes.
 | --- | --- |
 | Pages | `Up`/`Down` move, `Left`/`Right` change, `Enter` activate, `Space` toggle |
 | Pages | `Tab`/`Shift+Tab` next/previous page, `1`-`6` jump, `H` `R` `B` `P` `S` page shortcuts |
+| Pages | `Ctrl+R` starts Play from any page through the final review; the `[Ctrl+R Play]` button does the same |
 | Pages | `?` help, `L` last log, `Q` quit |
-| Mouse | Click a tab, row or button; wheel scrolls pages, reviews, the browser and the job log |
+| Mouse | Click a tab, the Play button or a row; wheel scrolls pages, reviews, the browser and the job log |
 | Text input | Type, `Backspace`/`Delete`, `Left`/`Right`, `Home`/`End`, `Ctrl+U` clear, `Enter` accept, `Esc` cancel |
 | Folder/ROM browser | `Up`/`Down`, `Enter` open or pick, `Backspace`/`Left` up, `Right` open, `S` use folder, `G` go to path, `H` hidden, `R` rescan, `Esc` cancel |
 | Folder/ROM browser (mouse) | Click an entry to select it; click the selected entry to open or pick it; wheel moves three entries |
 | Final review | `Up`/`Down`/`PgUp`/`PgDn`/`Home`/`End` scroll, `Enter` run, `Esc` cancel; `Run`/`Cancel` are clickable |
-| Job log | `Esc`/`Ctrl+C` cancel while running; `Up`/`Down`/`PgUp`/`PgDn`/`Home` scroll; `End`/`F` follow; `Enter` return after it finishes |
+| Job log | `Esc`/`Ctrl+C` cancel while running; `Up`/`Down`/`PgUp`/`PgDn`/`Home` scroll; `End`/`F` follow; `Enter` return after it finishes; the header shows the live presented FPS while Play runs |
 
 ## Recompilation state
 

@@ -191,3 +191,62 @@ TEST_CASE(render_stack_placement_matches_the_composed_letterbox)
         = stack_placement(kScreenWidth, kScreenWidth, ScreenLayout::Stacked, 0, 0);
     CHECK(!degenerate.visible);
 }
+
+TEST_CASE(render_bgra8_into_reuses_the_canvas_and_matches_the_allocating_path)
+{
+    const std::vector<uint8_t> top = bgra8_screen(kScreenWidth, 255, 0, 0);
+    const std::vector<uint8_t> bottom = bgra8_screen(kScreenWidth, 0, 0, 255);
+
+    CanvasBuffer reused;
+    compose_screens_bgra8_into(reused, top.data(), kScreenWidth, bottom.data(), kScreenWidth,
+        ScreenLayout::Stacked, kScreenWidth * 2, kScreenHeight * 4);
+    const CanvasBuffer allocated = compose_screens_bgra8(top.data(), kScreenWidth, bottom.data(),
+        kScreenWidth, ScreenLayout::Stacked, kScreenWidth * 2, kScreenHeight * 4);
+
+    CHECK(reused.width == allocated.width && reused.height == allocated.height);
+    CHECK(reused.bytes == allocated.bytes);
+
+    const uint8_t* storage = reused.bytes.data();
+    const std::size_t capacity = reused.bytes.capacity();
+    compose_screens_bgra8_into(reused, bottom.data(), kScreenWidth, top.data(), kScreenWidth,
+        ScreenLayout::Stacked, kScreenWidth * 2, kScreenHeight * 4);
+    CHECK(reused.bytes.data() == storage);
+    CHECK(reused.bytes.capacity() == capacity);
+    check_pixel(reused, 0, 0, 0, 0, 255);
+    check_pixel(reused, 0, kScreenHeight * 2, 255, 0, 0);
+}
+
+TEST_CASE(render_single_screen_compose_and_fit_placement)
+{
+    const std::vector<uint8_t> screen = bgra8_screen(kScreenWidth, 0, 255, 0);
+
+    // Native-size canvas: no bars, the whole surface is the screen.
+    const CanvasBuffer native
+        = compose_screen_bgra8(screen.data(), kScreenWidth, kScreenWidth, kScreenHeight);
+    CHECK(native.width == kScreenWidth && native.height == kScreenHeight);
+    check_pixel(native, 0, 0, 0, 255, 0);
+    check_pixel(native, kScreenWidth - 1, kScreenHeight - 1, 0, 255, 0);
+
+    // Twice as wide as the screen: equal bars either side at 1x.
+    const CanvasBuffer wide
+        = compose_screen_bgra8(screen.data(), kScreenWidth, kScreenWidth * 3, kScreenHeight);
+    check_pixel(wide, 0, 0, 12, 12, 16);
+    check_pixel(wide, kScreenWidth - 1, 0, 12, 12, 16);
+    check_pixel(wide, kScreenWidth, 0, 0, 255, 0);
+    check_pixel(wide, kScreenWidth * 2 - 1, 0, 0, 255, 0);
+    check_pixel(wide, kScreenWidth * 2, 0, 12, 12, 16);
+
+    const StackPlacement fit
+        = fit_placement(kScreenWidth, kScreenHeight, kScreenWidth * 4, kScreenHeight * 4);
+    CHECK(fit.visible);
+    CHECK(fit.scale == 4);
+    CHECK(fit.x == 0 && fit.y == 0);
+    CHECK(fit.width == kScreenWidth * 4 && fit.height == kScreenHeight * 4);
+
+    const StackPlacement centred
+        = fit_placement(kScreenWidth, kScreenHeight, kScreenWidth * 4 + 8, kScreenHeight * 4);
+    CHECK(centred.x == 4 && centred.y == 0);
+    CHECK(centred.scale == 4);
+
+    CHECK(!fit_placement(0, kScreenHeight, 100, 100).visible);
+}

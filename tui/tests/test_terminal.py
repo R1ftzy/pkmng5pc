@@ -35,6 +35,9 @@ class MouseParsingTests(unittest.TestCase):
         self.assertEqual(self.parse(b"\x1b[A"), ("up", 3))
         self.assertEqual(self.parse(b"\x1b[6~"), ("pagedown", 4))
 
+    def test_ctrl_r_parses_as_a_control_key(self) -> None:
+        self.assertEqual(self.parse(b"\x12"), ("ctrl-r", 1))
+
     def test_x10_mouse_fallback(self) -> None:
         event, consumed = self.parse(b"\x1b[M" + bytes([32, 43, 36]))
         self.assertEqual(event, MouseEvent("press", "left", 11, 4))
@@ -66,6 +69,7 @@ class WindowsRecordTests(unittest.TestCase):
         self.assertEqual(Terminal._windows_key(self.key(0x21)), "pageup")
         self.assertEqual(Terminal._windows_key(self.key(0x09, "\t", shift=True)), "backtab")
         self.assertEqual(Terminal._windows_key(self.key(0x0D, "\r")), "enter")
+        self.assertEqual(Terminal._windows_key(self.key(0x12, "\x12")), "ctrl-r")
 
     def test_press_release_and_wheel(self) -> None:
         self.assertEqual(

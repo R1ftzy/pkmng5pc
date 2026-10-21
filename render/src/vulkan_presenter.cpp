@@ -8,8 +8,10 @@
 #include <SDL3/SDL_vulkan.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <cstring>
+#include <string>
 #include <vector>
 
 #include "vulkan_functions.h"
@@ -39,6 +41,39 @@ namespace {
         VkDeviceSize size = 0;
         void* mapped = nullptr;
     };
+
+    struct CanvasUpload {
+        StagingBuffer staging;
+        VkImage image = VK_NULL_HANDLE;
+        VkDeviceMemory image_memory = VK_NULL_HANDLE;
+        uint32_t width = 0;
+        uint32_t height = 0;
+    };
+
+    std::string lower_ascii(std::string value)
+    {
+        for (char& c : value) {
+            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        }
+        return value;
+    }
+
+    int gpu_score(GpuType type)
+    {
+        switch (type) {
+        case GpuType::Discrete:
+            return 4;
+        case GpuType::Integrated:
+            return 2;
+        case GpuType::Virtual:
+            return 1;
+        case GpuType::Other:
+            return 1;
+        case GpuType::Cpu:
+            return 0;
+        }
+        return 0;
+    }
 
     bool has_layer(const char* name)
     {
@@ -98,6 +133,7 @@ namespace {
                 }
             }
             vsync_ = config.vsync;
+            gpu_preference_ = config.gpu;
             if (!create_instance(config)) {
                 return false;
             }
@@ -141,7 +177,7 @@ namespace {
                 vkDeviceWaitIdle(device_);
             }
             destroy_swapchain();
-            destroy_staging();
+            destroy_uploads();
             for (uint32_t i = 0; i < kFramesInFlight; ++i) {
                 if (image_available_[i]) {
                     vkDestroySemaphore(device_, image_available_[i], nullptr);
@@ -193,14 +229,17 @@ namespace {
         uint32_t height() const override { return extent_.height; }
         BackendKind kind() const override { return BackendKind::Vulkan; }
 
-        bool present(const Canvas& canvas) override
+        bool present(const Canvas& canvas, const PresentTarget& target) override
         {
             if (!device_ || swapchain_ == VK_NULL_HANDLE) {
                 return false;
             }
-            if (!canvas.data || canvas.width != extent_.width || canvas.height != extent_.height) {
-                // The caller must resize() to the current extent first; report a
-                // recoverable failure rather than guessing a scale.
+            if (!canvas.data || canvas.width == 0 || canvas.height == 0 || target.empty()
+                || canvas.pitch < static_cast<std::size_t>(canvas.width) * 4) {
+                return false;
+            }
+            if (static_cast<uint64_t>(target.x) + target.width > extent_.width
+                || static_cast<uint64_t>(target.y) + target.height > extent_.height) {
                 return false;
             }
 
@@ -220,13 +259,18 @@ namespace {
 
             vkResetFences(device_, 1, &in_flight_[frame]);
 
-            // Upload the canvas into the mapped staging buffer (row pitch may
-            // exceed width*4).
+            if (!ensure_upload(frame, canvas.width, canvas.height)) {
+                return false;
+            }
+            CanvasUpload& upload = uploads_[frame];
+
+            // Upload the native-resolution canvas into this frame's staging
+            // buffer. Row pitch may exceed width*4; the copy below reads it
+            // tightly packed.
             const std::size_t row_bytes = static_cast<std::size_t>(canvas.width) * 4;
-            const std::size_t dst_pitch = static_cast<std::size_t>(extent_.width) * 4;
-            auto* dst = static_cast<uint8_t*>(staging_.mapped);
+            auto* dst = static_cast<uint8_t*>(upload.staging.mapped);
             for (uint32_t y = 0; y < canvas.height; ++y) {
-                std::memcpy(dst + y * dst_pitch,
+                std::memcpy(dst + static_cast<std::size_t>(y) * row_bytes,
                     canvas.data + static_cast<std::size_t>(y) * canvas.pitch, row_bytes);
             }
 
@@ -247,20 +291,36 @@ namespace {
             vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
                 1, &host_barrier, 0, nullptr, 0, nullptr);
 
-            // Present source -> transfer destination. We overwrite every texel, so
-            // the previous contents are declared undefined rather than preserved.
-            VkImageMemoryBarrier to_transfer {};
-            to_transfer.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-            to_transfer.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-            to_transfer.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-            to_transfer.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-            to_transfer.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-            to_transfer.image = images_[image_index];
-            to_transfer.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
-            to_transfer.srcAccessMask = 0;
-            to_transfer.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            // Both images are overwritten completely, so their previous
+            // contents can be discarded. The swapchain image is also cleared
+            // outside the destination rectangle below.
+            VkImageMemoryBarrier to_transfer[2] {};
+            for (VkImageMemoryBarrier& barrier : to_transfer) {
+                barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+                barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+                barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+                barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                barrier.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+                barrier.srcAccessMask = 0;
+                barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            }
+            to_transfer[0].image = images_[image_index];
+            to_transfer[1].image = upload.image;
             vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &to_transfer);
+                VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 2, to_transfer);
+
+            const uint8_t letterbox_b = static_cast<uint8_t>(kLetterboxBgra & 0xFFu);
+            const uint8_t letterbox_g = static_cast<uint8_t>((kLetterboxBgra >> 8) & 0xFFu);
+            const uint8_t letterbox_r = static_cast<uint8_t>((kLetterboxBgra >> 16) & 0xFFu);
+            VkClearColorValue clear {};
+            clear.float32[0] = static_cast<float>(letterbox_r) / 255.0f;
+            clear.float32[1] = static_cast<float>(letterbox_g) / 255.0f;
+            clear.float32[2] = static_cast<float>(letterbox_b) / 255.0f;
+            clear.float32[3] = 1.0f;
+            const VkImageSubresourceRange range { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+            vkCmdClearColorImage(
+                cmd, images_[image_index], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &clear, 1, &range);
 
             VkBufferImageCopy region {};
             region.bufferOffset = 0;
@@ -269,10 +329,35 @@ namespace {
             region.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
             region.imageOffset = { 0, 0, 0 };
             region.imageExtent = { canvas.width, canvas.height, 1 };
-            vkCmdCopyBufferToImage(cmd, staging_.buffer, images_[image_index],
+            vkCmdCopyBufferToImage(cmd, upload.staging.buffer, upload.image,
                 VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
 
-            VkImageMemoryBarrier to_present = to_transfer;
+            VkImageMemoryBarrier to_source = to_transfer[1];
+            to_source.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            to_source.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+            to_source.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            to_source.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &to_source);
+
+            // Scale the native canvas into its placed rectangle. The target is
+            // an integer multiple of the canvas, so nearest filtering keeps the
+            // DS pixels crisp while the GPU, not the CPU, does the enlargement.
+            VkImageBlit blit {};
+            blit.srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+            blit.srcOffsets[0] = { 0, 0, 0 };
+            blit.srcOffsets[1]
+                = { static_cast<int32_t>(canvas.width), static_cast<int32_t>(canvas.height), 1 };
+            blit.dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+            blit.dstOffsets[0]
+                = { static_cast<int32_t>(target.x), static_cast<int32_t>(target.y), 0 };
+            blit.dstOffsets[1] = { static_cast<int32_t>(target.x + target.width),
+                static_cast<int32_t>(target.y + target.height), 1 };
+            vkCmdBlitImage(cmd, upload.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                images_[image_index], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit,
+                VK_FILTER_NEAREST);
+
+            VkImageMemoryBarrier to_present = to_transfer[0];
             to_present.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
             to_present.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
             to_present.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
@@ -396,6 +481,15 @@ namespace {
                 == VK_SUCCESS;
         }
 
+        struct DeviceCandidate {
+            VkPhysicalDevice device = VK_NULL_HANDLE;
+            uint32_t index = 0;
+            uint32_t queue_family = 0;
+            VkPhysicalDeviceProperties properties {};
+            VkPhysicalDeviceMemoryProperties memory {};
+            GpuType type = GpuType::Other;
+        };
+
         bool pick_device()
         {
             uint32_t count = 0;
@@ -408,7 +502,10 @@ namespace {
             if (vkEnumeratePhysicalDevices(instance_, &count, devices.data()) != VK_SUCCESS) {
                 return false;
             }
-            for (VkPhysicalDevice device : devices) {
+
+            std::vector<DeviceCandidate> candidates;
+            for (uint32_t index = 0; index < count; ++index) {
+                const VkPhysicalDevice device = devices[index];
                 if (!device_has_extension(device, VK_KHR_SWAPCHAIN_EXTENSION_NAME)) {
                     continue;
                 }
@@ -416,22 +513,122 @@ namespace {
                 vkGetPhysicalDeviceQueueFamilyProperties(device, &family_count, nullptr);
                 std::vector<VkQueueFamilyProperties> families(family_count);
                 vkGetPhysicalDeviceQueueFamilyProperties(device, &family_count, families.data());
-                for (uint32_t i = 0; i < family_count; ++i) {
-                    if ((families[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) == 0) {
+                for (uint32_t family = 0; family < family_count; ++family) {
+                    if ((families[family].queueFlags & VK_QUEUE_GRAPHICS_BIT) == 0) {
                         continue;
                     }
                     VkBool32 present = VK_FALSE;
-                    vkGetPhysicalDeviceSurfaceSupportKHR(device, i, surface_, &present);
+                    vkGetPhysicalDeviceSurfaceSupportKHR(device, family, surface_, &present);
                     if (!present) {
                         continue;
                     }
-                    physical_ = device;
-                    queue_family_ = i;
-                    return true;
+                    DeviceCandidate candidate;
+                    candidate.device = device;
+                    candidate.index = index;
+                    candidate.queue_family = family;
+                    vkGetPhysicalDeviceProperties(device, &candidate.properties);
+                    vkGetPhysicalDeviceMemoryProperties(device, &candidate.memory);
+                    switch (candidate.properties.deviceType) {
+                    case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU:
+                        candidate.type = GpuType::Discrete;
+                        break;
+                    case VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU:
+                        candidate.type = GpuType::Integrated;
+                        break;
+                    case VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU:
+                        candidate.type = GpuType::Virtual;
+                        break;
+                    case VK_PHYSICAL_DEVICE_TYPE_CPU:
+                        candidate.type = GpuType::Cpu;
+                        break;
+                    default:
+                        candidate.type = GpuType::Other;
+                        break;
+                    }
+                    candidates.push_back(std::move(candidate));
+                    break;
                 }
             }
-            std::fprintf(stderr, "[render] no graphics+present Vulkan queue found\n");
-            return false;
+            if (candidates.empty()) {
+                std::fprintf(stderr, "[render] no graphics+present Vulkan queue found\n");
+                return false;
+            }
+
+            const std::string preference
+                = lower_ascii(gpu_preference_.empty() ? std::string("auto") : gpu_preference_);
+            bool has_explicit_index = false;
+            uint32_t explicit_index = 0;
+            if (preference.rfind("index:", 0) == 0) {
+                has_explicit_index = true;
+                explicit_index
+                    = static_cast<uint32_t>(std::strtoul(preference.c_str() + 6, nullptr, 10));
+            } else if (!preference.empty()
+                && std::all_of(preference.begin(), preference.end(),
+                    [](unsigned char c) { return std::isdigit(c) != 0; })) {
+                has_explicit_index = true;
+                explicit_index
+                    = static_cast<uint32_t>(std::strtoul(preference.c_str(), nullptr, 10));
+            }
+
+            std::vector<const DeviceCandidate*> eligible;
+            for (const DeviceCandidate& candidate : candidates) {
+                const std::string name = lower_ascii(candidate.properties.deviceName);
+                bool matches = true;
+                if (preference.empty() || preference == "auto") {
+                    matches = true;
+                } else if (preference == "discrete") {
+                    matches = candidate.type == GpuType::Discrete;
+                } else if (preference == "integrated") {
+                    matches = candidate.type == GpuType::Integrated;
+                } else if (has_explicit_index) {
+                    matches = candidate.index == explicit_index;
+                } else {
+                    matches = name.find(preference) != std::string::npos;
+                }
+                if (matches) {
+                    eligible.push_back(&candidate);
+                }
+            }
+            if (eligible.empty()) {
+                std::fprintf(stderr,
+                    "[render] gpu preference '%s' matched no present-capable device; using auto\n",
+                    gpu_preference_.c_str());
+                for (const DeviceCandidate& candidate : candidates) {
+                    eligible.push_back(&candidate);
+                }
+            }
+
+            const DeviceCandidate* best = nullptr;
+            uint64_t best_memory = 0;
+            for (const DeviceCandidate* candidate : eligible) {
+                uint64_t device_local = 0;
+                for (uint32_t heap = 0; heap < candidate->memory.memoryHeapCount; ++heap) {
+                    if ((candidate->memory.memoryHeaps[heap].flags
+                            & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT)
+                        != 0) {
+                        device_local += candidate->memory.memoryHeaps[heap].size;
+                    }
+                }
+                if (best == nullptr || gpu_score(candidate->type) > gpu_score(best->type)
+                    || (gpu_score(candidate->type) == gpu_score(best->type)
+                        && device_local > best_memory)) {
+                    best = candidate;
+                    best_memory = device_local;
+                }
+            }
+            if (best == nullptr) {
+                return false;
+            }
+
+            physical_ = best->device;
+            queue_family_ = best->queue_family;
+            const VkPhysicalDeviceProperties& properties = best->properties;
+            std::fprintf(stderr, "[render] gpu: %s (%s, %llu MiB, Vulkan %u.%u.%u, driver %u)\n",
+                properties.deviceName, to_string(best->type),
+                static_cast<unsigned long long>(best_memory / (1024ull * 1024ull)),
+                VK_VERSION_MAJOR(properties.apiVersion), VK_VERSION_MINOR(properties.apiVersion),
+                VK_VERSION_PATCH(properties.apiVersion), properties.driverVersion);
+            return true;
         }
 
         bool create_device()
@@ -580,9 +777,6 @@ namespace {
             images_.resize(count);
             vkGetSwapchainImagesKHR(device_, swapchain_, &count, images_.data());
             extent_ = extent;
-            if (!create_staging(static_cast<VkDeviceSize>(extent.width) * extent.height * 4)) {
-                return false;
-            }
             return true;
         }
 
@@ -593,7 +787,6 @@ namespace {
                 swapchain_ = VK_NULL_HANDLE;
             }
             images_.clear();
-            destroy_staging();
             extent_ = { 0, 0 };
         }
 
@@ -610,7 +803,7 @@ namespace {
             return UINT32_MAX;
         }
 
-        bool create_staging(VkDeviceSize size)
+        bool create_staging(StagingBuffer& staging, VkDeviceSize size)
         {
             if (size == 0) {
                 return false;
@@ -620,11 +813,11 @@ namespace {
             info.size = size;
             info.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
             info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-            if (vkCreateBuffer(device_, &info, nullptr, &staging_.buffer) != VK_SUCCESS) {
+            if (vkCreateBuffer(device_, &info, nullptr, &staging.buffer) != VK_SUCCESS) {
                 return false;
             }
             VkMemoryRequirements req {};
-            vkGetBufferMemoryRequirements(device_, staging_.buffer, &req);
+            vkGetBufferMemoryRequirements(device_, staging.buffer, &req);
             const uint32_t type = find_memory_type(req.memoryTypeBits,
                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
             if (type == UINT32_MAX) {
@@ -634,40 +827,126 @@ namespace {
             alloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
             alloc.allocationSize = req.size;
             alloc.memoryTypeIndex = type;
-            if (vkAllocateMemory(device_, &alloc, nullptr, &staging_.memory) != VK_SUCCESS) {
+            if (vkAllocateMemory(device_, &alloc, nullptr, &staging.memory) != VK_SUCCESS) {
                 return false;
             }
-            vkBindBufferMemory(device_, staging_.buffer, staging_.memory, 0);
-            if (vkMapMemory(device_, staging_.memory, 0, size, 0, &staging_.mapped) != VK_SUCCESS) {
+            vkBindBufferMemory(device_, staging.buffer, staging.memory, 0);
+            if (vkMapMemory(device_, staging.memory, 0, size, 0, &staging.mapped) != VK_SUCCESS) {
                 return false;
             }
-            staging_.size = size;
+            staging.size = size;
             return true;
         }
 
-        void destroy_staging()
+        void destroy_staging(StagingBuffer& staging)
         {
             if (!device_) {
                 return;
             }
-            if (staging_.mapped) {
-                vkUnmapMemory(device_, staging_.memory);
-                staging_.mapped = nullptr;
+            if (staging.mapped) {
+                vkUnmapMemory(device_, staging.memory);
+                staging.mapped = nullptr;
             }
-            if (staging_.buffer) {
-                vkDestroyBuffer(device_, staging_.buffer, nullptr);
-                staging_.buffer = VK_NULL_HANDLE;
+            if (staging.buffer) {
+                vkDestroyBuffer(device_, staging.buffer, nullptr);
+                staging.buffer = VK_NULL_HANDLE;
             }
-            if (staging_.memory) {
-                vkFreeMemory(device_, staging_.memory, nullptr);
-                staging_.memory = VK_NULL_HANDLE;
+            if (staging.memory) {
+                vkFreeMemory(device_, staging.memory, nullptr);
+                staging.memory = VK_NULL_HANDLE;
             }
-            staging_.size = 0;
+            staging.size = 0;
+        }
+
+        bool create_canvas_image(CanvasUpload& upload, uint32_t width, uint32_t height)
+        {
+            VkImageCreateInfo info {};
+            info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+            info.imageType = VK_IMAGE_TYPE_2D;
+            info.format = VK_FORMAT_B8G8R8A8_UNORM;
+            info.extent = { width, height, 1 };
+            info.mipLevels = 1;
+            info.arrayLayers = 1;
+            info.samples = VK_SAMPLE_COUNT_1_BIT;
+            info.tiling = VK_IMAGE_TILING_OPTIMAL;
+            info.usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+            info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+            info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            if (vkCreateImage(device_, &info, nullptr, &upload.image) != VK_SUCCESS) {
+                return false;
+            }
+
+            VkMemoryRequirements req {};
+            vkGetImageMemoryRequirements(device_, upload.image, &req);
+            uint32_t type
+                = find_memory_type(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+            if (type == UINT32_MAX) {
+                type = find_memory_type(req.memoryTypeBits, 0);
+            }
+            if (type == UINT32_MAX) {
+                return false;
+            }
+
+            VkMemoryAllocateInfo alloc {};
+            alloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+            alloc.allocationSize = req.size;
+            alloc.memoryTypeIndex = type;
+            if (vkAllocateMemory(device_, &alloc, nullptr, &upload.image_memory) != VK_SUCCESS) {
+                return false;
+            }
+            if (vkBindImageMemory(device_, upload.image, upload.image_memory, 0) != VK_SUCCESS) {
+                return false;
+            }
+            upload.width = width;
+            upload.height = height;
+            return true;
+        }
+
+        bool ensure_upload(uint32_t frame, uint32_t width, uint32_t height)
+        {
+            CanvasUpload& upload = uploads_[frame];
+            if (upload.width == width && upload.height == height && upload.staging.mapped) {
+                return true;
+            }
+            destroy_upload(upload);
+            const VkDeviceSize bytes = static_cast<VkDeviceSize>(width) * height * 4;
+            if (!create_staging(upload.staging, bytes)) {
+                destroy_upload(upload);
+                return false;
+            }
+            if (!create_canvas_image(upload, width, height)) {
+                destroy_upload(upload);
+                return false;
+            }
+            return true;
+        }
+
+        void destroy_upload(CanvasUpload& upload)
+        {
+            destroy_staging(upload.staging);
+            if (upload.image) {
+                vkDestroyImage(device_, upload.image, nullptr);
+                upload.image = VK_NULL_HANDLE;
+            }
+            if (upload.image_memory) {
+                vkFreeMemory(device_, upload.image_memory, nullptr);
+                upload.image_memory = VK_NULL_HANDLE;
+            }
+            upload.width = 0;
+            upload.height = 0;
+        }
+
+        void destroy_uploads()
+        {
+            for (CanvasUpload& upload : uploads_) {
+                destroy_upload(upload);
+            }
         }
 
         SDL_Window* window_ = nullptr;
         bool vsync_ = true;
         bool want_debug_utils_ = false;
+        std::string gpu_preference_ = "auto";
 
         VkInstance instance_ = VK_NULL_HANDLE;
         VkDebugUtilsMessengerEXT debug_messenger_ = VK_NULL_HANDLE;
@@ -688,7 +967,7 @@ namespace {
         VkSemaphore render_finished_[kFramesInFlight] {};
         VkFence in_flight_[kFramesInFlight] {};
         uint32_t frame_ = 0;
-        StagingBuffer staging_;
+        CanvasUpload uploads_[kFramesInFlight];
 
         PFN_vkGetInstanceProcAddr get_instance_proc_addr_ = nullptr;
         PFN_vkCreateDebugUtilsMessengerEXT create_debug_messenger_ = nullptr;
