@@ -1,0 +1,38 @@
+# Native DS compute shaders: the one list of names, melonDS source symbol and
+# defines. Parsed by render/CMakeLists.txt (to generate ds_shader_ids.h and the
+# SPIR-V build rules) and by tools/ds_shader_gen.cpp (to emit the GLSL).
+#
+# name|source symbol|comma-separated defines
+ds_interp_spans_z|InterpSpans|InterpSpans,ZBuffer
+ds_interp_spans_w|InterpSpans|InterpSpans,WBuffer
+ds_bin_combined|BinCombined|BinCombined
+ds_depth_blend_z|DepthBlend|DepthBlend,ZBuffer
+ds_depth_blend_w|DepthBlend|DepthBlend,WBuffer
+ds_raster_no_tex_z|Rasterise|Rasterise,ZBuffer,NoTexture
+ds_raster_no_tex_w|Rasterise|Rasterise,WBuffer,NoTexture
+ds_raster_no_tex_toon_z|Rasterise|Rasterise,ZBuffer,NoTexture,Toon
+ds_raster_no_tex_toon_w|Rasterise|Rasterise,WBuffer,NoTexture,Toon
+ds_raster_no_tex_highlight_z|Rasterise|Rasterise,ZBuffer,NoTexture,Highlight
+ds_raster_no_tex_highlight_w|Rasterise|Rasterise,WBuffer,NoTexture,Highlight
+ds_raster_tex_decal_z|Rasterise|Rasterise,ZBuffer,UseTexture,Decal
+ds_raster_tex_decal_w|Rasterise|Rasterise,WBuffer,UseTexture,Decal
+ds_raster_tex_modulate_z|Rasterise|Rasterise,ZBuffer,UseTexture,Modulate
+ds_raster_tex_modulate_w|Rasterise|Rasterise,WBuffer,UseTexture,Modulate
+ds_raster_tex_toon_z|Rasterise|Rasterise,ZBuffer,UseTexture,Toon
+ds_raster_tex_toon_w|Rasterise|Rasterise,WBuffer,UseTexture,Toon
+ds_raster_tex_highlight_z|Rasterise|Rasterise,ZBuffer,UseTexture,Highlight
+ds_raster_tex_highlight_w|Rasterise|Rasterise,WBuffer,UseTexture,Highlight
+ds_raster_shadow_z|Rasterise|Rasterise,ZBuffer,ShadowMask
+ds_raster_shadow_w|Rasterise|Rasterise,WBuffer,ShadowMask
+ds_clear_coarse|ClearCoarseBinMask|ClearCoarseBinMask
+ds_clear_workcount|ClearIndirectWorkCount|ClearIndirectWorkCount
+ds_calc_offsets|CalcOffsets|CalculateWorkOffsets
+ds_sort_work|SortWork|SortWork
+ds_final_0|FinalPass|FinalPass
+ds_final_edge|FinalPass|FinalPass,EdgeMarking
+ds_final_fog|FinalPass|FinalPass,Fog
+ds_final_edge_fog|FinalPass|FinalPass,EdgeMarking,Fog
+ds_final_aa|FinalPass|FinalPass,AntiAliasing
+ds_final_aa_edge|FinalPass|FinalPass,AntiAliasing,EdgeMarking
+ds_final_aa_fog|FinalPass|FinalPass,AntiAliasing,Fog
+ds_final_aa_edge_fog|FinalPass|FinalPass,AntiAliasing,EdgeMarking,Fog

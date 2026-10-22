@@ -30,13 +30,38 @@ upstream is redistributed here):
 - `toml++` (marzer/tomlplusplus) — **MIT**.
 - SDL3 (window/input/audio) — **Zlib**; if used.
 - libpcar headers (optional, `NDS_ENABLE_PCAP_BACKEND`) — **BSD-2-Clause**.
+- Vulkan-Headers (pinned, `cmake/HostDeps.cmake`) — **Apache-2.0**.
+- glslang (pinned, `cmake/Shaders.cmake`) — **BSD-3-Clause** and its
+  `LICENSE.txt` notices; built only when the native DS render sinks are enabled.
 
 GPL-3.0-or-later code is kept behind the bridge headers
-`runner/src/gpu3d.h` and `runner/src/wifi.h`. Per-module license attribution in
-upstream `THIRD_PARTY_ATTRIBUTION.md` applies.
+`runner/src/gpu3d.h` and `runner/src/wifi.h` and, for the native DS render
+sinks, inside `render/src/ds/` and its build-time shader generator
+`tools/ds_shader_gen.cpp`. The 3D sink implements melonDS's `Renderer3D` and
+links the vendored `GPU3D_Texcache` and `xxhash` rather than reimplementing the
+texture cache: that code is already the device model's texture path, and a
+second copy would duplicate GPL-derived behaviour instead of isolating it. The
+runtime sink stays behind `ds_3d.h`, the C ABI in `runner_bridge.cpp`, and
+`GPU3D::SetCurrentRenderer`.
 
-The pinned `ndsrecomp` tree carries one local, tracked modification of our own
+The shader generator includes the vendored melonDS `GPU3D_Compute_shaders.h`,
+emits the Vulkan GLSL variants at build time, and those variants are compiled to
+SPIR-V and embedded in `pkmn_render_ds`. The generated shader source and
+embedded SPIR-V are GPL-3.0-or-later, like the melonDS source they are derived
+from; neither is committed to this repository. The generator is build-only and
+is not part of the runtime boundary.
+
+See `docs/adr/0007-native-ds-render-sinks.md` and the GPLv3 §5(a) notices in
+`patches/ndsrecomp/`. Per-module license attribution in upstream
+`THIRD_PARTY_ATTRIBUTION.md` applies.
+
+The pinned `ndsrecomp` tree carries local, tracked modifications of our own
 (`patches/ndsrecomp/`, applied at configure time when the runner is built and
-inert otherwise): a guarded present hook in `runner/src/frontend.cpp`, whose
-GPLv3 §5(a) change notice is in the file and in the patch. It adds only our own
-code and changes no upstream behaviour.
+inert otherwise): a guarded present hook in `runner/src/frontend.cpp` (`0001`);
+a guarded native DS render sink hook, the capture probe in `gpu2d.cpp`, and the
+even-width parser in `frontend.cpp`, `main.cpp`, and `frontend_config.cpp`
+(`0003`, applied on top of `0001`); a guarded GPU3D device accessor in
+`runner/src/gpu3d.{h,cpp}` (`0004`); and a libslirp MSVC/POSIX portability fix
+(`0002`). Their GPLv3 §5(a) change notices are in the files and patches. They
+add only our own code, except the portability fix, and change no upstream
+behaviour when the opt-in guards are off.

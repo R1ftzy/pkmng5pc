@@ -15,6 +15,8 @@ from pathlib import Path
 from typing import Any
 
 from tui.model import (
+    RENDER_ASPECT_WIDTHS,
+    RENDER_SCALES,
     Repo,
     RomInfo,
     Settings,
@@ -92,6 +94,15 @@ def configure_command(
         )
     if settings.build_runner and settings.native_present and not settings.build_render:
         raise LaunchError("Native present needs Build render; enable it or turn Native present off.")
+    if settings.native_renderer and not settings.build_render:
+        raise LaunchError(
+            "Build native renderer needs Build render; enable it or turn Build native renderer off."
+        )
+    if settings.build_runner and settings.native_renderer and not settings.native_present:
+        raise LaunchError(
+            "Build native renderer needs Native present; "
+            "enable it or turn Build native renderer off."
+        )
     extra_dirs = split_paths(settings.extra_bank_dirs)
     extra_sha1s = split_paths(settings.extra_sha1s)
     if bool(extra_dirs) != bool(extra_sha1s):
@@ -108,6 +119,7 @@ def configure_command(
         f"-DPKMNG5PC_BUILD_RENDER={'ON' if settings.build_render else 'OFF'}",
         f"-DPKMNG5PC_BUILD_RUNNER={'ON' if settings.build_runner else 'OFF'}",
         f"-DPKMNG5PC_NATIVE_PRESENT={'ON' if settings.native_present else 'OFF'}",
+        f"-DPKMNG5PC_NATIVE_RENDERER={'ON' if settings.native_renderer else 'OFF'}",
         f"-DPKMNG5PC_BANKS_DIR={banks}",
     ]
     if rom_sha1:
@@ -279,6 +291,39 @@ def play_command(repo: Repo, settings: Settings, require_artifacts: bool = True)
     _require_file(repo.frontend_config, "frontend cartridge config")
     extra = _extra_tokens(settings.extra_args)
 
+    render_native = False
+    render_aspect = "4:3"
+    render_scale = 1
+    render_env: dict[str, str] = {}
+    if settings.render_native:
+        render_native, render_reason = repo.native_renderer_state(settings.preset)
+        if not render_native:
+            raise LaunchError(
+                f"Native renderer is enabled but unavailable: {render_reason}. "
+                "Turn it off on the Play page or rebuild."
+            )
+    if render_native:
+        render_aspect = (
+            settings.render_aspect if settings.render_aspect in RENDER_ASPECT_WIDTHS else "4:3"
+        )
+        render_scale = (
+            settings.render_scale
+            if not isinstance(settings.render_scale, bool)
+            and settings.render_scale in RENDER_SCALES
+            else 1
+        )
+        if render_aspect != "4:3":
+            raise LaunchError(
+                "Native renderer Slice 1 supports 4:3 only; choose 4:3 or turn it off."
+            )
+        if render_scale != 1:
+            raise LaunchError(
+                "Native renderer Slice 1 supports 1x only; choose 1x or turn it off."
+            )
+        if settings.render_verify:
+            render_env["PKMNG5PC_DS3D_VERIFY"] = "1"
+    native_present = settings.play_native or render_native
+
     save_path = ""
     if settings.save_mode == "custom":
         if not settings.save_path.strip():
@@ -308,9 +353,20 @@ def play_command(repo: Repo, settings: Settings, require_artifacts: bool = True)
             "-Banks",
             str(banks),
         ]
-        if settings.play_native:
+        if native_present:
             argv.append("-Native")
             argv.extend(["-Gpu", settings.play_gpu or "auto"])
+        if render_native:
+            argv.extend(
+                [
+                    "-Renderer",
+                    "native",
+                    "-Aspect",
+                    render_aspect,
+                    "-RenderScale",
+                    str(render_scale),
+                ]
+            )
         if settings.play_layout == "separate":
             argv.extend(["-Layout", "separate"])
         if settings.frames > 0:
@@ -339,9 +395,20 @@ def play_command(repo: Repo, settings: Settings, require_artifacts: bool = True)
             "--banks",
             str(banks),
         ]
-        if settings.play_native:
+        if native_present:
             argv.append("--native")
             argv.extend(["--gpu", settings.play_gpu or "auto"])
+        if render_native:
+            argv.extend(
+                [
+                    "--renderer",
+                    "native",
+                    "--aspect",
+                    render_aspect,
+                    "--render-scale",
+                    str(render_scale),
+                ]
+            )
         if settings.play_layout == "separate":
             argv.extend(["--layout", "separate"])
         if settings.frames > 0:
@@ -364,6 +431,7 @@ def play_command(repo: Repo, settings: Settings, require_artifacts: bool = True)
         "Play",
         argv,
         repo.root,
+        env=render_env,
         note=note,
         meta={"save": save_path, "runner": str(runner)},
     )

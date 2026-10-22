@@ -213,14 +213,26 @@ under `third_party/ndsrecomp/generated/` are git-ignored (regenerable).
 
 Configure applies the tracked patches in `patches/ndsrecomp/` to the submodule
 (idempotently), so the superproject reports it as *modified content* by design:
-two today — `0001-native-present-hook` (the guarded present hook behind
-`tools/play -Native`, `docs/adr/0006-ndsrecomp-native-present-hook.md`) and
+four today — `0001-native-present-hook` (the guarded present hook behind
+`tools/play -Native`, `docs/adr/0006-ndsrecomp-native-present-hook.md`),
 `0002-libslirp-msvc-clang` (POSIX fd/socket calls in the vendored libslirp,
-which only compile by accident on toolchains whose headers declare them). Revert
-with `git -C third_party/ndsrecomp checkout .` and re-configure. Both patched
-files still build standalone (the hook compiles out without our build's macro,
-and 0002 is a portability fix that is correct on POSIX too), so
+which only compile by accident on toolchains whose headers declare them),
+`0003-native-render-sink` (the guarded native DS render sink hook, the capture
+probe in `gpu2d.cpp`, and the even-width `256..448` parser,
+`docs/adr/0007-native-ds-render-sinks.md`; it applies **on top of `0001`**), and
+`0004-gpu3d-device-accessor` (exposes the caller's `melonDS::GPU3D` so the 3D
+sink installs through `SetCurrentRenderer`). Revert
+with `git -C third_party/ndsrecomp checkout .` and re-configure. The patched
+files still build standalone (0001, 0003 and 0004 compile out without their
+respective build macros, and 0002 is a portability fix that is correct on POSIX
+too), so
 `bootstrap_ndsrecomp.*` needs no change.
+
+The native DS render sinks are an alpha build option:
+`PKMNG5PC_NATIVE_RENDERER` (default OFF) requires `PKMNG5PC_NATIVE_PRESENT=ON`,
+`PKMNG5PC_BUILD_RENDER=ON`, and Vulkan. Runtime `PKMNG5PC_RENDERER` stays off
+by default; `native`/`3d` installs the Vulkan compute 3D sink at 256x192
+(Slice 1), and the remaining sink selections fail loudly until they land.
 
 - **Unit tests:** format parsers, compression codecs, save checksums.
 - **Golden data:** small, synthetic fixtures only — **never** commit real ROM

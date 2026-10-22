@@ -22,6 +22,13 @@ option(PKMNG5PC_BUILD_RUNNER
     "Build the ndsrecomp runner and its SDL3 dependency (needs generated title banks)" OFF)
 option(PKMNG5PC_BUILD_RENDER
     "Build the render seam and its GPU backends" ON)
+option(PKMNG5PC_NATIVE_RENDERER
+    "Build the native DS 3D/2D render sinks (alpha, runtime off by default)" OFF)
+
+if(PKMNG5PC_NATIVE_RENDERER AND NOT PKMNG5PC_BUILD_RENDER)
+    message(FATAL_ERROR
+        "PKMNG5PC_NATIVE_RENDERER=ON requires PKMNG5PC_BUILD_RENDER=ON.")
+endif()
 
 add_subdirectory(rom)
 

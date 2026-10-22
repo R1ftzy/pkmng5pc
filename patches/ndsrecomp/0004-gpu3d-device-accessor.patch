@@ -1,0 +1,43 @@
+# 0004 exposes the GPU3D device so host render sinks can install through
+# SetCurrentRenderer. Both hunks compile out without
+# PKMNG5PC_NATIVE_RENDERER.
+diff --git a/runner/src/gpu3d.cpp b/runner/src/gpu3d.cpp
+index 5c73133..cc86aa2 100644
+--- a/runner/src/gpu3d.cpp
++++ b/runner/src/gpu3d.cpp
+@@ -1391,3 +1391,7 @@ void nds_gpu3d_start_frame() {
+     }
+ #endif
+ }
++
++#if defined(PKMNG5PC_NATIVE_RENDERER)
++melonDS::GPU3D* nds_gpu3d_device() { return &g_nds.GPU.GPU3D; }
++#endif
+diff --git a/runner/src/gpu3d.h b/runner/src/gpu3d.h
+index d6dd456..c415280 100644
+--- a/runner/src/gpu3d.h
++++ b/runner/src/gpu3d.h
+@@ -2,6 +2,12 @@
+ 
+ #include <cstdint>
+ 
++#if defined(PKMNG5PC_NATIVE_RENDERER)
++namespace melonDS {
++class GPU3D;
++}
++#endif
++
+ // Bridge to the vendored melonDS GPU3D geometry/rasterizer device model
+ // (runner/vendor/melonds/, GPL-3.0-or-later — see THIRD_PARTY_ATTRIBUTION.md).
+ // The guest produces every register/GXFIFO write; this is a device model,
+@@ -238,3 +244,10 @@ struct NdsGpu3dPolygonSnapshot {
+ uint32_t nds_gpu3d_render_polygon_count();
+ bool nds_gpu3d_render_polygon(uint32_t index,
+                               NdsGpu3dPolygonSnapshot* out);
++
++#if defined(PKMNG5PC_NATIVE_RENDERER)
++// The GPU3D device that owns geometry decode and the active rasterizer. Host
++// render sinks install through GPU3D::SetCurrentRenderer; the pointer is
++// stable for the process lifetime.
++melonDS::GPU3D* nds_gpu3d_device();
++#endif

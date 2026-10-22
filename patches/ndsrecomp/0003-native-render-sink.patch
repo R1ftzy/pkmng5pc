@@ -1,0 +1,228 @@
+# 0003 installs the native DS render sink on top of 0001's guarded present
+# hook. Apply 0001 first; cmake/Runner.cmake applies patches in filename
+# order. The patch compiles out without PKMNG5PC_NATIVE_RENDERER.
+diff --git a/runner/src/frontend.cpp b/runner/src/frontend.cpp
+index 311226e..bfde9f9 100644
+--- a/runner/src/frontend.cpp
++++ b/runner/src/frontend.cpp
+@@ -27,6 +27,15 @@
+ #include "scheduler.h"
+ #include "savestate_slots.h"
+ #include "spu.h"
++#if defined(PKMNG5PC_NATIVE_PRESENT) && defined(PKMNG5PC_NATIVE_RENDERER)
++// pkmng5pc native DS render sinks (alpha). Definitions live in the port's own
++// render/src/ds/runner_bridge.cpp, compiled into this executable by
++// cmake/Runner.cmake; see docs/design/native-render-sinks.md.
++extern "C" int pkmng5pc_ds_render_init(void* top_window, void* bottom_window,
++                                        int separate);
++extern "C" int pkmng5pc_ds_render_consumes_hd();
++extern "C" void pkmng5pc_ds_render_shutdown();
++#endif
+ #include "title_patches.h"
+ #if defined(NDS_HAVE_COMPUTE_RENDERER)
+ #include "melonds_compute/ComputeHost.h"
+@@ -60,6 +69,21 @@ NdsFrontendLiveStats g_live_stats{};
+ NdsFrontendBlackBandCapture g_black_band{};
+ NdsFrontendInputDebugState g_input_debug{};
+ 
++bool ds_render_consumes_hd_emit() {
++#if defined(PKMNG5PC_NATIVE_PRESENT) && defined(PKMNG5PC_NATIVE_RENDERER)
++    return pkmng5pc_ds_render_consumes_hd() != 0;
++#else
++    return false;
++#endif
++}
++
++#if defined(PKMNG5PC_NATIVE_PRESENT) && !defined(PKMNG5PC_NATIVE_RENDERER)
++bool ds_render_requested_without_sink() {
++    const char* value = std::getenv("PKMNG5PC_RENDERER");
++    return value && *value && std::strcmp(value, "off") != 0;
++}
++#endif
++
+ // ---- Presented-frame digest ring (frontend.h) ----------------------------
+ constexpr uint32_t kFrameDigestRing = 8192;   // ~136 s at 60 fps
+ NdsFrontendFrameDigest g_frame_digests[kFrameDigestRing];
+@@ -1764,7 +1788,9 @@ bool apply_performance_governor_stage(
+     nds_gpu3d_set_display_readback_latency(stage >= 1u);
+     presentation.sample_scale =
+         stage >= 2u ? 1 : presentation.configured_sample_scale;
+-    nds_gpu2d_set_hd_emit(target_scale > 1u && presentation.gl_top);
++    nds_gpu2d_set_hd_emit(target_scale > 1u &&
++                          (presentation.gl_top ||
++                           ds_render_consumes_hd_emit()));
+     return true;
+ }
+ 
+@@ -1902,6 +1928,15 @@ PresentationTicks present_screens(FrontendPresentation& presentation,
+ 
+ int nds_run_interactive_frontend(const NdsFrontendOptions& options) {
+     SDL_SetMainReady();
++#if defined(PKMNG5PC_NATIVE_PRESENT) && !defined(PKMNG5PC_NATIVE_RENDERER)
++    if (ds_render_requested_without_sink()) {
++        std::fprintf(stderr,
++                     "[native-render] PKMNG5PC_RENDERER is set, but this build "
++                     "was configured with PKMNG5PC_NATIVE_RENDERER=OFF; "
++                     "rebuild with it ON or unset PKMNG5PC_RENDERER\n");
++        return 1;
++    }
++#endif
+     // SDL_INIT_TIMER matters on Windows: it raises the OS timer resolution
+     // to 1 ms (SDL_HINT_TIMER_RESOLUTION default). Without it SDL_Delay(1)
+     // sleeps a full ~15.6 ms scheduler quantum, so the audio-queue throttle
+@@ -1972,6 +2007,22 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& options) {
+         SDL_Quit();
+         return 1;
+     }
++#if defined(PKMNG5PC_NATIVE_PRESENT) && defined(PKMNG5PC_NATIVE_RENDERER)
++    // After nds_gpu3d_set_output_width(): the sink validates the effective
++    // render width at install time.
++    if (!pkmng5pc_ds_render_init(
++            presentation.windows[0],
++            presentation.separate ? presentation.windows[1] : nullptr,
++            presentation.separate ? 1 : 0)) {
++        std::fprintf(stderr,
++                     "[native-render] could not start the port's DS render "
++                     "sinks; rerun without PKMNG5PC_RENDERER\n");
++        pkmng5pc_native_present_shutdown();
++        destroy_presentation(presentation);
++        SDL_Quit();
++        return 1;
++    }
++#endif
+     // Must precede nds_compute_host_start(): the scale is a baked shader
+     // constant, so it has to be known before the renderer compiles anything.
+     //
+@@ -2002,7 +2053,8 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& options) {
+     // The adaptive compositor only pays for the extra per-pixel stores when
+     // something can consume them.
+     nds_gpu2d_set_hd_emit(initial_internal_resolution > 1 &&
+-                          presentation.gl_top);
++                          (presentation.gl_top ||
++                           ds_render_consumes_hd_emit()));
+     nds_texture_upscale_set_factor(options.texture_upscale);
+ 
+ #if defined(NDS_HAVE_COMPUTE_RENDERER)
+@@ -3832,6 +3884,9 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& options) {
+     // report failure on every clean run.
+     const bool audio_opened = static_cast<bool>(audio);
+     close_audio(audio);
++#if defined(PKMNG5PC_NATIVE_PRESENT) && defined(PKMNG5PC_NATIVE_RENDERER)
++    pkmng5pc_ds_render_shutdown();
++#endif
+ #if defined(NDS_HAVE_COMPUTE_RENDERER)
+     nds_gpu2d_set_direct_present(false);
+     nds_compute_host_stop();
+diff --git a/runner/src/frontend_config.cpp b/runner/src/frontend_config.cpp
+index 39d81a4..2f703ec 100644
+--- a/runner/src/frontend_config.cpp
++++ b/runner/src/frontend_config.cpp
+@@ -107,9 +107,14 @@ bool nds_parse_widescreen_width(const std::string& value, uint16_t* out) {
+     if (!out || value.empty()) return false;
+     char* end = nullptr;
+     const long parsed = std::strtol(value.c_str(), &end, 10);
+-    if (!end || *end != '\0' ||
+-        (parsed != 256 && parsed != 320 &&
+-         parsed != 384 && parsed != 448)) {
++#if defined(PKMNG5PC_NATIVE_RENDERER)
++    const bool valid_width =
++        parsed >= 256 && parsed <= 448 && (parsed % 2) == 0;
++#else
++    const bool valid_width =
++        parsed == 256 || parsed == 320 || parsed == 384 || parsed == 448;
++#endif
++    if (!end || *end != '\0' || !valid_width) {
+         return false;
+     }
+     *out = static_cast<uint16_t>(parsed);
+@@ -586,9 +591,15 @@ bool nds_load_frontend_config(const std::string& path,
+             uint16_t width = 0;
+             if (!nds_parse_widescreen_width(std::to_string(*value), &width)) {
+                 if (error) {
++#if defined(PKMNG5PC_NATIVE_RENDERER)
++                    *error =
++                        "display.adaptive_width must be an even width "
++                        "between 256 and 448";
++#else
+                     *error =
+                         "display.adaptive_width must be 256, 320, 384, "
+                         "or 448";
++#endif
+                 }
+                 return false;
+             }
+diff --git a/runner/src/gpu2d.cpp b/runner/src/gpu2d.cpp
+index a936606..18e1d75 100644
+--- a/runner/src/gpu2d.cpp
++++ b/runner/src/gpu2d.cpp
+@@ -2424,6 +2424,14 @@ void nds_gpu2d_force_cpu_frames(uint32_t frames) {
+         std::max(g_direct_force_cpu_frames, frames);
+ }
+ 
++#if defined(PKMNG5PC_NATIVE_RENDERER)
++bool nds_gpu2d_capture_active() {
++    const Unit& unit = g_unit[0];
++    return (unit.capture & 0x80000000u) != 0u || unit.capture_latch ||
++           g_frame_capture_active;
++}
++#endif
++
+ bool nds_gpu2d_direct_frame(NdsGpu2dDirectFrame* out) {
+     drain_pool(NDS_GPU2D_FENCE_PRESENT);
+     if (!out || !g_direct_present_frame_active ||
+diff --git a/runner/src/gpu2d.h b/runner/src/gpu2d.h
+index 1e47565..b2fa5a8 100644
+--- a/runner/src/gpu2d.h
++++ b/runner/src/gpu2d.h
+@@ -167,6 +167,12 @@ bool nds_gpu2d_direct_present_frame_active();
+ bool nds_gpu2d_direct_frame(NdsGpu2dDirectFrame* out);
+ bool nds_gpu2d_requires_3d_readback();
+ void nds_gpu2d_force_cpu_frames(uint32_t frames);
++#if defined(PKMNG5PC_NATIVE_RENDERER)
++// True while display capture is armed or was latched for the current frame.
++// The native 3D sink serves those frames from the CPU renderer so the captured
++// VRAM bytes stay identical to the reference path.
++bool nds_gpu2d_capture_active();
++#endif
+ 
+ enum NdsGpu2dDirectClass : uint8_t {
+     NDS_GPU2D_DIRECT_SUPPORTED = 0,
+diff --git a/runner/src/main.cpp b/runner/src/main.cpp
+index f7d290f..6aa3071 100644
+--- a/runner/src/main.cpp
++++ b/runner/src/main.cpp
+@@ -787,6 +787,18 @@ int main(int argc, char** argv) {
+             return 2;
+         }
+     }
++#if defined(PKMNG5PC_NATIVE_RENDERER)
++    if (const char* value = std::getenv("PKMNG5PC_WIDESCREEN_SUPPORTED")) {
++        uint8_t supported = 0;
++        if (!nds_parse_adaptive_screens(value, &supported)) {
++            std::fprintf(stderr,
++                         "invalid PKMNG5PC_WIDESCREEN_SUPPORTED "
++                         "(expected none, top, bottom, or both)\n");
++            return 2;
++        }
++        frontend_options.adaptive_supported = supported;
++    }
++#endif
+     auto apply_adaptive_width = [&](uint16_t width) {
+         if (frontend_options.adaptive_supported & NDS_ADAPTIVE_TOP)
+             frontend_options.adaptive_max_width[0] = width;
+@@ -796,9 +808,15 @@ int main(int argc, char** argv) {
+     if (const char* value = std::getenv("NDS_WIDESCREEN_WIDTH")) {
+         uint16_t width = 0;
+         if (!nds_parse_widescreen_width(value, &width)) {
++#if defined(PKMNG5PC_NATIVE_RENDERER)
++            std::fprintf(stderr,
++                         "invalid NDS_WIDESCREEN_WIDTH "
++                         "(expected an even width between 256 and 448)\n");
++#else
+             std::fprintf(stderr,
+                          "invalid NDS_WIDESCREEN_WIDTH "
+                          "(expected 256, 320, 384, or 448)\n");
++#endif
+             return 2;
+         }
+         apply_adaptive_width(width);

@@ -23,7 +23,10 @@ from tui.commands import (
 )
 from tui.fps import RunnerFpsProbe
 from tui.model import (
+    PLAY_ASPECTS,
     PLAY_LAYOUTS,
+    RENDER_ASPECT_WIDTHS,
+    RENDER_SCALES,
     SAVE_MODES,
     Repo,
     RomInfo,
@@ -80,6 +83,7 @@ PAGE_NAMES = {
     "help": "Help",
 }
 PLAY_BUTTON = "[Ctrl+R Play]"
+LOG_BUTTON = "[Save logs]"
 SELECTABLE = {"toggle", "choice", "text", "folder", "action", "rom"}
 BUILDER = Callable[[], Command | list[Command]]
 
@@ -170,6 +174,8 @@ class App:
         self.play_hit: tuple[int, int, int] | None = None
         self.row_hits: dict[int, str] = {}
         self.review_hits: list[tuple[int, int, int, str]] = []
+        self.log_hit: tuple[int, int, int] | None = None
+        self.log_saved: tuple[str, bool, float] | None = None
         self.runner_fps = RunnerFpsProbe()
         self._fps_revision = 0
         self.log_follow = True
@@ -331,6 +337,7 @@ class App:
             ("build_render", "PKMNG5PC_BUILD_RENDER"),
             ("build_runner", "PKMNG5PC_BUILD_RUNNER"),
             ("native_present", "PKMNG5PC_NATIVE_PRESENT"),
+            ("native_renderer", "PKMNG5PC_NATIVE_RENDERER"),
         ]
         for attribute, key in checks:
             cached = cache_bool(cache, key)
@@ -472,6 +479,75 @@ class App:
             on_adjust=adjust if enabled else None,
         )
 
+    def native_renderer_item(self, cache: dict[str, str]) -> Item:
+        available, reason = self.repo.native_renderer_state(self.s.preset, cache)
+        current = self.s.render_native
+        hint = (
+            "Installs the Vulkan compute 3D sink (alpha, default off). "
+            "Slice 1 renders 4:3 at 1x only; other aspect ratios and scales are "
+            "selectable but Play refuses them until the later slices. The 2D "
+            "rasterizer still uses the soft path. Requires native presentation, "
+            "so it turns Native present on. Distinct from the Native present toggle."
+        )
+        if not available:
+            hint = f"{hint} Unavailable: {reason}."
+
+        def set_value(value: bool) -> None:
+            self.s.render_native = value
+            if value:
+                self.s.play_native = True
+            self.touch()
+
+        def adjust(delta: int) -> None:
+            if not available:
+                if current:
+                    set_value(False)
+                else:
+                    self.set_toast(reason, "warning")
+                return
+            set_value(delta > 0)
+
+        def activate() -> None:
+            if not available:
+                if current:
+                    set_value(False)
+                else:
+                    self.set_toast(reason, "warning")
+                return
+            set_value(not current)
+
+        return Item(
+            "render-native",
+            "Native renderer (alpha)",
+            kind="toggle",
+            value="ON" if current else "OFF" if available else "unavailable",
+            hint=hint,
+            enabled=available or current,
+            on_activate=activate,
+            on_adjust=adjust,
+        )
+
+    def render_scale_item(self) -> Item:
+        current = self.s.render_scale if self.s.render_scale in RENDER_SCALES else RENDER_SCALES[0]
+
+        def adjust(delta: int) -> None:
+            index = RENDER_SCALES.index(current)
+            self.s.render_scale = RENDER_SCALES[(index + delta) % len(RENDER_SCALES)]
+            self.touch()
+
+        return Item(
+            "render-scale",
+            "3D internal resolution",
+            kind="choice",
+            value=f"{current}x",
+            hint=(
+                "Internal 3D resolution multiplier. Applies only while the native "
+                "renderer is on. Slice 1 supports 1x only; 2x-4x fail loudly."
+            ),
+            on_activate=lambda: adjust(1),
+            on_adjust=adjust,
+        )
+
     def _text(
         self,
         key: str,
@@ -581,6 +657,7 @@ class App:
             self.s.build_runner,
             self.s.build_tools,
             self.s.build_render,
+            self.s.native_present,
         )
         banks_missing = not Repo.has_banks(self.repo.resolve(self.s.banks_dir))
         if banks_missing:
@@ -592,6 +669,8 @@ class App:
         runner, _ = self.repo.find_runner(self.s.preset)
         if banks_missing or runner is None:
             self.s.build_runner = True
+            if self.s.native_renderer:
+                self.s.native_present = True
             if self.s.native_present and not self.s.build_render:
                 self.s.build_render = True
         self.touch()
@@ -603,6 +682,7 @@ class App:
                 self.s.build_runner,
                 self.s.build_tools,
                 self.s.build_render,
+                self.s.native_present,
             ) = previous
             self.touch()
 
@@ -809,6 +889,14 @@ class App:
             f"Extra args: {self.s.extra_args.strip() or '(none)'}",
             f"Runner used: {play_runner_label}",
         ]
+        if self.s.render_native:
+            render_available, _ = self.repo.native_renderer_state(self.s.preset, cache)
+            render_state = "ON" if render_available else "requested; build unavailable"
+            play_rows.insert(
+                1,
+                f"Native renderer: {render_state}  ·  scale {self.s.render_scale}x  "
+                f"·  aspect {self.s.render_aspect}",
+            )
 
         action_rows = [f"Action: {title}", f"State file: {self.repo.display(self.state_path)}"]
         if title == "Quickstart":
@@ -1032,6 +1120,7 @@ class App:
         width, height = width or self.terminal.size()[0], height or self.terminal.size()[1]
         self.tab_hits.clear()
         self.play_hit = None
+        self.log_hit = None
         self.row_hits.clear()
         self.review_hits.clear()
         if width < 60 or height < 18:
@@ -1618,6 +1707,22 @@ class App:
                 "Let the runner present through render/ (Vulkan). Requires render and runner.",
                 enabled=self.s.build_render,
             ),
+            self._toggle(
+                "native-renderer",
+                "Build native renderer (alpha)",
+                "native_renderer",
+                (
+                    "Compiles the Vulkan compute DS render sinks into the runner. "
+                    "Requires Build render and, when building the runner, Native present. "
+                    "The runtime switch is on the Play page."
+                    + (
+                        " Build runner is off, so Configure will not rebuild the runner."
+                        if not self.s.build_runner
+                        else ""
+                    )
+                ),
+                enabled=self.s.build_render,
+            ),
             Item("runner-label", "RUNNER WIRING", kind="section"),
             self._folder(
                 "banks-dir",
@@ -1768,6 +1873,8 @@ class App:
         runner, runner_preset = self.repo.find_runner(self.s.preset)
         banks = self.repo.resolve(self.s.banks_dir)
         native_cached = cache_bool(cache, "PKMNG5PC_NATIVE_PRESENT")
+        render_available, render_reason = self.repo.native_renderer_state(self.s.preset, cache)
+        force_native = self.s.render_native and render_available
         gpus = self.gpu_specs()
         gpu = self.selected_gpu()
         gpu_text = selected_gpu_text(self.s.play_gpu, gpus)
@@ -1793,14 +1900,20 @@ class App:
                 "play-native",
                 "Native present",
                 "play_native",
-                "Present through render/ (Vulkan). Uses the GPU choice below.",
+                (
+                    "Forced on by Native renderer (alpha); the Vulkan presenter is required."
+                    if force_native
+                    else "Present through render/ (Vulkan). Uses the GPU choice below."
+                ),
+                enabled=not force_native,
             ),
             self._choice(
                 "play-gpu",
                 "GPU",
                 "play_gpu",
                 self.gpu_options(),
-                "Vulkan adapter for Native present. The runner's SDL path ignores this.",
+                "Vulkan adapter for Native present and the native 3D sink. "
+                "The runner's SDL path ignores this.",
             ),
             Item(
                 "gpu-selected",
@@ -1818,16 +1931,60 @@ class App:
                 "A positive value presents that many frames, prints stats and exits.",
                 validator=validate_frames,
             ),
-            Item("save-section", "SAVE", kind="section"),
-            self._choice(
-                "save-mode",
-                "Save mode",
-                "save_mode",
-                [(value, value) for value in SAVE_MODES],
-                "Default uses <rom>.sav beside the ROM; Custom picks a file; Off writes nothing.",
-                on_change=self.ensure_default_save_path,
-            ),
+            Item("render-label", "NATIVE RENDERER (ALPHA)", kind="section"),
+            self.native_renderer_item(cache),
         ]
+        if self.s.render_native:
+            limits: list[str] = []
+            if self.s.render_aspect != "4:3":
+                limits.append(f"aspect {self.s.render_aspect}")
+            if self.s.render_scale != 1:
+                limits.append(f"scale {self.s.render_scale}x")
+            if limits:
+                items.append(
+                    Item(
+                        "render-slice1-note",
+                        "",
+                        kind="notice",
+                        value=term.yellow(
+                            "Slice 1 supports 4:3 at 1x only; Play stops before launch "
+                            f"while {', '.join(limits)} is selected."
+                        ),
+                    )
+                )
+        if not render_available:
+            items.append(
+                Item(
+                    "render-native-note",
+                    "",
+                    kind="notice",
+                    value=term.yellow(f"Unavailable: {render_reason}."),
+                )
+            )
+        items.extend(
+            [
+                self.render_scale_item(),
+                self._choice(
+                    "render-aspect",
+                    "Aspect ratio",
+                    "render_aspect",
+                    [
+                        (value, f"{value}  ·  {RENDER_ASPECT_WIDTHS[value]} px source")
+                        for value in PLAY_ASPECTS
+                    ],
+                    "Nominal source width is 256, 342 or 448; the runner may cap the effective width per title.",
+                ),
+                Item("save-section", "SAVE", kind="section"),
+                self._choice(
+                    "save-mode",
+                    "Save mode",
+                    "save_mode",
+                    [(value, value) for value in SAVE_MODES],
+                    "Default uses <rom>.sav beside the ROM; Custom picks a file; Off writes nothing.",
+                    on_change=self.ensure_default_save_path,
+                ),
+            ]
+        )
         if self.s.save_mode == "custom":
             items.append(
                 self._text(
@@ -2126,8 +2283,9 @@ class App:
         key_lines = [
             "Up/Down move · Left/Right change · Enter activate · Space toggle",
             "Ctrl+R starts Play from any page; the final review still comes first",
-            "Mouse: click a tab, the Play button or a row, wheel scrolls; click a selected browser row to open it",
+            "Mouse: click a tab, the Play button, a row or [Save logs], wheel scrolls; click a selected browser row to open it",
             "Final review: Enter Run, Esc Cancel, Up/Down scroll; Run/Cancel are clickable",
+            "Job log: S or [Save logs] writes logs/tui; Enter returns after it finishes",
             "Tab / Shift+Tab change page · 1-6 jump · H/R/B/P/S shortcuts",
             "? help · L last log · Q quit · Esc closes a dialog",
             "In the ROM browser: Enter open, S use folder, G type a path, H hidden",
@@ -2303,13 +2461,12 @@ class App:
             label_styled = term.dim(label)
         value = item.value
         if item.kind == "toggle":
-            value = (
-                term.green("[ ON ]")
-                if item.value == "ON" and item.enabled
-                else term.grey("[ OFF ]")
-                if item.enabled
-                else term.dim("[ OFF ]")
-            )
+            if item.value == "unavailable":
+                value = term.yellow("unavailable")
+            elif item.value == "ON":
+                value = term.green("[ ON ]") if item.enabled else term.dim("[ ON ]")
+            else:
+                value = term.grey("[ OFF ]") if item.enabled else term.dim("[ OFF ]")
         elif item.kind == "choice":
             value = (
                 term.cyan(f"‹ {value} ›")
@@ -2399,11 +2556,26 @@ class App:
             hint += term.dim(f"  ·  {self.log_back} line(s) back")
         lines.append("  " + term.dim(clip(hint, width - 2)))
         lines.append("  " + term.dim(term.rule(width - 4)))
-        lines.append(
-            "  " + term.dim(clip("The game window, when open, owns its own keyboard focus.", width - 2))
-        )
-        while len(lines) < height:
+        while len(lines) < height - 1:
             lines.append("")
+        left = "  " + term.dim("Game window keeps its own focus.")
+        if self.log_saved is not None:
+            path, saved, when = self.log_saved
+            if time.monotonic() - when < 8.0:
+                left = (
+                    "  " + term.green(f"Saved {Path(path).name}")
+                    if saved
+                    else "  " + term.red("Could not save log")
+                )
+        left = clip(left, max(0, width - len(LOG_BUTTON) - 2))
+        button = (
+            term.style(LOG_BUTTON, color="black", background="cyan", bold=True)
+            if term.color
+            else LOG_BUTTON
+        )
+        lines.append(pad_between(left, button, width))
+        if width - visible_len(left) - len(LOG_BUTTON) >= 0:
+            self.log_hit = (height - 1, width - len(LOG_BUTTON), width - 1)
         return lines[:height]
 
     def render_input(self, width: int, height: int) -> list[str]:
@@ -2635,6 +2807,10 @@ class App:
                     else:
                         self.cancel_review()
                     return
+        elif self.mode == "job":
+            hit = self.log_hit
+            if hit is not None and event.y == hit[0] and hit[1] <= event.x <= hit[2]:
+                self.save_job_log()
         elif self.mode == "message" and self.message:
             self.message = None
             self.mode = "page"
@@ -2817,9 +2993,75 @@ class App:
         state.error = ""
         self.dirty = True
 
+    def save_job_log(self) -> None:
+        job = self.job if self.job is not None else self.last_job
+        if job is None:
+            return
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        slug = "".join(ch if ch.isalnum() else "-" for ch in job.title.lower()).strip("-") or "job"
+        folder = self.repo.root / "logs" / "tui"
+        path = folder / f"{stamp}-{slug}.log"
+        suffix = 1
+        while path.exists():
+            path = folder / f"{stamp}-{slug}-{suffix}.log"
+            suffix += 1
+        renderer = "native" if self.s.render_native else "off"
+        lines = [
+            "pkmng5pc launcher job log",
+            f"Saved: {time.strftime('%Y-%m-%d %H:%M:%S')}",
+            f"Job: {job.title}",
+            f"Status: {job.status}" + (f" (exit {job.returncode})" if job.returncode is not None else ""),
+            f"Elapsed: {job.elapsed:.1f}s",
+            f"Preset: {self.s.preset}",
+            f"ROM: {self.s.rom_path or '(none)'}",
+            (
+                f"Renderer: {renderer}  Aspect: {self.s.render_aspect}  "
+                f"Scale: {self.s.render_scale}x"
+            ),
+            (
+                f"Native present: {'on' if self.s.play_native else 'off'}  "
+                f"GPU: {self.s.play_gpu}  Layout: {self.s.play_layout}"
+            ),
+            (
+                f"Save mode: {self.s.save_mode}  Save path: {self.s.save_path or '(default)'}  "
+                f"Frames: {self.s.frames}"
+            ),
+            (
+                f"Stats: {self.s.stats}  Coverage: {self.s.coverage}  "
+                f"Diagnostics: {self.s.diagnostics}"
+            ),
+        ]
+        if self.runner_fps.fps is not None:
+            lines.append(f"Runner FPS: {self.runner_fps.fps:.1f}")
+        lines.extend(["", "Commands:"])
+        for command in job.commands:
+            lines.append(f"  $ {command.preview()}")
+            lines.append(f"    cwd: {command.cwd}")
+        output: list[str] = []
+        for _ in range(5):
+            try:
+                output = list(job.lines)
+                break
+            except RuntimeError:
+                time.sleep(0.005)
+        lines.extend(["", "Output:"])
+        lines.extend(line.replace("\r", "") for line in output)
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+            path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+            self.log_saved = (str(path), True, time.monotonic())
+            self.set_toast(f"Saved {path.name}", "success", seconds=6)
+        except OSError as error:
+            self.log_saved = (str(error), False, time.monotonic())
+            self.set_toast(f"Could not save log: {error}", "error", seconds=6)
+        self.dirty = True
+
     def handle_job_key(self, key: str) -> None:
         job = self.job
         assert job is not None
+        if key in ("s", "S"):
+            self.save_job_log()
+            return
         if key in ("escape", "ctrl-c"):
             if job.active:
                 job.cancel()

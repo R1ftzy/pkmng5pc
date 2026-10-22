@@ -10,7 +10,7 @@ Complete and verified locally on Windows. The launcher is pure Python, so it
 starts without the C++ build; `--check` and `--snapshot` also work without an
 interactive terminal.
 
-- `python -m unittest discover -s tui/tests` runs 90 tests (one
+- `python -m unittest discover -s tui/tests` runs 114 tests (one
   platform-specific case is skipped).
 - The Windows native console reader was exercised with injected mouse records:
   left press, release and wheel-up decoded correctly through
@@ -117,8 +117,8 @@ The SHA-1 is computed in a background thread and passed to Configure as
 - Human-readable profile selection (`windows-*` on Windows, `linux-*` on Unix),
   with build type, compiler, description, recommended state and the exact CMake
   preset ID. The ID remains the value used by the commands.
-- CMake toggles: unit tests, host tools, render layer, ndsrecomp runner and
-  native present. Passed explicitly on every Configure.
+- CMake toggles: unit tests, host tools, render layer, ndsrecomp runner, native
+  present and the native renderer (alpha). Passed explicitly on every Configure.
 - Banks directory, bank-set status and the auto-detected runner title SHA-1.
 - Detailed recompilation state: function totals, dispatch rows, runtime
   interpreter share, interpreter coverage and evidence freshness.
@@ -132,7 +132,20 @@ The SHA-1 is computed in a background thread and passed to Configure as
 ### Play (4)
 
 - Screen layout: `stacked` (one window) or `separate` (two windows).
-- Native present through `render/` (Vulkan); it forces the stacked layout.
+- Native present through `render/` (Vulkan); it uses the selected layout.
+- Native renderer (alpha), default off: installs the Vulkan compute **3D** sink
+  on the host GPU and forces native present on. The 2D rasterizer still uses
+  the soft path. This is distinct from the native-present toggle and is
+  disabled when the selected preset's CMake cache does not have
+  `PKMNG5PC_NATIVE_RENDERER=ON` and `PKMNG5PC_NATIVE_PRESENT=ON`; enable
+  **Build native renderer (alpha)** on the Build page and reconfigure to get
+  such a build. The row says which option to rebuild with. If a saved setting
+  still requests it, Play refuses to launch rather than silently running
+  without it.
+- 3D internal resolution (`1x`..`4x`) and aspect ratio (`4:3`, `16:9`, `21:9`,
+  with nominal source widths 256/342/448). Slice 1 supports `4:3` at `1x` only;
+  the other values stay selectable, and the Play page warns that Play will stop
+  before launch while they are chosen.
 - Frame limit (`0` runs until the window is closed).
 - Save mode: default beside the ROM, a custom file, or off (blank cart).
 - Diagnostics: stats, coverage manifest and a performance bundle. Coverage is
@@ -149,6 +162,11 @@ live presented FPS, sampled from its play-mode debug surface on
 `127.0.0.1:19842` (`frontend_stats`); if that surface is unavailable the header
 says so instead of guessing. With diagnostics off, the panel reports runtime
 state as **not measured** rather than showing an old or guessed value.
+
+The job screen has a `[Save logs]` button at the bottom right (or press `S`).
+It writes the current job's header, settings, exact command(s) and output to
+`logs/tui/`. The folder is local and git-ignored, so it is safe to
+attach to a bug report after removing any personal paths.
 
 ### Setup (5)
 
@@ -171,12 +189,12 @@ local-state/legal notes.
 | Pages | `Tab`/`Shift+Tab` next/previous page, `1`-`6` jump, `H` `R` `B` `P` `S` page shortcuts |
 | Pages | `Ctrl+R` starts Play from any page through the final review; the `[Ctrl+R Play]` button does the same |
 | Pages | `?` help, `L` last log, `Q` quit |
-| Mouse | Click a tab, the Play button or a row; wheel scrolls pages, reviews, the browser and the job log |
+| Mouse | Click a tab, the Play button, a row or `[Save logs]`; wheel scrolls pages, reviews, the browser and the job log |
 | Text input | Type, `Backspace`/`Delete`, `Left`/`Right`, `Home`/`End`, `Ctrl+U` clear, `Enter` accept, `Esc` cancel |
 | Folder/ROM browser | `Up`/`Down`, `Enter` open or pick, `Backspace`/`Left` up, `Right` open, `S` use folder, `G` go to path, `H` hidden, `R` rescan, `Esc` cancel |
 | Folder/ROM browser (mouse) | Click an entry to select it; click the selected entry to open or pick it; wheel moves three entries |
 | Final review | `Up`/`Down`/`PgUp`/`PgDn`/`Home`/`End` scroll, `Enter` run, `Esc` cancel; `Run`/`Cancel` are clickable |
-| Job log | `Esc`/`Ctrl+C` cancel while running; `Up`/`Down`/`PgUp`/`PgDn`/`Home` scroll; `End`/`F` follow; `Enter` return after it finishes; the header shows the live presented FPS while Play runs |
+| Job log | `Esc`/`Ctrl+C` cancel while running; `Up`/`Down`/`PgUp`/`PgDn`/`Home` scroll; `End`/`F` follow; `S` or `[Save logs]` writes the job log to `logs/tui/`; `Enter` return after it finishes; the header shows the live presented FPS while Play runs |
 
 ## Recompilation state
 
@@ -239,7 +257,8 @@ Mouse support is built in:
    `pkmn_bankgen`.
 3. **Setup**: Bootstrap recompiler once, then Generate title banks.
 4. **Build**: enable Build runner (and Native present if wanted), then
-   Configure & build again.
+   Configure & build again. Native renderer builds by default; turn
+   **Build native renderer (alpha)** off if Vulkan shaders are unavailable.
 5. **Play**: choose presentation, save and diagnostics, then Play.
 
 Faster path: choose the ROM, then press **Quickstart** on Home. It adds only the

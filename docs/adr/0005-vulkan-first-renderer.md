@@ -3,7 +3,9 @@
 **Status:** accepted (2026-10-19); partly superseded by
 `docs/adr/0006-ndsrecomp-native-present-hook.md`, which wires the seam into the
 runner's frontend through a tracked, guarded patch and records why the
-"pinned pristine submodule" premise below does not survive that step.
+"pinned pristine submodule" premise below does not survive that step. Also
+partly superseded by `docs/adr/0007-native-ds-render-sinks.md`, which decides
+GPU-side 2D/3D compositing and 3D resolution scaling; post-FX remains open.
 
 `Plan.md` M8 needs our own present/compositor: the runner's frontend currently
 owns the window, the layout and the present, so there is no place to put

@@ -18,6 +18,7 @@
 #   sh tools/play.sh --native                 # present through render/ (Vulkan)
 #   sh tools/play.sh --native --gpu discrete  # pick the discrete Vulkan adapter
 #   sh tools/play.sh --native --gpu index:1   # or pin a listed adapter
+#   sh tools/play.sh --renderer native        # 3D sink, slice 1 (4:3, 1x)
 #   sh tools/play.sh --frames 600 --stats     # present 600 frames, print stats, exit
 #   sh tools/play.sh --sav banks/black.sav    # keep a different save file
 #   sh tools/play.sh --no-save                # blank 512 KiB cart, write nothing
@@ -37,6 +38,12 @@
 # auto (prefer discrete), discrete, integrated, index:<n>, or a name substring.
 # Everything else -- guest execution, input, audio, saves, the presented-frame
 # digest -- is the same run either way.
+#
+# --renderer native enables the alpha 3D sink and implies --native; the runner
+# must be built with PKMNG5PC_NATIVE_RENDERER=ON. 3d, 2d and both are debug-only
+# renderer selections, not normal play. Slice 1 renders 4:3 at 256 px and 1x:
+# the bridge rejects other aspect widths, and the sink does not use
+# --render-scale yet.
 #
 # Saves are on by default: the run loads the save next to the ROM (<rom>.sav),
 # starts blank when it is missing, and keeps writing it. --sav (alias
@@ -60,6 +67,11 @@ banks_dir=banks/black
 layout=stacked
 native=0
 gpu=${PKMNG5PC_GPU:-auto}
+renderer=off
+aspect=4:3
+render_scale=
+aspect_set=0
+render_scale_set=0
 frames=0
 stats=0
 coverage=0
@@ -77,6 +89,9 @@ while [ $# -gt 0 ]; do
     --layout)   layout=$2; shift 2 ;;
     --native)   native=1; shift ;;
     --gpu)      gpu=$2; shift 2 ;;
+    --renderer) renderer=$2; shift 2 ;;
+    --aspect)   aspect=$2; aspect_set=1; shift 2 ;;
+    --render-scale) render_scale=$2; render_scale_set=1; shift 2 ;;
     --frames)   frames=$2; shift 2 ;;
     --save-path) save_path=$2; save_path_set=1; shift 2 ;;
     --sav)      save_path=$2; save_path_set=1; shift 2 ;;
@@ -92,6 +107,33 @@ while [ $# -gt 0 ]; do
 done
 
 fail() { echo "play: $1" >&2; exit 1; }
+
+case $renderer in
+  off)             renderer_on=0 ;;
+  native|3d|2d|both) renderer_on=1 ;;
+  *) fail "--renderer must be off, native, 3d, 2d or both." ;;
+esac
+case $aspect in
+  4:3)  aspect_width=256 ;;
+  16:9) aspect_width=342 ;;
+  21:9) aspect_width=448 ;;
+  *) fail "--aspect must be 4:3, 16:9 or 21:9." ;;
+esac
+if [ "$render_scale_set" -eq 1 ]; then
+  case $render_scale in
+    ''|*[!0-9]*) fail "--render-scale must be 1, 2, 3 or 4." ;;
+  esac
+  if [ "$render_scale" -lt 1 ] || [ "$render_scale" -gt 4 ]; then
+    fail "--render-scale must be 1, 2, 3 or 4."
+  fi
+fi
+if [ "$renderer_on" -eq 1 ]; then native=1; fi
+if [ "$renderer_on" -eq 0 ] && [ "$aspect_set" -eq 1 ] && [ "$aspect" != "4:3" ]; then
+  echo "play: --aspect applies to --renderer; ignored while the renderer is off" >&2
+fi
+if [ "$renderer_on" -eq 0 ] && [ "$render_scale_set" -eq 1 ]; then
+  echo "play: --render-scale applies to --renderer; ignored while the renderer is off" >&2
+fi
 
 # --- runner -----------------------------------------------------------------
 
@@ -142,6 +184,14 @@ if [ -z "$rom" ]; then
 fi
 [ -f "$rom" ] || fail "no such ROM: $rom"
 
+game_code=$(game_code "$rom")
+titles_file="$root/re/config/titles.tsv"
+[ -f "$titles_file" ] || fail "missing $titles_file"
+title_id=$(awk -F '\t' -v code="$game_code" '$1 == code { print $2; exit }' "$titles_file")
+if [ "$renderer_on" -eq 1 ] && [ -z "$title_id" ]; then
+  echo "play: no renderer profile for game code '$game_code'; PKMNG5PC_TITLE_ID stays unset" >&2
+fi
+
 # --- save -------------------------------------------------------------------
 
 if [ "$no_save" -eq 1 ] && [ "$save_path_set" -eq 1 ]; then
@@ -188,6 +238,25 @@ if [ "$native" -eq 1 ]; then
   PKMNG5PC_GPU=$gpu
   export PKMNG5PC_PRESENT PKMNG5PC_GPU
 fi
+if [ "$renderer_on" -eq 1 ]; then
+  PKMNG5PC_RENDERER=$renderer
+  PKMNG5PC_WIDESCREEN_SUPPORTED=top
+  export PKMNG5PC_RENDERER PKMNG5PC_WIDESCREEN_SUPPORTED
+  # Slice 1 renders 4:3 at 256: request no adaptive widening at native width.
+  if [ "$aspect" != "4:3" ]; then
+    NDS_ADAPTIVE_WIDESCREEN=top
+    NDS_WIDESCREEN_WIDTH=$aspect_width
+    export NDS_ADAPTIVE_WIDESCREEN NDS_WIDESCREEN_WIDTH
+  fi
+  if [ -n "$title_id" ]; then
+    PKMNG5PC_TITLE_ID=$title_id
+    export PKMNG5PC_TITLE_ID
+  fi
+  if [ "$render_scale_set" -eq 1 ]; then
+    NDS_INTERNAL_RESOLUTION=$render_scale
+    export NDS_INTERNAL_RESOLUTION
+  fi
+fi
 
 echo "runner: $runner"
 echo "rom:    $rom"
@@ -196,6 +265,17 @@ if [ "$native" -eq 1 ]; then
   echo "present: native (render/ - Vulkan, $layout, gpu=$gpu)"
 else
   echo "present: runner SDL blit ($layout)"
+fi
+if [ "$renderer_on" -eq 1 ]; then
+  scale_text=
+  [ "$render_scale_set" -eq 1 ] && scale_text=", scale ${render_scale}x"
+  title_text=
+  [ -n "$title_id" ] && title_text=", title $title_id"
+  debug_text=
+  case $renderer in 3d|2d|both) debug_text=" (debug)" ;; esac
+  echo "render: $renderer$debug_text (aspect $aspect, source width $aspect_width$scale_text$title_text)"
+else
+  echo "render: off (host CPU; aspect and width unused)"
 fi
 if [ -n "$save_path" ]; then
   if [ -e "$save_path" ]; then echo "save:   $save_path"

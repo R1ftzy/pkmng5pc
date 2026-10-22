@@ -24,6 +24,7 @@ namespace pkmn::render::vk {
     X(vkEnumerateDeviceExtensionProperties)                                                        \
     X(vkGetPhysicalDeviceProperties)                                                               \
     X(vkGetPhysicalDeviceMemoryProperties)                                                         \
+    X(vkGetPhysicalDeviceFormatProperties)                                                         \
     X(vkGetPhysicalDeviceQueueFamilyProperties)                                                    \
     X(vkGetPhysicalDeviceSurfaceSupportKHR)                                                        \
     X(vkGetPhysicalDeviceSurfaceCapabilitiesKHR)                                                   \
@@ -59,8 +60,14 @@ namespace pkmn::render::vk {
     X(vkResetCommandBuffer)                                                                        \
     X(vkCmdPipelineBarrier)                                                                        \
     X(vkCmdCopyBufferToImage)                                                                      \
+    X(vkCmdCopyImageToBuffer)                                                                      \
     X(vkCmdBlitImage)                                                                              \
     X(vkCmdClearColorImage)                                                                        \
+    X(vkCmdBindPipeline)                                                                           \
+    X(vkCmdBindDescriptorSets)                                                                     \
+    X(vkCmdPushConstants)                                                                          \
+    X(vkCmdDispatch)                                                                               \
+    X(vkCmdDispatchIndirect)                                                                       \
     X(vkCreateBuffer)                                                                              \
     X(vkDestroyBuffer)                                                                             \
     X(vkGetBufferMemoryRequirements)                                                               \
@@ -68,6 +75,23 @@ namespace pkmn::render::vk {
     X(vkDestroyImage)                                                                              \
     X(vkGetImageMemoryRequirements)                                                                \
     X(vkBindImageMemory)                                                                           \
+    X(vkCreateImageView)                                                                           \
+    X(vkDestroyImageView)                                                                          \
+    X(vkCreateSampler)                                                                             \
+    X(vkDestroySampler)                                                                            \
+    X(vkCreateDescriptorSetLayout)                                                                 \
+    X(vkDestroyDescriptorSetLayout)                                                                \
+    X(vkCreatePipelineLayout)                                                                      \
+    X(vkDestroyPipelineLayout)                                                                     \
+    X(vkCreateDescriptorPool)                                                                      \
+    X(vkDestroyDescriptorPool)                                                                     \
+    X(vkResetDescriptorPool)                                                                       \
+    X(vkAllocateDescriptorSets)                                                                    \
+    X(vkUpdateDescriptorSets)                                                                      \
+    X(vkCreateShaderModule)                                                                        \
+    X(vkDestroyShaderModule)                                                                       \
+    X(vkCreateComputePipelines)                                                                    \
+    X(vkDestroyPipeline)                                                                           \
     X(vkAllocateMemory)                                                                            \
     X(vkFreeMemory)                                                                                \
     X(vkMapMemory)                                                                                 \

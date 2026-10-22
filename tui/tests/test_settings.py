@@ -26,6 +26,10 @@ class SettingsLoadTests(unittest.TestCase):
         self.assertEqual(settings.save_mode, "default")
         self.assertEqual(settings.frames, 0)
         self.assertEqual(settings.shards, 8)
+        self.assertFalse(settings.render_native)
+        self.assertEqual(settings.render_scale, 1)
+        self.assertEqual(settings.render_aspect, "4:3")
+        self.assertFalse(settings.render_verify)
 
     def test_malformed_json_gives_defaults(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -46,6 +50,10 @@ class SettingsLoadTests(unittest.TestCase):
             "save_mode": "sometimes",
             "frames": -4,
             "shards": 1,
+            "render_native": "on",
+            "render_scale": 9,
+            "render_aspect": "32:9",
+            "render_verify": "yes",
         }
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "state.json"
@@ -60,6 +68,10 @@ class SettingsLoadTests(unittest.TestCase):
         self.assertEqual(settings.save_mode, "default")
         self.assertEqual(settings.frames, 0)
         self.assertEqual(settings.shards, 2)
+        self.assertFalse(settings.render_native)
+        self.assertEqual(settings.render_scale, 1)
+        self.assertEqual(settings.render_aspect, "4:3")
+        self.assertFalse(settings.render_verify)
 
     def test_out_of_range_values_are_clamped(self) -> None:
         payload = {"frames": 20_000_000, "shards": 1_000}
@@ -81,6 +93,38 @@ class SettingsLoadTests(unittest.TestCase):
         self.assertEqual(settings.frames, 0)
         self.assertEqual(settings.shards, 8)
 
+    def test_missing_render_keys_use_defaults_without_touching_present(self) -> None:
+        payload = {"play_native": True, "play_layout": "separate"}
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "state.json"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            settings = Settings.load(path, PRESETS)
+
+        self.assertTrue(settings.play_native)
+        self.assertFalse(settings.render_native)
+        self.assertEqual(settings.render_scale, 1)
+        self.assertEqual(settings.render_aspect, "4:3")
+        self.assertFalse(settings.render_verify)
+
+    def test_native_renderer_forces_native_presentation(self) -> None:
+        payload = {"render_native": True, "play_native": False}
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "state.json"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            settings = Settings.load(path, PRESETS)
+
+        self.assertTrue(settings.render_native)
+        self.assertTrue(settings.play_native)
+
+    def test_native_renderer_off_leaves_native_presentation_alone(self) -> None:
+        settings = Settings(render_native=False, play_native=False)
+        settings.normalize(PRESETS)
+        self.assertFalse(settings.play_native)
+
+        settings = Settings(render_native=False, play_native=True)
+        settings.normalize(PRESETS)
+        self.assertTrue(settings.play_native)
+
 
 class SettingsRoundTripTests(unittest.TestCase):
     def test_save_and_load_preserve_every_field(self) -> None:
@@ -93,12 +137,17 @@ class SettingsRoundTripTests(unittest.TestCase):
             build_render=False,
             build_runner=True,
             native_present=False,
+            native_renderer=False,
             banks_dir="banks/white2",
             extra_bank_dirs="banks/black;banks/white",
             extra_sha1s=f"{'a' * 40};{'b' * 40}",
             play_layout="separate",
             play_native=True,
             play_gpu="index:1",
+            render_native=True,
+            render_scale=3,
+            render_aspect="21:9",
+            render_verify=True,
             save_mode="custom",
             save_path="saves/run.sav",
             frames=120,

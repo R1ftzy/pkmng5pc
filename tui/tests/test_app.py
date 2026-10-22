@@ -10,7 +10,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from tui.app import App, PLAY_BUTTON
+from tui.app import App, LOG_BUTTON, PLAY_BUTTON
 from tui.commands import Command, Job
 from tui.model import Repo, Settings
 from tui.specs import GpuSpec
@@ -30,6 +30,7 @@ def in_sync_cache(repo: Repo) -> dict[str, str]:
         "PKMNG5PC_BUILD_RENDER": "ON",
         "PKMNG5PC_BUILD_RUNNER": "OFF",
         "PKMNG5PC_NATIVE_PRESENT": "ON",
+        "PKMNG5PC_NATIVE_RENDERER": "ON",
         "PKMNG5PC_BANKS_DIR": str(repo.resolve("banks/black")),
     }
 
@@ -50,11 +51,13 @@ class CacheMismatchTests(unittest.TestCase):
             app, repo = make_app(Path(temp), Settings(preset="test-debug"))
             cache = in_sync_cache(repo)
             cache["PKMNG5PC_BUILD_TESTS"] = "OFF"
+            cache["PKMNG5PC_NATIVE_RENDERER"] = "OFF"
             cache["PKMNG5PC_BANKS_DIR"] = str(repo.resolve("banks/white"))
 
             problems = app.cache_mismatches(cache)
 
             self.assertIn("PKMNG5PC_BUILD_TESTS is OFF in the cache", problems)
+            self.assertIn("PKMNG5PC_NATIVE_RENDERER is OFF in the cache", problems)
             self.assertIn("banks directory differs from the cache", problems)
 
     def test_extra_title_settings_are_compared(self) -> None:
@@ -73,6 +76,32 @@ class CacheMismatchTests(unittest.TestCase):
 
             self.assertIn("extra title bank dirs differ from the cache", problems)
             self.assertIn("extra title SHA-1s differ from the cache", problems)
+
+
+class BuildViewOptionTests(unittest.TestCase):
+    def test_native_renderer_build_toggle_is_exposed(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            app, _ = make_app(Path(temp), Settings(preset="test-debug"))
+            view = app.build_view(120)
+            items = {item.key: item for item in view.items}
+
+            self.assertIn("native-renderer", items)
+            self.assertTrue(items["native-renderer"].enabled)
+            self.assertEqual(items["native-renderer"].value, "ON")
+
+            assert items["native-renderer"].on_adjust is not None
+            items["native-renderer"].on_adjust(-1)
+            self.assertFalse(app.s.native_renderer)
+
+    def test_native_renderer_build_toggle_is_disabled_without_render_layer(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            app, _ = make_app(
+                Path(temp), Settings(preset="test-debug", build_render=False)
+            )
+            view = app.build_view(120)
+            items = {item.key: item for item in view.items}
+
+            self.assertFalse(items["native-renderer"].enabled)
 
 
 class ReviewTests(unittest.TestCase):
@@ -328,6 +357,50 @@ class PlayButtonTests(unittest.TestCase):
             self.assertNotIn("[Ctrl+R Play]", text)
             self.assertIsNone(app.play_hit)
 
+    def test_job_save_logs_button_is_clickable(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            app, _ = make_app(Path(temp), Settings(preset="test-debug"))
+            command = Command("Play", [sys.executable, "-c", "pass"], Path(temp))
+            app.job = Job([command], "Play")
+            app.job.lines.append("captured output")
+            app.mode = "job"
+
+            lines = app.render(100, 30)
+            hit = app.log_hit
+            self.assertIsNotNone(hit)
+            assert hit is not None
+            self.assertEqual(
+                strip_ansi(lines[hit[0]])[hit[1] : hit[2] + 1], LOG_BUTTON
+            )
+            calls: list[bool] = []
+
+            with patch.object(App, "save_job_log", lambda self: calls.append(True)):
+                app.handle_mouse(MouseEvent("press", "left", hit[1], hit[0]))
+
+            self.assertEqual(calls, [True])
+
+    def test_job_save_logs_writes_the_current_output(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            app, repo = make_app(Path(temp), Settings(preset="test-debug"))
+            command = Command("Play", [sys.executable, "-c", "pass"], Path(temp))
+            app.job = Job([command], "Play")
+            app.job.lines.append("captured output")
+            app.mode = "job"
+
+            app.handle_key("s")
+
+            self.assertIsNotNone(app.log_saved)
+            assert app.log_saved is not None
+            path, saved, _ = app.log_saved
+            self.assertTrue(saved)
+            written = Path(path)
+            self.assertTrue(written.is_file())
+            self.assertEqual(written.parent, repo.root / "logs" / "tui")
+            text = written.read_text(encoding="utf-8")
+            self.assertIn("Job: Play", text)
+            self.assertIn("$ ", text)
+            self.assertIn("captured output", text)
+
 
 class RecompDisplayTests(unittest.TestCase):
     def test_home_and_review_show_bank_and_runtime_state(self) -> None:
@@ -540,6 +613,92 @@ class PlayViewGpuTests(unittest.TestCase):
             with patch("tui.app.list_gpus", return_value=[]):
                 view = app.play_view(120)
             self.assertNotIn("gpu-warning", {item.key for item in view.items})
+
+
+def write_renderer_cache(
+    root: Path, value: str = "ON", native_present: str = "ON"
+) -> None:
+    cache = root / "build" / "test-debug" / "CMakeCache.txt"
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    cache.write_text(
+        "PKMNG5PC_BUILD_RENDER:BOOL=ON\n"
+        f"PKMNG5PC_NATIVE_PRESENT:BOOL={native_present}\n"
+        f"PKMNG5PC_NATIVE_RENDERER:BOOL={value}\n",
+        encoding="utf-8",
+    )
+
+
+class PlayViewNativeRendererTests(unittest.TestCase):
+    def test_unavailable_build_disables_the_master_toggle(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            app, _ = make_app(Path(temp), Settings(preset="test-debug"))
+            view = app.play_view(120)
+            items = {item.key: item for item in view.items}
+
+            self.assertFalse(items["render-native"].enabled)
+            self.assertEqual(items["render-native"].value, "unavailable")
+            self.assertIn("PKMNG5PC_NATIVE_RENDERER", items["render-native"].hint)
+            self.assertIn("render-native-note", items)
+
+            item = items["render-native"]
+            assert item.on_activate is not None
+            item.on_activate()
+            self.assertFalse(app.s.render_native)
+            self.assertEqual(app.toast[1], "warning")
+
+    def test_available_build_toggles_the_master_and_forces_native_present(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            write_renderer_cache(root)
+            app, _ = make_app(root, Settings(preset="test-debug"))
+
+            view = app.play_view(120)
+            item = {entry.key: entry for entry in view.items}["render-native"]
+            self.assertTrue(item.enabled)
+            self.assertEqual(item.value, "OFF")
+            assert item.on_adjust is not None
+            item.on_adjust(1)
+
+            self.assertTrue(app.s.render_native)
+            self.assertTrue(app.s.play_native)
+            view = app.play_view(120)
+            items = {entry.key: entry for entry in view.items}
+            self.assertEqual(items["render-native"].value, "ON")
+            self.assertFalse(items["play-native"].enabled)
+            self.assertIn("Forced on", items["play-native"].hint)
+            self.assertNotIn("render-native-note", items)
+
+            items["render-scale"].on_adjust(1)
+            items["render-aspect"].on_adjust(1)
+            self.assertEqual(app.s.render_scale, 2)
+            self.assertEqual(app.s.render_aspect, "16:9")
+            view = app.play_view(120)
+            items = {entry.key: entry for entry in view.items}
+            self.assertIn("342 px source", items["render-aspect"].value)
+            self.assertEqual(items["render-scale"].value, "2x")
+
+            items["render-native"].on_adjust(-1)
+            self.assertFalse(app.s.render_native)
+            self.assertTrue(app.s.play_native)
+
+    def test_native_renderer_requires_native_present(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            write_renderer_cache(root, native_present="OFF")
+            app, _ = make_app(root, Settings(preset="test-debug"))
+            view = app.play_view(120)
+            items = {item.key: item for item in view.items}
+
+            self.assertFalse(items["render-native"].enabled)
+            self.assertEqual(items["render-native"].value, "unavailable")
+            self.assertIn("PKMNG5PC_NATIVE_PRESENT", items["render-native"].hint)
+
+    def test_verify_stays_out_of_the_normal_play_page(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            app, _ = make_app(Path(temp), Settings(preset="test-debug"))
+            view = app.play_view(120)
+
+        self.assertNotIn("render-verify", {item.key for item in view.items})
 
 
 if __name__ == "__main__":

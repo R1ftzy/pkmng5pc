@@ -1,6 +1,7 @@
 #include "check.h"
 
 #include "pkmn/render/backend.h"
+#include "pkmn/render/ds_frame_policy.h"
 
 #include <cstdint>
 #include <vector>
@@ -249,4 +250,20 @@ TEST_CASE(render_single_screen_compose_and_fit_placement)
     CHECK(centred.scale == 4);
 
     CHECK(!fit_placement(0, kScreenHeight, 100, 100).visible);
+}
+
+TEST_CASE(ds_sink_failure_resumes_the_cpu_path)
+{
+    ds::SinkFrameState state;
+    CHECK(ds::sink_frame_needs_cpu(state));
+
+    state.initialized = true;
+    CHECK(!ds::sink_frame_needs_cpu(state));
+
+    state.failed = true;
+    CHECK(ds::sink_frame_needs_cpu(state));
+
+    state.failed = false;
+    state.capture = true;
+    CHECK(ds::sink_frame_needs_cpu(state));
 }

@@ -430,7 +430,10 @@ in-game load accepts the exported file. **Enhancements may begin after this.**
       "present clock = audio queue"; a new ADR is owed).
 - [ ] **3D resolution scaling:** render the DS GE above native resolution, with
       an explicit policy for the 2D layers (BG/OBJ/fonts) versus the upscaled 3D
-      layer; a new ADR is owed.
+      layer; a new ADR is owed. *(Early spike approved 2026-10-21: host-GPU
+      2D/3D sinks, `docs/adr/0007-native-ds-render-sinks.md` and
+      `docs/design/native-render-sinks.md`. Alpha, default off; no M6/M8
+      completion claim.)*
 - [ ] **Post-FX:** bloom on the composited frame (low risk).
 - [ ] **Post-FX:** shadow maps for GE scenes. Risky — the DS exposes no
       depth/normal buffer we control. Gate on a prototype before committing.
@@ -590,6 +593,29 @@ Do not vendor or copy their content; cite and reimplement.
 ## 8. Progress log
 
 Newest first. Keep entries short; details and evidence live in `re/notes/`.
+
+- **2026-10-21 (native DS render sinks designed: 3D first, 2D second, alpha
+  and off by default)** — owner-approved early M8 spike, recorded in
+  `docs/adr/0007-native-ds-render-sinks.md` and
+  `docs/design/native-render-sinks.md`; it does not mark M6 or M8 done. The
+  design replaces the DS rasterization endpoints, not the device model: the 3D
+  sink implements `Renderer3D` (`Accelerated=false`, installed through
+  `SetCurrentRenderer`), and the 2D sink later replaces the scanline
+  compositor. One private `VulkanContext` is shared with `VulkanPresenter`; the
+  first visible slice keeps the CPU `NdsGpu2dHdFrame` and GPU-composites the
+  hi-res 3D, then the 2D sink moves layer selection/blending to the GPU.
+  Shaders are GLSL -> SPIR-V at build time via pinned `glslang` (no committed
+  blobs); two more tracked runner patches (`0003`, `0004`) add the guarded
+  sink-install hook, widen the 256/320/384/448 parser to any even 256..448, and
+  expose the active `GPU3D` device to the sink. Widescreen is scene
+  widening with a 4:3 safe area; TUI ratios are 4:3=256, 16:9=342, 21:9=448, and
+  32:9=682 is deferred. Verification keeps the CPU reference:
+  guest RAM/save/guest-frame digest identical, 3D at most 1 LSB at native, 2D
+  bit-exact where the path is bit-exact. Slice 0 scaffolding is in place: shared
+  `VulkanContext`, pinned
+  `glslang` shader embedding, the guarded runner patch, the build option and TUI
+  wiring, and a loud startup failure when the master toggle requests the
+  not-yet-implemented sinks.
 
 - **2026-10-19 (an overlay-banking design pass: the mechanism exists, the boot
   window can't show the win)** — before generating an overlay bank, verified

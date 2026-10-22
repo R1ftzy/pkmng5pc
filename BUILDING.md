@@ -83,6 +83,7 @@ build dir needs a fresh `build/<preset>/`.
 | `PKMNG5PC_BUILD_RENDER` | `ON` | Build the render seam and GPU backends (`render/`). |
 | `PKMNG5PC_BUILD_RUNNER` | `OFF` | Build the ndsrecomp runner and fetch/build its SDL3. Required before `tools/play`. |
 | `PKMNG5PC_NATIVE_PRESENT` | `ON` | Let the runner present through `render/` (Vulkan). Needs `PKMNG5PC_BUILD_RENDER=ON`. Turning it OFF builds a runner with no native present path (so `tools/play -Native` won't work). |
+| `PKMNG5PC_NATIVE_RENDERER` | `OFF` | Build the native DS render sinks (alpha). Needs `PKMNG5PC_BUILD_RENDER=ON` and Vulkan, plus `PKMNG5PC_NATIVE_PRESENT=ON` whenever `PKMNG5PC_BUILD_RUNNER=ON`. The runtime switch (`PKMNG5PC_RENDERER`) stays off by default. |
 | `PKMNG5PC_BANKS_DIR` | `banks/black` | Bank directory compiled into the runner. |
 | `PKMNG5PC_TITLE_ROM_SHA1` | `26ad0b9967aa279c4a266ee69f52b9b2332399a5` (Black) | ROM SHA-1 the runner registers the bank group under. |
 
@@ -96,6 +97,12 @@ user-settable: `NDS_BOOTSTRAP_FIRMWARE=ON`, `NDS_SDL_BACKEND=SDL3`,
 cmake --preset windows-relwithdebinfo -DPKMNG5PC_BUILD_RUNNER=ON
 cmake --build --preset windows-relwithdebinfo
 ```
+
+Configure applies the tracked patches in `patches/ndsrecomp/` in filename order
+and idempotently, so the submodule shows as modified by design. `0003` installs
+on top of `0001`'s guarded present hook and must stay after it; `0004` adds the
+guarded `GPU3D` device accessor. Revert with
+`git -C third_party/ndsrecomp checkout .` before switching revisions.
 
 ---
 

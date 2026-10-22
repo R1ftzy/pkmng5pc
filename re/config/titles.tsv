@@ -1,0 +1,7 @@
+# Game code -> launcher title id and display name.
+# Consumed by tui/model.py and tools/play.ps1 / tools/play.sh.
+code	title_id	display_name
+IRBO	black	Pokémon Black
+IRAO	white	Pokémon White
+IREO	black2	Pokémon Black 2
+IRDO	white2	Pokémon White 2

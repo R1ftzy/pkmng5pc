@@ -17,6 +17,7 @@
 #   pwsh tools/play.ps1 -Native               # present through render/ (Vulkan)
 #   pwsh tools/play.ps1 -Native -Gpu discrete # pick the discrete Vulkan adapter
 #   pwsh tools/play.ps1 -Native -Gpu "index:1" # or pin a listed adapter
+#   pwsh tools/play.ps1 -Renderer native      # 3D sink, slice 1 (4:3, 1x)
 #   pwsh tools/play.ps1 -Frames 600 -Stats    # present 600 frames, print stats, exit
 #   pwsh tools/play.ps1 -Sav "banks/black.sav"  # keep a different save file
 #   pwsh tools/play.ps1 -NoSave               # blank 512 KiB cart, write nothing
@@ -37,6 +38,12 @@
 # Everything else -- guest execution, input, audio, saves, the presented-frame
 # digest -- is the same run either way.
 #
+# -Renderer native enables the alpha 3D sink and implies -Native; the runner
+# must be built with PKMNG5PC_NATIVE_RENDERER=ON. 3d, 2d and both are debug-only
+# renderer selections, not normal play. Slice 1 renders 4:3 at 256 px and 1x:
+# the bridge rejects other aspect widths, and the sink does not use
+# -RenderScale yet.
+#
 # Saves are on by default: the run loads the save next to the ROM (<rom>.sav),
 # starts blank when it is missing, and keeps writing it. -Sav (alias -SavePath)
 # names another file and -NoSave keeps everything in RAM (the runner's
@@ -56,6 +63,9 @@ param(
   [ValidateSet('stacked', 'separate')][string]$Layout = 'stacked',
   [switch]$Native,
   [string]$Gpu = '',
+  [ValidateSet('off', 'native', '3d', '2d', 'both')][string]$Renderer = 'off',
+  [ValidateSet('4:3', '16:9', '21:9')][string]$Aspect = '4:3',
+  [int]$RenderScale = 0,
   [int]$Frames = 0,
   [Alias('SavePath')][string]$Sav,
   [switch]$Save,
@@ -77,6 +87,29 @@ if (-not $Gpu) {
 function Fail([string]$message) {
   Write-Host "play: $message" -ForegroundColor Red
   exit 1
+}
+
+$rendererOn = $Renderer -ne 'off'
+$nativePresent = $Native -or $rendererOn
+$renderScaleSet = $PSBoundParameters.ContainsKey('RenderScale')
+if ($renderScaleSet -and ($RenderScale -lt 1 -or $RenderScale -gt 4)) {
+  Fail '-RenderScale must be 1, 2, 3 or 4.'
+}
+$aspectWidths = @{ '4:3' = 256; '16:9' = 342; '21:9' = 448 }
+$titlesFile = Join-Path $root 're/config/titles.tsv'
+if (-not (Test-Path -LiteralPath $titlesFile)) { Fail "missing $titlesFile" }
+$titleIds = @{}
+Get-Content -LiteralPath $titlesFile |
+  Where-Object { $_ -and -not $_.StartsWith('#') } |
+  ForEach-Object {
+    $fields = $_ -split "`t"
+    if ($fields.Count -ge 2 -and $fields[0] -ne 'code') { $titleIds[$fields[0]] = $fields[1] }
+  }
+if (-not $rendererOn -and $PSBoundParameters.ContainsKey('Aspect') -and $Aspect -ne '4:3') {
+  Write-Host "play: -Aspect applies to -Renderer; ignored while the renderer is off" -ForegroundColor Yellow
+}
+if (-not $rendererOn -and $renderScaleSet) {
+  Write-Host "play: -RenderScale applies to -Renderer; ignored while the renderer is off" -ForegroundColor Yellow
 }
 
 # --- runner -----------------------------------------------------------------
@@ -140,6 +173,11 @@ if (-not $Rom) {
 }
 if (-not (Test-Path -LiteralPath $Rom)) { Fail "no such ROM: $Rom" }
 $Rom = (Resolve-Path -LiteralPath $Rom).Path
+$gameCode = Get-GameCode $Rom
+$titleId = $titleIds[$gameCode]
+if ($rendererOn -and -not $titleId) {
+  Write-Host "play: no renderer profile for game code '$gameCode'; PKMNG5PC_TITLE_ID stays unset" -ForegroundColor Yellow
+}
 
 # --- command ----------------------------------------------------------------
 
@@ -148,7 +186,7 @@ if ($NoSave -and ($PSBoundParameters.ContainsKey('Sav') -or $Save)) {
 }
 # GPU choice belongs to the port's Vulkan presenter; the runner's SDL path has
 # no adapter-selection hook. Say so rather than silently ignoring the flag.
-if (-not $Native -and $Gpu -ne 'auto') {
+if (-not $nativePresent -and $Gpu -ne 'auto') {
   Write-Host "play: -Gpu applies to -Native; the SDL path uses the system default adapter" -ForegroundColor Yellow
 }
 # The default is the derivation the runner itself would make: the ROM path with
@@ -187,18 +225,37 @@ if ($Stats -or $Frames -gt 0) { $env:NDS_FRONTEND_STATS = '1' }
 if (-not $env:NDS_GPU2D_THREADED) { $env:NDS_GPU2D_THREADED = '0' }
 # The frontend hook reads this (render/src/native_present.cpp). Leave it alone
 # otherwise so the environment stays the caller's.
-if ($Native) {
+if ($nativePresent) {
   $env:PKMNG5PC_PRESENT = 'native'
   $env:PKMNG5PC_GPU = $Gpu
+}
+if ($rendererOn) {
+  $env:PKMNG5PC_RENDERER = $Renderer
+  $env:PKMNG5PC_WIDESCREEN_SUPPORTED = 'top'
+  # Slice 1 renders 4:3 at 256: request no adaptive widening at native width.
+  if ($Aspect -ne '4:3') {
+    $env:NDS_ADAPTIVE_WIDESCREEN = 'top'
+    $env:NDS_WIDESCREEN_WIDTH = "$($aspectWidths[$Aspect])"
+  }
+  if ($titleId) { $env:PKMNG5PC_TITLE_ID = $titleId }
+  if ($renderScaleSet) { $env:NDS_INTERNAL_RESOLUTION = "$RenderScale" }
 }
 
 Write-Host "runner: $runner"
 Write-Host "rom:    $Rom"
 Write-Host "banks:  $banks"
-if ($Native) {
+if ($nativePresent) {
   Write-Host "present: native (render/ - Vulkan, $Layout, gpu=$Gpu)"
 } else {
   Write-Host "present: runner SDL blit ($Layout)"
+}
+if ($rendererOn) {
+  $scaleText = if ($renderScaleSet) { ", scale $($RenderScale)x" } else { '' }
+  $titleText = if ($titleId) { ", title $titleId" } else { '' }
+  $debugText = if ($Renderer -in @('3d', '2d', 'both')) { ' (debug)' } else { '' }
+  Write-Host "render: $Renderer$debugText (aspect $Aspect, source width $($aspectWidths[$Aspect])$scaleText$titleText)"
+} else {
+  Write-Host "render: off (host CPU; aspect and width unused)"
 }
 if ($savePath) {
   $fresh = if (Test-Path -LiteralPath $savePath) { '' } else { ' (new: written when the game saves)' }

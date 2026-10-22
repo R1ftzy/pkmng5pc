@@ -11,15 +11,32 @@ import sys
 from dataclasses import dataclass, asdict, fields
 from pathlib import Path
 
-TITLE_BY_CODE: dict[str, tuple[str, str]] = {
-    "IRBO": ("black", "Pokémon Black"),
-    "IRAO": ("white", "Pokémon White"),
-    "IREO": ("black2", "Pokémon Black 2"),
-    "IRDO": ("white2", "Pokémon White 2"),
-}
+TITLES_PATH = Path(__file__).resolve().parent.parent / "re" / "config" / "titles.tsv"
+
+
+def _load_titles(path: Path) -> dict[str, tuple[str, str]]:
+    titles: dict[str, tuple[str, str]] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line or line.startswith("#"):
+            continue
+        fields = line.split("\t")
+        if len(fields) < 3 or fields[0] == "code":
+            continue
+        titles[fields[0]] = (fields[1], fields[2])
+    return titles
+
+
+TITLE_BY_CODE: dict[str, tuple[str, str]] = _load_titles(TITLES_PATH)
 ROM_EXTENSIONS = (".nds", ".srl")
 PLAY_LAYOUTS = ("stacked", "separate")
 SAVE_MODES = ("default", "custom", "off")
+PLAY_ASPECTS = ("4:3", "16:9", "21:9")
+RENDER_SCALES = (1, 2, 3, 4)
+RENDER_ASPECT_WIDTHS: dict[str, int] = {
+    "4:3": 256,
+    "16:9": 342,
+    "21:9": 448,
+}
 PRESET_FLAVOURS = ("relwithdebinfo", "release", "debug")
 STATE_VERSION = 1
 
@@ -469,6 +486,41 @@ class Repo:
             values[key.split(":", 1)[0]] = value
         return values
 
+    def native_renderer_state(
+        self, preset: str, cache: dict[str, str] | None = None
+    ) -> tuple[bool, str]:
+        cache = self.read_cache(preset) if cache is None else cache
+        if not cache:
+            return (
+                False,
+                "build directory not configured; "
+                "rebuild with PKMNG5PC_NATIVE_RENDERER=ON",
+            )
+        if cache_bool(cache, "PKMNG5PC_BUILD_RENDER") is False:
+            return (
+                False,
+                "PKMNG5PC_BUILD_RENDER=OFF; rebuild with PKMNG5PC_BUILD_RENDER=ON",
+            )
+        if cache_bool(cache, "PKMNG5PC_NATIVE_PRESENT") is False:
+            return (
+                False,
+                "PKMNG5PC_NATIVE_PRESENT=OFF; "
+                "rebuild with PKMNG5PC_NATIVE_PRESENT=ON",
+            )
+        enabled = cache_bool(cache, "PKMNG5PC_NATIVE_RENDERER")
+        if enabled is None:
+            return (
+                False,
+                "not in this build; rebuild with PKMNG5PC_NATIVE_RENDERER=ON",
+            )
+        if not enabled:
+            return (
+                False,
+                "PKMNG5PC_NATIVE_RENDERER=OFF; "
+                "rebuild with PKMNG5PC_NATIVE_RENDERER=ON",
+            )
+        return True, ""
+
     @staticmethod
     def bank_files(folder: Path | str) -> list[Path]:
         folder = Path(folder)
@@ -491,12 +543,17 @@ class Settings:
     build_render: bool = True
     build_runner: bool = False
     native_present: bool = True
+    native_renderer: bool = True
     banks_dir: str = "banks/black"
     extra_bank_dirs: str = ""
     extra_sha1s: str = ""
     play_layout: str = "stacked"
     play_native: bool = False
     play_gpu: str = "auto"
+    render_native: bool = False
+    render_scale: int = 1
+    render_aspect: str = "4:3"
+    render_verify: bool = False
     save_mode: str = "default"
     save_path: str = ""
     frames: int = 0
@@ -531,6 +588,10 @@ class Settings:
             default_value = getattr(defaults, field.name)
             try:
                 if isinstance(default_value, bool):
+                    if field.name in {"render_native", "render_verify"} and not isinstance(
+                        value, bool
+                    ):
+                        continue
                     value = bool(value)
                 elif isinstance(default_value, int):
                     value = int(value)
@@ -555,6 +616,12 @@ class Settings:
             self.play_gpu = "auto"
         if self.save_mode not in SAVE_MODES:
             self.save_mode = "default"
+        if isinstance(self.render_scale, bool) or self.render_scale not in RENDER_SCALES:
+            self.render_scale = 1
+        if self.render_aspect not in PLAY_ASPECTS:
+            self.render_aspect = "4:3"
+        if self.render_native:
+            self.play_native = True
         self.frames = max(0, min(int(self.frames), 10_000_000))
         self.shards = max(2, min(int(self.shards), 64))
 

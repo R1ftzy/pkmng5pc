@@ -132,3 +132,50 @@ original code.
 
 **DS GE**:
 The Nintendo DS's fixed-function 3D "Geometry Engine".
+
+**DS pipeline**:
+The default rendering path: the DS GPU device models rasterize and composite
+on the CPU (the 3D soft rasterizer and the 2D scanline compositor), and only
+presentation happens on the host GPU.
+_Avoid_: software renderer, emulator pipeline
+
+**Sink**:
+A host-GPU endpoint that replaces one of the DS's rasterization stages. A sink
+consumes state captured from the guest's GPU device model and produces pixels
+on the host GPU; it owns no game logic and no guest-visible state.
+_Avoid_: renderer hook, capture
+
+**2D sink**:
+The sink that replaces the DS 2D scanline compositor. It consumes latched
+per-scanline layer state (backgrounds, objects, windows, effects), plus the 3D
+surface, and produces the final screen image.
+_Avoid_: 2D renderer, compositor
+
+**3D sink**:
+The sink that replaces the DS GE's rasterizer. It consumes the already-decoded
+geometry (transformed vertices, polygons, latched render state) and produces
+the per-line 3D surface. Geometry decode stays in the device model.
+_Avoid_: GE emulator, 3D renderer
+
+**Native render path**:
+The opt-in, alpha rendering mode in which the 2D and 3D sinks rasterize on the
+host GPU. Off by default; the DS pipeline remains the reference and fallback.
+_Avoid_: GPU mode, hardware renderer
+
+**HD split**:
+The existing host-side split in which the CPU 2D compositor emits a
+`NdsGpu2dHdFrame` with the 3D layer removed and the presenter re-inserts the
+hi-res 3D surface using the DS's priority/order and blend rules. The first
+native-render slice reuses it; the 2D sink later replaces the CPU compositor
+with a GPU one.
+_Avoid_: HD mode, upscale path
+
+**Scene widening**:
+The widescreen policy that widens the 3D frustum and samples 2D backgrounds
+beyond the DS's 256-pixel clip, while keeping authored UI inside a 4:3 safe
+area. Distinct from stretching and from pillarboxing.
+_Avoid_: widescreen hack, stretch
+
+**Safe area**:
+The 4:3 region of a widened frame in which the game's authored UI and gameplay
+framing are preserved.

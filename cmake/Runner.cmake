@@ -32,7 +32,8 @@ include(HostDeps)
 pkmng5pc_ensure_sdl3()
 
 # Local, tracked modifications to the pinned submodule
-# (docs/adr/0006-ndsrecomp-native-present-hook.md). Applied here, at configure
+# (docs/adr/0006-ndsrecomp-native-present-hook.md,
+# docs/adr/0007-native-ds-render-sinks.md). Applied here, at configure
 # time and idempotently, because the sources must carry the change before the
 # runner subdirectory is configured.
 #
@@ -82,6 +83,11 @@ endfunction()
 option(PKMNG5PC_NATIVE_PRESENT
     "Let the runner present through render/ (adds the frontend hook patch)" ON)
 
+if(PKMNG5PC_NATIVE_RENDERER AND NOT PKMNG5PC_NATIVE_PRESENT)
+    message(FATAL_ERROR
+        "PKMNG5PC_NATIVE_RENDERER=ON requires PKMNG5PC_NATIVE_PRESENT=ON.")
+endif()
+
 if(PKMNG5PC_NATIVE_PRESENT)
     if(NOT TARGET pkmn::render_runner_bridge)
         message(FATAL_ERROR
@@ -111,4 +117,13 @@ if(PKMNG5PC_NATIVE_PRESENT)
     # standalone ndsrecomp build of the same patched tree is unaffected.
     target_compile_definitions(nds_runner PRIVATE PKMNG5PC_NATIVE_PRESENT=1)
     target_link_libraries(nds_runner PRIVATE pkmn::render_runner_bridge)
+endif()
+
+if(PKMNG5PC_NATIVE_RENDERER)
+    if(NOT TARGET pkmn::render_ds)
+        message(FATAL_ERROR
+            "PKMNG5PC_NATIVE_RENDERER=ON requires the pkmn_render_ds target.")
+    endif()
+    target_compile_definitions(nds_runner PRIVATE PKMNG5PC_NATIVE_RENDERER=1)
+    target_link_libraries(nds_runner PRIVATE pkmn::render_ds)
 endif()
