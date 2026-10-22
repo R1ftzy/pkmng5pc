@@ -102,7 +102,9 @@ Configure applies the tracked patches in `patches/ndsrecomp/` in filename order
 and idempotently whenever the runner or native renderer is enabled, so the
 submodule shows as modified by design. `0003` installs
 on top of `0001`'s guarded present hook and must stay after it; `0004` adds the
-guarded `GPU3D` device accessor. Revert with
+guarded `GPU3D` device accessor; `0005` makes the vendored melonDS Wi-Fi
+sources use `_WIN32` and libslirp's `slirp_ssize_t` so plain LLVM Clang
+targeting MSVC/UCRT builds them. Revert with
 `git -C third_party/ndsrecomp checkout .` before switching revisions.
 
 ---

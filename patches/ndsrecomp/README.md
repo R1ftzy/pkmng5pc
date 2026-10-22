@@ -81,3 +81,21 @@ an error under C99 and later, so the `slirp` target does not compile:
 Both changes are what upstream would take: they are correct on POSIX as well,
 and they need no guard macro. The vendored tree is GPL-3.0 through the melonDS
 GPL subtree, so the patch carries the same §5(a) purpose as 0001.
+
+## 0005-melonds-net-win32.patch
+
+`runner/vendor/melonds/`: the vendored melonDS Wi-Fi sources select their
+Windows branches with `__WIN32__`, a MinGW/Borland macro that plain LLVM Clang
+targeting MSVC does not define. Under the MSVC/UCRT headers they take the POSIX
+branch and fail on `<poll.h>`, `<sys/socket.h>` and `<netdb.h>`;
+`Net_Slirp.h`/`Net_Slirp.cpp` also declare the slirp send callback's return
+type as bare `ssize_t`, which those headers do not provide.
+
+The patch switches the guards in `Net_Slirp.h`, `Net_Slirp.cpp`, `WifiAP.cpp`
+and `Net_PCap.cpp` to `_WIN32`, and uses libslirp's own `slirp_ssize_t` for the
+callback. `_WIN32` is defined by both MinGW and MSVC-target Clang and is absent
+on POSIX, so the branch selection stays correct everywhere; `slirp_ssize_t` is
+`SSIZE_T` on Windows and `ssize_t` on POSIX. `Net_PCap.cpp` is only compiled
+when the optional PCAP backend is enabled, but its guard has the same bug. No
+guard macro is needed, and the patched tree still builds standalone as plain
+ndsrecomp.

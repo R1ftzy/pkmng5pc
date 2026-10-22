@@ -1,0 +1,162 @@
+diff --git a/runner/CMakeLists.txt b/runner/CMakeLists.txt
+index c1d0447..2295358 100644
+--- a/runner/CMakeLists.txt
++++ b/runner/CMakeLists.txt
+@@ -349,10 +349,11 @@ target_include_directories(nds_support PUBLIC
+ # shim (glib/glib.c, not real GLib) and already wires ws2_32/iphlpapi on
+ # WIN32 internally, so no extra link setup is needed beyond depending on the
+ # `slirp` target it defines. cmake_minimum_required(VERSION 3.16) there is
+-# satisfied by this project's own C:\msys64\mingw64\bin\cmake.exe (4.2.2,
+-# verified by direct invocation, not assumed); __WIN32__ (which
+-# Net_Slirp.h/.cpp guard socket includes on) is defined by this mingw-w64
+-# installation's own g++ (verified via `g++ -dM -E -`, not assumed).
++# satisfied by this project's own CMake (4.x, verified by direct invocation,
++# not assumed). The melonDS net sources select their Windows branches on
++# _WIN32 (switched from the MinGW-only __WIN32__ by this project's
++# 0005-melonds-net-win32.patch), so MinGW and MSVC-target Clang take the same
++# path.
+ add_subdirectory(vendor/melonds/net/libslirp EXCLUDE_FROM_ALL)
+ if(NOT MSVC)
+     # libslirp's own CMakeLists.txt does not set its own warning posture, so
+diff --git a/runner/vendor/melonds/WifiAP.cpp b/runner/vendor/melonds/WifiAP.cpp
+index b2ae367..37fa470 100644
+--- a/runner/vendor/melonds/WifiAP.cpp
++++ b/runner/vendor/melonds/WifiAP.cpp
+@@ -36,7 +36,7 @@ void nds_wifi_on_client_associated();
+ // patches/0018-wifiap-client-state-hook.patch.
+ void nds_wifi_on_client_state_changed(uint32_t status);
+ 
+-#ifndef __WIN32__
++#ifndef _WIN32
+ #include <stddef.h>
+ #endif
+ 
+diff --git a/runner/vendor/melonds/net/Net_PCap.cpp b/runner/vendor/melonds/net/Net_PCap.cpp
+index e92ad06..d107501 100644
+--- a/runner/vendor/melonds/net/Net_PCap.cpp
++++ b/runner/vendor/melonds/net/Net_PCap.cpp
+@@ -22,7 +22,7 @@
+ #include "Net_PCap.h"
+ #include "Platform.h"
+ 
+-#ifdef __WIN32__
++#ifdef _WIN32
+ 	#include <iphlpapi.h>
+ #else
+ 	#include <sys/types.h>
+@@ -50,7 +50,7 @@ namespace melonDS
+ 
+ const char* PCapLibNames[] =
+ {
+-#ifdef __WIN32__
++#ifdef _WIN32
+     // TODO: name for npcap in non-WinPCap mode
+     "wpcap.dll",
+ #elif defined(__APPLE__)
+@@ -206,13 +206,13 @@ std::vector<AdapterData> LibPCap::GetAdapters() const noexcept
+         adata.DeviceName[127] = '\0';
+         adata.Flags = dev->flags;
+ 
+-#ifndef __WIN32__
++#ifndef _WIN32
+         strncpy(adata.FriendlyName, adata.DeviceName, 127);
+         adata.FriendlyName[127] = '\0';
+-#endif // __WIN32__
++#endif // _WIN32
+     }
+ 
+-#ifdef __WIN32__
++#ifdef _WIN32
+ 
+     ULONG bufsize = 16384;
+     IP_ADAPTER_ADDRESSES* buf = (IP_ADAPTER_ADDRESSES*)HeapAlloc(GetProcessHeap(), 0, bufsize);
+@@ -331,7 +331,7 @@ std::vector<AdapterData> LibPCap::GetAdapters() const noexcept
+ 
+     freeifaddrs(addrs);
+ 
+-#endif // __WIN32__
++#endif // _WIN32
+ 
+     freealldevs(alldevs);
+     return adapters;
+diff --git a/runner/vendor/melonds/net/Net_Slirp.cpp b/runner/vendor/melonds/net/Net_Slirp.cpp
+index b843522..2cf258d 100644
+--- a/runner/vendor/melonds/net/Net_Slirp.cpp
++++ b/runner/vendor/melonds/net/Net_Slirp.cpp
+@@ -26,7 +26,7 @@
+ 
+ #include <libslirp.h>
+ 
+-#ifdef __WIN32__
++#ifdef _WIN32
+ 	#include <ws2tcpip.h>
+ #else
+ 	#include <sys/socket.h>
+@@ -48,7 +48,7 @@ const u32 kClientOffset = 0x10;
+ 
+ const u8 kServerMAC[6] = {0x00, 0xAB, 0x33, 0x28, 0x99, 0x44};
+ 
+-#ifdef __WIN32__
++#ifdef _WIN32
+ 
+ #define poll WSAPoll
+ 
+@@ -67,10 +67,10 @@ int clock_gettime(int, struct timespec *spec)
+     return 0;
+ }
+ 
+-#endif // __WIN32__
++#endif // _WIN32
+ 
+ 
+-ssize_t Net_Slirp::SlirpCbSendPacket(const void* buf, size_t len, void* opaque) noexcept
++slirp_ssize_t Net_Slirp::SlirpCbSendPacket(const void* buf, size_t len, void* opaque) noexcept
+ {
+     if (len > 2048)
+     {
+@@ -456,12 +456,12 @@ int Net_Slirp::SlirpCbAddPoll(int fd, int events, void* opaque) noexcept
+     if (events & SLIRP_POLL_IN) evt |= POLLIN;
+     if (events & SLIRP_POLL_OUT) evt |= POLLWRNORM;
+ 
+-#ifndef __WIN32__
++#ifndef _WIN32
+     // CHECKME
+     if (events & SLIRP_POLL_PRI) evt |= POLLPRI;
+     if (events & SLIRP_POLL_ERR) evt |= POLLERR;
+     if (events & SLIRP_POLL_HUP) evt |= POLLHUP;
+-#endif // !__WIN32__
++#endif // !_WIN32
+ 
+     self.PollList[idx].fd = fd;
+     self.PollList[idx].events = evt;
+@@ -564,7 +564,7 @@ void Net_Slirp::PollHostSockets() noexcept
+                 // directly from here (this runs on the dedicated worker
+                 // thread; net_ring_push may only ever be called from the
+                 // emulation thread).
+-#ifdef __WIN32__
++#ifdef _WIN32
+                 LastPollErrorCode.store(WSAGetLastError(), std::memory_order_relaxed);
+ #else
+                 LastPollErrorCode.store(errno, std::memory_order_relaxed);
+diff --git a/runner/vendor/melonds/net/Net_Slirp.h b/runner/vendor/melonds/net/Net_Slirp.h
+index 150278e..758ec4b 100644
+--- a/runner/vendor/melonds/net/Net_Slirp.h
++++ b/runner/vendor/melonds/net/Net_Slirp.h
+@@ -28,7 +28,7 @@
+ 
+ #include <libslirp.h>
+ 
+-#ifdef __WIN32__
++#ifdef _WIN32
+     #include <ws2tcpip.h>
+ #else
+     #include <poll.h>
+@@ -104,7 +104,7 @@ private:
+     static const SlirpCb cb;
+     static int SlirpCbGetREvents(int idx, void* opaque) noexcept;
+     static int SlirpCbAddPoll(int fd, int events, void* opaque) noexcept;
+-    static ssize_t SlirpCbSendPacket(const void* buf, size_t len, void* opaque) noexcept;
++    static slirp_ssize_t SlirpCbSendPacket(const void* buf, size_t len, void* opaque) noexcept;
+     void HandleDNSFrame(u8* data, int len) noexcept;
+ 
+     Platform::SendPacketCallback Callback;

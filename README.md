@@ -94,13 +94,13 @@ On Linux / macOS the same steps use `sh tools/bootstrap_ndsrecomp.sh`, the `linu
 ## Requirements
 
 - **CMake >= 3.24** and a generator: **Ninja** (recommended) or Visual Studio.
-- A **C++20** compiler: `clang++` on Windows (LLVM-MinGW works and is what the presets pin) or `gcc`/`clang` on Linux.
+- A **C++20** compiler: `clang++` on Windows (LLVM-MinGW is the recommended toolchain) or `gcc`/`clang` on Linux.
 - **Git** — `third_party/ndsrecomp` is a pinned submodule.
 - Network access on the first *runner* configure: CMake clones SDL3 from GitHub. (The clone uses `git`, so it still works where `raw.githubusercontent.com` is blocked.)
 
 SDL3 is **not** a manual prerequisite — the runner configure fetches and builds it automatically (see [Runner](#runner-the-bootable-build)). Nothing outside `rom/`, `tools/` and `tests/` needs it.
 
-Windows: the presets pin `CMAKE_C_COMPILER=clang` and `CMAKE_CXX_COMPILER=clang++` (a mixed pair — e.g. clang++ C++ objects linked against another toolchain's C objects — breaks the vendored libslirp, which failed to build under MSVC-ABI headers until patch `patches/ndsrecomp/0002-libslirp-msvc-clang.patch`). Put `clang`, `clang++`, `cmake`, `ninja` and `ctest` on `PATH`. To use another compiler, pass `-DCMAKE_C_COMPILER=... -DCMAKE_CXX_COMPILER=...` to `cmake --preset` (or use the bootstrap scripts' `-Compiler` / `--compiler`); CMake caches the choice, so changing it needs a fresh `build/<preset>/`.
+Windows: the presets pin `CMAKE_C_COMPILER=clang` and `CMAKE_CXX_COMPILER=clang++` (a mixed pair — e.g. clang++ C++ objects linked against another toolchain's C objects — breaks the vendored libslirp, which failed to build under MSVC-ABI headers until patch `patches/ndsrecomp/0002-libslirp-msvc-clang.patch`). Put `clang`, `clang++`, `cmake`, `ninja` and `ctest` on `PATH`. To use another compiler, pass `-DCMAKE_C_COMPILER=... -DCMAKE_CXX_COMPILER=...` to `cmake --preset` (or use the bootstrap scripts' `-Compiler` / `--compiler`); CMake caches the choice, so changing it needs a fresh `build/<preset>/`. If a build using the standard LLVM/MSVC-target compiler fails in vendored code with MSVC/UCRT header errors (for example a missing `poll.h` or `ssize_t`), switch to LLVM-MinGW in a fresh build directory; it is the recommended Windows toolchain.
 
 ## Build
 

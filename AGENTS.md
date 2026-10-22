@@ -215,19 +215,22 @@ Configure applies the tracked patches in `patches/ndsrecomp/` to the submodule
 (idempotently) when `PKMNG5PC_NATIVE_RENDERER=ON`, or when
 `PKMNG5PC_BUILD_RUNNER=ON` and `PKMNG5PC_NATIVE_PRESENT=ON` (its default), so
 the superproject reports it as *modified content* by design:
-four today — `0001-native-present-hook` (the guarded present hook behind
+five today — `0001-native-present-hook` (the guarded present hook behind
 `tools/play -Native`, `docs/adr/0006-ndsrecomp-native-present-hook.md`),
 `0002-libslirp-msvc-clang` (POSIX fd/socket calls in the vendored libslirp,
 which only compile by accident on toolchains whose headers declare them),
 `0003-native-render-sink` (the guarded native DS render sink hook, the capture
 probe in `gpu2d.cpp`, and the even-width `256..448` parser,
-`docs/adr/0007-native-ds-render-sinks.md`; it applies **on top of `0001`**), and
+`docs/adr/0007-native-ds-render-sinks.md`; it applies **on top of `0001`**),
 `0004-gpu3d-device-accessor` (exposes the caller's `melonDS::GPU3D` so the 3D
-sink installs through `SetCurrentRenderer`). Revert
+sink installs through `SetCurrentRenderer`), and
+`0005-melonds-net-win32` (switches the vendored melonDS Wi-Fi guards from the
+MinGW-only `__WIN32__` to `_WIN32` and uses libslirp's `slirp_ssize_t`, so
+plain LLVM Clang targeting MSVC/UCRT builds the runner too). Revert
 with `git -C third_party/ndsrecomp checkout .` and re-configure. The patched
 files still build standalone (0001, 0003 and 0004 compile out without their
-respective build macros, and 0002 is a portability fix that is correct on POSIX
-too), so
+respective build macros, and 0002 and 0005 are portability fixes that are
+correct on POSIX too), so
 `bootstrap_ndsrecomp.*` needs no change.
 
 The native DS render sinks are an alpha build option:
