@@ -56,6 +56,10 @@ set(NDS_TITLE_ROM_SHA1 "${PKMNG5PC_TITLE_ROM_SHA1}" CACHE STRING "" FORCE)
 
 add_subdirectory(third_party/ndsrecomp/runner)
 
+if(WIN32)
+    target_compile_definitions(nds_runner PRIVATE NOMINMAX)
+endif()
+
 if(PKMNG5PC_NATIVE_PRESENT)
     # The hook compiled into the patched frontend.cpp and the bridge that
     # defines its entry points are one unit: the macro comes on only here, so a
