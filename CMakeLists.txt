@@ -24,10 +24,22 @@ option(PKMNG5PC_BUILD_RENDER
     "Build the render seam and its GPU backends" ON)
 option(PKMNG5PC_NATIVE_RENDERER
     "Build the native DS 3D/2D render sinks (alpha, runtime off by default)" OFF)
+option(PKMNG5PC_NATIVE_PRESENT
+    "Let the runner present through render/ (adds the frontend hook patch)" ON)
 
 if(PKMNG5PC_NATIVE_RENDERER AND NOT PKMNG5PC_BUILD_RENDER)
     message(FATAL_ERROR
         "PKMNG5PC_NATIVE_RENDERER=ON requires PKMNG5PC_BUILD_RENDER=ON.")
+endif()
+
+if(PKMNG5PC_NATIVE_RENDERER AND NOT PKMNG5PC_NATIVE_PRESENT)
+    message(FATAL_ERROR
+        "PKMNG5PC_NATIVE_RENDERER=ON requires PKMNG5PC_NATIVE_PRESENT=ON.")
+endif()
+
+if(PKMNG5PC_NATIVE_RENDERER OR (PKMNG5PC_BUILD_RUNNER AND PKMNG5PC_NATIVE_PRESENT))
+    include(NdsRecompPatches)
+    pkmng5pc_apply_ndsrecomp_patches()
 endif()
 
 add_subdirectory(rom)

@@ -161,6 +161,11 @@ class ConfigureCommandTests(unittest.TestCase):
             self.make_command(native_renderer=True, build_render=False)
         self.assertIn("Build render", str(raised.exception))
 
+    def test_native_renderer_requires_native_present(self) -> None:
+        with self.assertRaises(LaunchError) as raised:
+            self.make_command(native_renderer=True, native_present=False)
+        self.assertIn("Native present", str(raised.exception))
+
     def test_native_renderer_runner_build_requires_native_present(self) -> None:
         with self.assertRaises(LaunchError) as raised:
             self.make_command(
@@ -331,8 +336,16 @@ class QuickstartTests(unittest.TestCase):
                 [command.title for command in commands],
                 ["Configure", "Build", "Generate title banks", "Configure", "Build", "Play"],
             )
-            self.assertTrue(any("PKMNG5PC_BUILD_RUNNER=OFF" in arg for arg in commands[0].argv))
-            self.assertTrue(any("PKMNG5PC_BUILD_RUNNER=ON" in arg for arg in commands[3].argv))
+            tools = commands[0].argv
+            self.assertIn("-DPKMNG5PC_BUILD_RUNNER=OFF", tools)
+            self.assertIn("-DPKMNG5PC_BUILD_TOOLS=ON", tools)
+            self.assertIn("-DPKMNG5PC_BUILD_RENDER=OFF", tools)
+            self.assertIn("-DPKMNG5PC_BUILD_TESTS=OFF", tools)
+            self.assertIn("-DPKMNG5PC_NATIVE_PRESENT=OFF", tools)
+            self.assertIn("-DPKMNG5PC_NATIVE_RENDERER=OFF", tools)
+            self.assertEqual(commands[1].argv[-2:], ["--target", "pkmn_bankgen"])
+            self.assertIn("-DPKMNG5PC_BUILD_RUNNER=ON", commands[3].argv)
+            self.assertIn("-DPKMNG5PC_NATIVE_RENDERER=ON", commands[3].argv)
             self.assertIn(str(repo.resolve("banks/black")), commands[2].argv)
             self.assertTrue(all(command.note.startswith("Quickstart:") for command in commands))
 

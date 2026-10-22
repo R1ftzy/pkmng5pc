@@ -98,7 +98,7 @@ def configure_command(
         raise LaunchError(
             "Build native renderer needs Build render; enable it or turn Build native renderer off."
         )
-    if settings.build_runner and settings.native_renderer and not settings.native_present:
+    if settings.native_renderer and not settings.native_present:
         raise LaunchError(
             "Build native renderer needs Native present; "
             "enable it or turn Build native renderer off."
@@ -131,16 +131,20 @@ def configure_command(
     return Command("Configure", argv, repo.root, note=note)
 
 
-def build_command(repo: Repo, settings: Settings, require_configured: bool = True) -> Command:
+def build_command(
+    repo: Repo,
+    settings: Settings,
+    require_configured: bool = True,
+    target: str | None = None,
+) -> Command:
     if require_configured and not repo.cache_path(settings.preset).is_file():
         raise LaunchError(
             f"{repo.build_dir(settings.preset)} is not configured. Use Configure & build."
         )
-    return Command(
-        "Build",
-        [_cmake(), "--build", "--preset", settings.preset],
-        repo.root,
-    )
+    argv = [_cmake(), "--build", "--preset", settings.preset]
+    if target:
+        argv.extend(["--target", target])
+    return Command("Build", argv, repo.root)
 
 
 def test_command(repo: Repo, settings: Settings) -> Command:
@@ -458,7 +462,15 @@ def quickstart_commands(repo: Repo, settings: Settings, rom_sha1: str | None) ->
 
     if banks_missing:
         if not repo.bankgen_path(settings.preset).is_file():
-            tools = replace(settings, build_runner=False, build_tools=True)
+            tools = replace(
+                settings,
+                build_runner=False,
+                build_tools=True,
+                build_render=False,
+                build_tests=False,
+                native_present=False,
+                native_renderer=False,
+            )
             commands.append(
                 note(
                     configure_command(repo, tools, rom_sha1, require_banks=False),
@@ -467,7 +479,9 @@ def quickstart_commands(repo: Repo, settings: Settings, rom_sha1: str | None) ->
             )
             commands.append(
                 note(
-                    build_command(repo, tools, require_configured=False),
+                    build_command(
+                        repo, tools, require_configured=False, target="pkmn_bankgen"
+                    ),
                     "build pkmn_bankgen for the selected preset.",
                 )
             )

@@ -99,7 +99,8 @@ cmake --build --preset windows-relwithdebinfo
 ```
 
 Configure applies the tracked patches in `patches/ndsrecomp/` in filename order
-and idempotently, so the submodule shows as modified by design. `0003` installs
+and idempotently whenever the runner or native renderer is enabled, so the
+submodule shows as modified by design. `0003` installs
 on top of `0001`'s guarded present hook and must stay after it; `0004` adds the
 guarded `GPU3D` device accessor. Revert with
 `git -C third_party/ndsrecomp checkout .` before switching revisions.

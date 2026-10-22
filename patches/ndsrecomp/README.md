@@ -3,8 +3,9 @@
 `third_party/ndsrecomp` is a pinned git submodule (tag `v0.6.10`) that this
 project does not own. These `*.patch` files are the only modifications we make
 to it, and they are **applied at configure time** by
-`cmake/Runner.cmake::pkmng5pc_apply_ndsrecomp_patches()` — idempotently, only
-when `PKMNG5PC_BUILD_RUNNER=ON`.
+`cmake/NdsRecompPatches.cmake::pkmng5pc_apply_ndsrecomp_patches()` —
+idempotently, when `PKMNG5PC_NATIVE_RENDERER=ON`, or when
+`PKMNG5PC_BUILD_RUNNER=ON` and `PKMNG5PC_NATIVE_PRESENT=ON` (its default).
 
 Applying a patch leaves the submodule checkout dirty (`git status` in the
 superproject reports `modified content`). That is intended and reversible:

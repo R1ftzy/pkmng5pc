@@ -212,7 +212,9 @@ selects the toolchain (C name given, C++ sibling derived); generated banks
 under `third_party/ndsrecomp/generated/` are git-ignored (regenerable).
 
 Configure applies the tracked patches in `patches/ndsrecomp/` to the submodule
-(idempotently), so the superproject reports it as *modified content* by design:
+(idempotently) when `PKMNG5PC_NATIVE_RENDERER=ON`, or when
+`PKMNG5PC_BUILD_RUNNER=ON` and `PKMNG5PC_NATIVE_PRESENT=ON` (its default), so
+the superproject reports it as *modified content* by design:
 four today — `0001-native-present-hook` (the guarded present hook behind
 `tools/play -Native`, `docs/adr/0006-ndsrecomp-native-present-hook.md`),
 `0002-libslirp-msvc-clang` (POSIX fd/socket calls in the vendored libslirp,
