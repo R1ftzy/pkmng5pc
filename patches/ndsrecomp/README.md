@@ -63,10 +63,9 @@ conversion the replaced renderer used to perform.
 ## 0002-libslirp-msvc-clang.patch
 
 `runner/vendor/melonds/net/libslirp/src/`: two upstream portability bugs in the
-vendored libslirp that only surface when the runner is built with plain LLVM
-Clang and the MSVC/UCRT headers (the toolchains `windows-*` presets document).
-There the POSIX names are not declared, and `-Wimplicit-function-declaration` is
-an error under C99 and later, so the `slirp` target does not compile:
+vendored libslirp. With MSVC/UCRT headers (an unsupported toolchain) the POSIX
+names are not declared, and `-Wimplicit-function-declaration` is an error under
+C99 and later, so the `slirp` target does not compile:
 
 1. `tcp_subr.c`, `tcp_connect()`: the accepted socket in the "guest address not
    available yet" path is closed with `close(s)`. Every other socket close in

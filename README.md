@@ -93,14 +93,14 @@ On Linux / macOS the same steps use `sh tools/bootstrap_ndsrecomp.sh`, the `linu
 
 ## Requirements
 
-- **CMake >= 3.24** and a generator: **Ninja** (recommended) or Visual Studio.
-- A **C++20** compiler: `clang++` on Windows (LLVM-MinGW is the recommended toolchain) or `gcc`/`clang` on Linux.
+- **CMake >= 3.24** and **Ninja**.
+- A **C++20** compiler: on Windows, **LLVM-MinGW** (x86_64); on Linux, `gcc` or `clang`. **MSVC is not supported** — the runner's vendored code does not build with Microsoft's compiler.
 - **Git** — `third_party/ndsrecomp` is a pinned submodule.
 - Network access on the first *runner* configure: CMake clones SDL3 from GitHub. (The clone uses `git`, so it still works where `raw.githubusercontent.com` is blocked.)
 
 SDL3 is **not** a manual prerequisite — the runner configure fetches and builds it automatically (see [Runner](#runner-the-bootable-build)). Nothing outside `rom/`, `tools/` and `tests/` needs it.
 
-Windows: the presets pin `CMAKE_C_COMPILER=clang` and `CMAKE_CXX_COMPILER=clang++` (a mixed pair — e.g. clang++ C++ objects linked against another toolchain's C objects — breaks the vendored libslirp, which failed to build under MSVC-ABI headers until patch `patches/ndsrecomp/0002-libslirp-msvc-clang.patch`). Put `clang`, `clang++`, `cmake`, `ninja` and `ctest` on `PATH`. To use another compiler, pass `-DCMAKE_C_COMPILER=... -DCMAKE_CXX_COMPILER=...` to `cmake --preset` (or use the bootstrap scripts' `-Compiler` / `--compiler`); CMake caches the choice, so changing it needs a fresh `build/<preset>/`. If a build using the standard LLVM/MSVC-target compiler fails in vendored code with MSVC/UCRT header errors (for example a missing `poll.h` or `ssize_t`), switch to LLVM-MinGW in a fresh build directory; it is the recommended Windows toolchain.
+Windows: **MSVC is not supported** and does not build the runner; use **x86_64 LLVM-MinGW**. The presets pin `CMAKE_C_COMPILER=clang` and `CMAKE_CXX_COMPILER=clang++` (keep them a matched pair — mixing C and C++ toolchains breaks the vendored libslirp). Put `clang`, `clang++`, `cmake`, `ninja` and `ctest` on `PATH`. To use another compiler, pass `-DCMAKE_C_COMPILER=... -DCMAKE_CXX_COMPILER=...` to `cmake --preset` (or use the bootstrap scripts' `-Compiler` / `--compiler`); CMake caches the choice, so changing it needs a fresh `build/<preset>/`. If the vendored code fails with MSVC/UCRT header errors (for example a missing `poll.h` or `ssize_t`), you are on the wrong toolchain — switch to x86_64 LLVM-MinGW in a fresh build directory.
 
 ## Build
 
@@ -387,6 +387,7 @@ See `re/notes/recompilation.md` and the M2.3/M2.5/M3 entries in `Plan.md`.
 - `refusing to start: dump verification failed` — add `--freebios`.
 - `[save] ignoring <file>: expected 8192 bytes, found 524288` — the run has no cartridge config, so the runner is still using its 8 KiB EEPROM fallback. `tools/play` always passes `--config re/config/frontend.toml`; a hand-rolled invocation has to pass it too; see [Saves](#saves).
 - `PKMNG5PC_BUILD_RUNNER=ON but no generated title banks were found` — run step 3 first; check `PKMNG5PC_BANKS_DIR` if the banks are somewhere else.
+- Windows builds failing in vendored code (for example `Net_Slirp.cpp` or missing `poll.h`/`ssize_t`) — **MSVC is not supported**. Use x86_64 LLVM-MinGW and a fresh `build/<preset>/`.
 - Two `ndsrecomp` tests are environment-sensitive on Windows and can fail without affecting the runner: `gpu2d_window_test` overflows the default thread stack (`0xC00000FD`; the `nds_runner` target gets a 64 MB stack, the test does not), and `live_index_lock_test` (Python-driven) is intermittent — its index writers sometimes fail to spawn.
 
 ## ROMs (required for the ROM-dependent tests)

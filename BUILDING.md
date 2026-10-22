@@ -30,9 +30,9 @@ sh tools/bootstrap_ndsrecomp.sh               # Linux / macOS
 
 - A **bare name** resolved from `PATH` (`clang`, `clang-18`, `gcc`), or a
   **path** to the C compiler (`C:/tools/llvm-mingw/bin/clang.exe`).
-- The C++ sibling is **derived**: `clang` → `clang++`, `gcc` → `g++`, `cl` → `cl`.
-  Version suffixes carry over (`clang-18` → `clang++-18`). For a path, the C++
-  compiler must sit in the same directory.
+- The C++ sibling is **derived**: `clang` → `clang++`, `gcc` → `g++`, `cl` → `cl`
+  (MSVC is not supported). Version suffixes carry over (`clang-18` → `clang++-18`).
+  For a path, the C++ compiler must sit in the same directory.
 - Anything it can't derive is **refused**, not guessed (a cross-compiled
   `x86_64-w64-mingw32-gcc` is rejected).
 - A nonexistent path, or a path whose C++ sibling is missing, is refused.
@@ -74,6 +74,11 @@ Override the compiler on any configure with
 `-DCMAKE_C_COMPILER=... -DCMAKE_CXX_COMPILER=...`. Changing it on an existing
 build dir needs a fresh `build/<preset>/`.
 
+On Windows, use **x86_64 LLVM-MinGW**. **MSVC is not supported** and does not
+build the runner. The `windows-*` presets pin `clang` / `clang++`, so make sure
+that name resolves to LLVM-MinGW (`clang -dumpmachine` prints
+`x86_64-w64-windows-gnu`, not `i686-...`).
+
 ### Project cache variables (pass to `cmake --preset`)
 
 | Variable | Default | Effect |
@@ -103,8 +108,8 @@ and idempotently whenever the runner or native renderer is enabled, so the
 submodule shows as modified by design. `0003` installs
 on top of `0001`'s guarded present hook and must stay after it; `0004` adds the
 guarded `GPU3D` device accessor; `0005` makes the vendored melonDS Wi-Fi
-sources use `_WIN32` and libslirp's `slirp_ssize_t` so plain LLVM Clang
-targeting MSVC/UCRT builds them. Revert with
+sources use `_WIN32` and libslirp's `slirp_ssize_t`, which are correct on
+MinGW and POSIX (MSVC is not supported). Revert with
 `git -C third_party/ndsrecomp checkout .` before switching revisions.
 
 ---

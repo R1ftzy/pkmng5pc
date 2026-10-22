@@ -12,11 +12,10 @@
 
 if(WIN32 AND NOT MINGW)
     message(WARNING
-        "The recommended Windows compiler for the runner is LLVM-MinGW. "
-        "The current compiler targets the MSVC ABI. If the build fails in "
-        "vendored code because the MSVC/UCRT headers lack POSIX declarations "
-        "(for example poll.h or ssize_t), reconfigure a fresh build directory "
-        "with LLVM-MinGW: https://github.com/mstorsjo/llvm-mingw")
+        "The current compiler targets the MSVC ABI, which is not supported "
+        "for the runner; its vendored code is known not to build with it. "
+        "Use x86_64 LLVM-MinGW in a fresh build directory: "
+        "https://github.com/mstorsjo/llvm-mingw")
 endif()
 
 set(PKMNG5PC_BANKS_DIR "${CMAKE_SOURCE_DIR}/banks/black" CACHE PATH

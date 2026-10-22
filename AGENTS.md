@@ -97,7 +97,8 @@ pkmng5pc/
 - **Language:** C++20 (matches the RE/decomp ecosystem; Ghidra and pret decomps
   are C/C++). Rust is an acceptable alternative for *new* isolated components,
   not for recompiled game code.
-- **Build:** CMake ≥ 3.24 + Ninja/MSVC/Clang. Presets in `CMakePresets.json`.
+- **Build:** CMake ≥ 3.24 + Ninja; LLVM-MinGW (x86_64) on Windows, GCC/Clang
+  on Linux. **MSVC is not supported.** Presets in `CMakePresets.json`.
 - **Windowing/input/audio:** SDL3 (SDL2 fallback).
 - **GPU:** a single abstraction (`render/backend.h`) with backends: **Vulkan**
   (Linux+Win), **D3D12** (Win), **OpenGL 4.5** (fallback/debug). Use a thin
@@ -225,9 +226,9 @@ probe in `gpu2d.cpp`, and the even-width `256..448` parser,
 `0004-gpu3d-device-accessor` (exposes the caller's `melonDS::GPU3D` so the 3D
 sink installs through `SetCurrentRenderer`), and
 `0005-melonds-net-win32` (switches the vendored melonDS Wi-Fi guards from the
-MinGW-only `__WIN32__` to `_WIN32` and uses libslirp's `slirp_ssize_t`, so
-plain LLVM Clang targeting MSVC/UCRT builds the runner too). Revert
-with `git -C third_party/ndsrecomp checkout .` and re-configure. The patched
+MinGW-only `__WIN32__` to `_WIN32` and uses libslirp's `slirp_ssize_t`; both
+changes are correct on MinGW and POSIX). Revert with
+`git -C third_party/ndsrecomp checkout .` and re-configure. The patched
 files still build standalone (0001, 0003 and 0004 compile out without their
 respective build macros, and 0002 and 0005 are portability fixes that are
 correct on POSIX too), so
