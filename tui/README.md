@@ -163,7 +163,7 @@ live presented FPS, sampled from its play-mode debug surface on
 says so instead of guessing. With diagnostics off, the panel reports runtime
 state as **not measured** rather than showing an old or guessed value.
 
-The job screen has a `[Save logs]` button at the bottom right (or press `S`).
+The job screen has an `[S Save logs]` button at the bottom right (or press `S`).
 It writes the current job's header, settings, exact command(s) and output to
 `logs/tui/`. The folder is local and git-ignored, so it is safe to
 attach to a bug report after removing any personal paths.
@@ -189,12 +189,12 @@ local-state/legal notes.
 | Pages | `Tab`/`Shift+Tab` next/previous page, `1`-`6` jump, `H` `R` `B` `P` `S` page shortcuts |
 | Pages | `Ctrl+R` starts Play from any page through the final review; the `[Ctrl+R Play]` button does the same |
 | Pages | `?` help, `L` last log, `Q` quit |
-| Mouse | Click a tab, the Play button, a row or `[Save logs]`; wheel scrolls pages, reviews, the browser and the job log |
+| Mouse | Click a tab, the Play button, a row or `[S Save logs]`; wheel scrolls pages, reviews, the browser and the job log |
 | Text input | Type, `Backspace`/`Delete`, `Left`/`Right`, `Home`/`End`, `Ctrl+U` clear, `Enter` accept, `Esc` cancel |
 | Folder/ROM browser | `Up`/`Down`, `Enter` open or pick, `Backspace`/`Left` up, `Right` open, `S` use folder, `G` go to path, `H` hidden, `R` rescan, `Esc` cancel |
 | Folder/ROM browser (mouse) | Click an entry to select it; click the selected entry to open or pick it; wheel moves three entries |
 | Final review | `Up`/`Down`/`PgUp`/`PgDn`/`Home`/`End` scroll, `Enter` run, `Esc` cancel; `Run`/`Cancel` are clickable |
-| Job log | `Esc`/`Ctrl+C` cancel while running; `Up`/`Down`/`PgUp`/`PgDn`/`Home` scroll; `End`/`F` follow; `S` or `[Save logs]` writes the job log to `logs/tui/`; `Enter` return after it finishes; the header shows the live presented FPS while Play runs |
+| Job log | `Esc`/`Ctrl+C` cancel while running; `Up`/`Down`/`PgUp`/`PgDn`/`Home` scroll; `End`/`F` follow; `S` or `[S Save logs]` writes the job log to `logs/tui/`; `Enter` return after it finishes; the header shows the live presented FPS while Play runs |
 
 ## Recompilation state
 

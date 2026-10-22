@@ -83,7 +83,7 @@ PAGE_NAMES = {
     "help": "Help",
 }
 PLAY_BUTTON = "[Ctrl+R Play]"
-LOG_BUTTON = "[Save logs]"
+LOG_BUTTON = "[S Save logs]"
 SELECTABLE = {"toggle", "choice", "text", "folder", "action", "rom"}
 BUILDER = Callable[[], Command | list[Command]]
 
@@ -2283,9 +2283,9 @@ class App:
         key_lines = [
             "Up/Down move · Left/Right change · Enter activate · Space toggle",
             "Ctrl+R starts Play from any page; the final review still comes first",
-            "Mouse: click a tab, the Play button, a row or [Save logs], wheel scrolls; click a selected browser row to open it",
+            "Mouse: click a tab, the Play button, a row or [S Save logs], wheel scrolls; click a selected browser row to open it",
             "Final review: Enter Run, Esc Cancel, Up/Down scroll; Run/Cancel are clickable",
-            "Job log: S or [Save logs] writes logs/tui; Enter returns after it finishes",
+            "Job log: S or [S Save logs] writes logs/tui; Enter returns after it finishes",
             "Tab / Shift+Tab change page · 1-6 jump · H/R/B/P/S shortcuts",
             "? help · L last log · Q quit · Esc closes a dialog",
             "In the ROM browser: Enter open, S use folder, G type a path, H hidden",
@@ -2549,9 +2549,9 @@ class App:
         while len(lines) < 5 + log_height:
             lines.append("")
         if job.active:
-            hint = "Esc / Ctrl+C cancel · ↑↓ scroll · End follow"
+            hint = "Esc / Ctrl+C cancel · ↑↓ scroll · End follow · S save log"
         else:
-            hint = "Enter return · ↑↓ scroll · End follow"
+            hint = "Enter return · ↑↓ scroll · End follow · S save log"
         if not self.log_follow:
             hint += term.dim(f"  ·  {self.log_back} line(s) back")
         lines.append("  " + term.dim(clip(hint, width - 2)))
@@ -2567,15 +2567,16 @@ class App:
                     if saved
                     else "  " + term.red("Could not save log")
                 )
-        left = clip(left, max(0, width - len(LOG_BUTTON) - 2))
+        button_width = visible_len(LOG_BUTTON)
+        left = clip(left, max(0, width - button_width - 2))
         button = (
             term.style(LOG_BUTTON, color="black", background="cyan", bold=True)
             if term.color
             else LOG_BUTTON
         )
         lines.append(pad_between(left, button, width))
-        if width - visible_len(left) - len(LOG_BUTTON) >= 0:
-            self.log_hit = (height - 1, width - len(LOG_BUTTON), width - 1)
+        if width - visible_len(left) - button_width >= 0:
+            self.log_hit = (height - 1, width - button_width, width - 1)
         return lines[:height]
 
     def render_input(self, width: int, height: int) -> list[str]:

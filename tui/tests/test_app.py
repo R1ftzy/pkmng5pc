@@ -379,6 +379,34 @@ class PlayButtonTests(unittest.TestCase):
 
             self.assertEqual(calls, [True])
 
+    def test_job_hint_names_the_save_log_shortcut(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            app, _ = make_app(Path(temp), Settings(preset="test-debug"))
+            command = Command("Play", [sys.executable, "-c", "pass"], Path(temp))
+            app.job = Job([command], "Play")
+            app.mode = "job"
+
+            lines = app.render(100, 30)
+            text = strip_ansi("\n".join(lines))
+
+            self.assertIn("S save log", text)
+            self.assertIn(LOG_BUTTON, text)
+
+    def test_job_save_logs_button_stays_clickable_at_minimum_width(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            app, _ = make_app(Path(temp), Settings(preset="test-debug"))
+            command = Command("Play", [sys.executable, "-c", "pass"], Path(temp))
+            app.job = Job([command], "Play")
+            app.mode = "job"
+
+            lines = app.render(60, 30)
+            hit = app.log_hit
+            self.assertIsNotNone(hit)
+            assert hit is not None
+            self.assertEqual(
+                strip_ansi(lines[hit[0]])[hit[1] : hit[2] + 1], LOG_BUTTON
+            )
+
     def test_job_save_logs_writes_the_current_output(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             app, repo = make_app(Path(temp), Settings(preset="test-debug"))
