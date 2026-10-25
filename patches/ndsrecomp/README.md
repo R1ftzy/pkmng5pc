@@ -98,3 +98,28 @@ on POSIX, so the branch selection stays correct everywhere; `slirp_ssize_t` is
 when the optional PCAP backend is enabled, but its guard has the same bug. No
 guard macro is needed, and the patched tree still builds standalone as plain
 ndsrecomp.
+
+## 0006-audio-time-stretch.patch
+
+`runner/src/audio_time_stretch.h` (new), `runner/tests/audio_time_stretch_test.cpp`
+(new), `runner/CMakeLists.txt`, and `runner/src/frontend.cpp`: the runner
+advances one guest frame per frontend iteration, so a host that cannot present
+60 frames/s also produces SPU audio below the device's 32728 Hz. Playing that
+stream at the nominal rate drains SDL's queue and inserts hard silence gaps.
+
+The patch adds a WSOLA time-scale stage between `nds_spu_read_output()` and the
+SDL queue. It changes duration without changing pitch: output and input advance
+at different rates while waveform periodicity is preserved. The ratio is
+`[1.0, 2.0]`; at 1.0, output matches the input exactly after the initial
+one-hop fade-in. The
+frontend controller derives the ratio from an EMA of per-frame work time
+(excluding deliberate pacing sleeps) plus a small queue-fill trim, slew-limited
+to 0.01 per frame, and resets the stretcher on turbo and savestate boundaries.
+The steady-state queue target rises from 2048 to 4096 frames (~125 ms) for
+jitter headroom, and a `[sdl] stretch:` stats line reports the ratio range and
+overflow count.
+
+The stage is not a port-only hook: it has no guard macro and compiles in plain
+ndsrecomp, so the patched tree still builds standalone. The new test covers
+unity reconstruction, pitch and duration at 1.16/1.5/2.0, a complex signal, a
+variable ratio, and overflow bounding.

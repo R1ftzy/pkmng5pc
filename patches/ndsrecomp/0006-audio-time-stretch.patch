@@ -1,0 +1,755 @@
+diff --git a/runner/CMakeLists.txt b/runner/CMakeLists.txt
+index 2295358..5d865ab 100644
+--- a/runner/CMakeLists.txt
++++ b/runner/CMakeLists.txt
+@@ -743,6 +743,11 @@ target_include_directories(frontend_config_test PRIVATE src)
+ ndsrecomp_link_tomlpp(frontend_config_test)
+   add_test(NAME frontend_config_test COMMAND frontend_config_test)
+ 
++add_executable(audio_time_stretch_test
++    tests/audio_time_stretch_test.cpp)
++target_include_directories(audio_time_stretch_test PRIVATE src)
++add_test(NAME audio_time_stretch_test COMMAND audio_time_stretch_test)
++
+   add_executable(wfc_provider_test
+       tests/wfc_provider_test.cpp
+       src/net/wfc_provider.cpp)
+diff --git a/runner/src/audio_time_stretch.h b/runner/src/audio_time_stretch.h
+new file mode 100644
+index 0000000..6341847
+--- /dev/null
++++ b/runner/src/audio_time_stretch.h
+@@ -0,0 +1,217 @@
++#pragma once
++
++#include <algorithm>
++#include <array>
++#include <cmath>
++#include <cstdint>
++
++// WSOLA time-scale modification for the frontend's stereo SPU stream.
++//
++// The runner advances one guest frame per frontend iteration, so a host that
++// cannot present 60 frames/s also produces audio below the device's 32728 Hz.
++// Playing that stream at the nominal rate empties SDL's queue and inserts hard
++// silence gaps. This stage resamples the stream in time, not in pitch: output
++// and input advance at different rates, while waveform periodicity is
++// preserved, so slow-motion gameplay keeps continuous, in-sync audio.
++struct NdsAudioTimeStretcher {
++    static constexpr uint32_t kWindowFrames = 1024;
++    static constexpr uint32_t kHopFrames = kWindowFrames / 2;
++    static constexpr uint32_t kSearchFrames = 192;
++    static constexpr uint32_t kCorrelationFrames = kHopFrames;
++    static constexpr uint32_t kInputCapacityFrames = 16384;
++    static constexpr float kMinRatio = 1.0f;
++    static constexpr float kMaxRatio = 2.0f;
++
++    static_assert((kInputCapacityFrames & (kInputCapacityFrames - 1)) == 0);
++    static_assert(kCorrelationFrames <= kWindowFrames);
++
++    std::array<int16_t, kInputCapacityFrames * 2> input {};
++    std::array<float, kWindowFrames * 2> accumulator {};
++    std::array<float, kWindowFrames> window {};
++    uint64_t write_abs = 0;
++    uint64_t read_abs = 0;
++    uint64_t previous_analysis = 0;
++    double analysis_phase = 0.0;
++    float current_ratio = kMinRatio;
++    uint64_t overflow_frames = 0;
++    bool window_ready = false;
++    bool started = false;
++
++    void reset()
++    {
++        std::fill(accumulator.begin(), accumulator.end(), 0.0f);
++        write_abs = 0;
++        read_abs = 0;
++        previous_analysis = 0;
++        analysis_phase = 0.0;
++        started = false;
++    }
++
++    void set_ratio(float ratio) { current_ratio = std::clamp(ratio, kMinRatio, kMaxRatio); }
++
++    float ratio() const { return current_ratio; }
++
++    uint32_t buffered_input_frames() const
++    {
++        const uint64_t buffered = write_abs - read_abs;
++        return buffered > kInputCapacityFrames ? kInputCapacityFrames
++                                               : static_cast<uint32_t>(buffered);
++    }
++
++    void push(const int16_t* stereo, uint32_t frames)
++    {
++        if (!stereo || frames == 0)
++            return;
++        if (frames > kInputCapacityFrames || write_abs - read_abs + frames > kInputCapacityFrames) {
++            // The pipeline pulls after every push, so this only happens if the
++            // backend stalled for more than half a second. Drop the backlog
++            // rather than corrupt the ring; the device queue is already the
++            // audible buffer in that situation.
++            const uint64_t buffered = write_abs - read_abs;
++            const uint64_t incoming_drop
++                = frames > kInputCapacityFrames ? frames - kInputCapacityFrames : 0;
++            overflow_frames += buffered + incoming_drop;
++            reset();
++            if (incoming_drop) {
++                stereo += incoming_drop * 2;
++                frames = kInputCapacityFrames;
++            }
++        }
++        constexpr uint64_t mask = kInputCapacityFrames - 1;
++        for (uint32_t i = 0; i < frames; ++i) {
++            const uint64_t slot = (write_abs + i) & mask;
++            input[slot * 2] = stereo[i * 2];
++            input[slot * 2 + 1] = stereo[i * 2 + 1];
++        }
++        write_abs += frames;
++    }
++
++    uint32_t pull(int16_t* stereo, uint32_t max_frames)
++    {
++        if (!stereo || max_frames < kHopFrames)
++            return 0;
++        ensure_window();
++        uint32_t produced = 0;
++        while (produced + kHopFrames <= max_frames) {
++            uint64_t analysis = 0;
++            if (!produce_grain(analysis))
++                break;
++            for (uint32_t i = 0; i < kHopFrames; ++i) {
++                stereo[(produced + i) * 2] = quantize(accumulator[i * 2]);
++                stereo[(produced + i) * 2 + 1] = quantize(accumulator[i * 2 + 1]);
++            }
++            produced += kHopFrames;
++            std::move(accumulator.begin() + kHopFrames * 2, accumulator.end(), accumulator.begin());
++            std::fill(accumulator.end() - kHopFrames * 2, accumulator.end(), 0.0f);
++        }
++        return produced;
++    }
++
++private:
++    void ensure_window()
++    {
++        if (window_ready)
++            return;
++        for (uint32_t i = 0; i < kWindowFrames; ++i) {
++            window[i] = static_cast<float>(0.5
++                - 0.5
++                    * std::cos(2.0 * 3.14159265358979323846 * static_cast<double>(i)
++                        / static_cast<double>(kWindowFrames)));
++        }
++        window_ready = true;
++    }
++
++    static int16_t quantize(float value)
++    {
++        const int32_t rounded = static_cast<int32_t>(value + (value >= 0.0f ? 0.5f : -0.5f));
++        return static_cast<int16_t>(std::clamp(rounded, -32768, 32767));
++    }
++
++    uint64_t available() const { return write_abs - read_abs; }
++
++    float mono_sample(uint64_t position) const
++    {
++        constexpr uint64_t mask = kInputCapacityFrames - 1;
++        const uint64_t slot = position & mask;
++        return static_cast<float>(input[slot * 2]) + static_cast<float>(input[slot * 2 + 1]);
++    }
++
++    double correlation(uint64_t target, uint64_t candidate) const
++    {
++        double dot = 0.0;
++        double target_energy = 0.0;
++        double candidate_energy = 0.0;
++        for (uint32_t i = 0; i < kCorrelationFrames; ++i) {
++            const double a = mono_sample(target + i);
++            const double b = mono_sample(candidate + i);
++            dot += a * b;
++            target_energy += a * a;
++            candidate_energy += b * b;
++        }
++        const double energy = std::sqrt(target_energy * candidate_energy);
++        return energy > 1.0 ? dot / energy : 0.0;
++    }
++
++    uint64_t search_analysis(uint64_t nominal) const
++    {
++        uint64_t low = nominal > kSearchFrames ? nominal - kSearchFrames : read_abs;
++        if (low < read_abs)
++            low = read_abs;
++        const uint64_t high = nominal + kSearchFrames;
++        if (low > high)
++            return nominal;
++
++        const uint64_t target = previous_analysis + kHopFrames;
++        double best = -2.0;
++        uint64_t best_position = std::clamp<uint64_t>(nominal, read_abs, write_abs - kWindowFrames);
++        for (uint32_t step = 0; step <= kSearchFrames; ++step) {
++            const uint64_t candidates[2] = { nominal + step, step == 0 ? nominal : nominal - step };
++            for (const uint64_t candidate : candidates) {
++                if (candidate < low || candidate > high)
++                    continue;
++                if (candidate + kWindowFrames > write_abs)
++                    continue;
++                const double score = correlation(target, candidate);
++                if (score > best + 1e-6) {
++                    best = score;
++                    best_position = candidate;
++                }
++            }
++        }
++        return best_position;
++    }
++
++    bool produce_grain(uint64_t& analysis)
++    {
++        if (!started) {
++            analysis = read_abs;
++            if (available() < kWindowFrames)
++                return false;
++        } else {
++            const double hop = static_cast<double>(kHopFrames) / static_cast<double>(current_ratio);
++            const uint64_t nominal = static_cast<uint64_t>(std::llround(analysis_phase + hop));
++            const bool searching = std::fabs(current_ratio - 1.0f) >= 0.005f;
++            const uint64_t lookahead = searching ? kSearchFrames : 0;
++            if (nominal + lookahead + kWindowFrames > write_abs)
++                return false;
++            analysis = searching ? search_analysis(nominal) : nominal;
++            if (analysis < read_abs)
++                analysis = read_abs;
++            if (analysis + kWindowFrames > write_abs)
++                return false;
++            analysis_phase += hop;
++        }
++
++        constexpr uint64_t mask = kInputCapacityFrames - 1;
++        for (uint32_t i = 0; i < kWindowFrames; ++i) {
++            const uint64_t slot = (analysis + i) & mask;
++            const float gain = window[i];
++            accumulator[i * 2] += static_cast<float>(input[slot * 2]) * gain;
++            accumulator[i * 2 + 1] += static_cast<float>(input[slot * 2 + 1]) * gain;
++        }
++        started = true;
++        previous_analysis = analysis;
++        read_abs = analysis > kSearchFrames ? analysis - kSearchFrames : 0;
++        return true;
++    }
++};
+diff --git a/runner/src/frontend.cpp b/runner/src/frontend.cpp
+index bfde9f9..1e39259 100644
+--- a/runner/src/frontend.cpp
++++ b/runner/src/frontend.cpp
+@@ -12,9 +12,11 @@
+ #include <cstring>
+ #include <initializer_list>
+ #include <limits>
++#include <memory>
+ #include <string>
+ #include <vector>
+ 
++#include "audio_time_stretch.h"
+ #include "debug_server.h"
+ #include "diagnostics.h"
+ #include "gpu2d.h"
+@@ -699,13 +701,14 @@ MphPrimeBindingSet make_mph_prime_bindings(
+ constexpr int kWindowScale = 2;
+ constexpr uint64_t kSystemCyclesPerFrame = 2130ull * 263ull;
+ constexpr int kAudioFrequency = 33513982 / 1024;
+-constexpr uint32_t kAudioQueueFrames = 2048;
+-// Playback starts only once kAudioStartFrames (~1.5 s) are queued. The cold
++constexpr double kSystemClockHz = 33513982.0;
++constexpr uint32_t kAudioQueueFrames = 4096;
++// Playback starts only once kAudioStartFrames (~1.75 s) are queued. The cold
+ // boot's frames ~5-131 emulate below real time with a measured cumulative
+ // production deficit of up to ~1.15 s; prebuffering more than that rides the
+ // whole window out with zero gaps — the stream stays bit-exact, only the
+ // initial latency is higher. The bounded drain (see drain_audio) then glides
+-// the queue back down to the ~63 ms steady-state target over a couple of
++// the queue back down to the ~125 ms steady-state target over a couple of
+ // seconds without ever freezing video, well before the Health & Safety
+ // screen needs interactive input.
+ constexpr uint32_t kAudioStartFrames = 57344;
+@@ -998,51 +1001,68 @@ uint32_t audio_queue_count(const NdsAudioDevice& device, AudioQueue& queue) {
+ #endif
+ }
+ 
+-uint32_t drain_audio(const NdsAudioDevice& device, AudioQueue& queue,
+-                     bool throttle, uint32_t pace_floor, bool& queue_error) {
+-    if (!device) return 0;
+-    std::array<int16_t, 2048> samples{};
++bool push_audio_block(const NdsAudioDevice& device, AudioQueue& queue,
++                      const int16_t* samples, uint32_t frames, bool throttle,
++                      bool& queue_error, uint64_t& sleep_ticks) {
+     for (;;) {
+-        const uint32_t frames = nds_spu_read_output(samples.data(), 1024);
+-        if (!frames) break;
+         bool pushed = false;
+-        while (!pushed) {
+ #if defined(NDS_HAVE_SDL3)
+-            const uint32_t queued = audio_queue_count(device, queue);
+-            if (kAudioCapacityFrames - queued >= frames) {
+-                if (SDL_PutAudioStreamData(device.stream, samples.data(),
+-                                           static_cast<int>(
+-                                               frames * kAudioFrameBytes))) {
+-                    pushed = true;
+-                } else {
+-                    queue_error = true;
+-                    return audio_queue_count(device, queue);
+-                }
+-            }
+-#else
+-            SDL_LockAudioDevice(device);
+-            if (kAudioCapacityFrames - queue.count >= frames) {
+-                const uint32_t first = std::min(
+-                    frames, kAudioCapacityFrames - queue.write);
+-                std::memcpy(queue.samples.data() + queue.write * 2u,
+-                            samples.data(), first * kAudioFrameBytes);
+-                if (first < frames)
+-                    std::memcpy(queue.samples.data(),
+-                                samples.data() + first * 2u,
+-                                (frames - first) * kAudioFrameBytes);
+-                queue.write = (queue.write + frames) % kAudioCapacityFrames;
+-                queue.count += frames;
++        const uint32_t queued = audio_queue_count(device, queue);
++        if (kAudioCapacityFrames - queued >= frames) {
++            if (SDL_PutAudioStreamData(device.stream, samples,
++                                       static_cast<int>(
++                                           frames * kAudioFrameBytes))) {
+                 pushed = true;
++            } else {
++                queue_error = true;
++                return false;
+             }
+-            SDL_UnlockAudioDevice(device);
++        }
++#else
++        SDL_LockAudioDevice(device);
++        if (kAudioCapacityFrames - queue.count >= frames) {
++            const uint32_t first = std::min(
++                frames, kAudioCapacityFrames - queue.write);
++            std::memcpy(queue.samples.data() + queue.write * 2u,
++                        samples, first * kAudioFrameBytes);
++            if (first < frames)
++                std::memcpy(queue.samples.data(),
++                            samples + first * 2u,
++                            (frames - first) * kAudioFrameBytes);
++            queue.write = (queue.write + frames) % kAudioCapacityFrames;
++            queue.count += frames;
++            pushed = true;
++        }
++        SDL_UnlockAudioDevice(device);
+ #endif
+-            if (!pushed) {
+-                if (!throttle) {
+-                    queue_error = true;
+-                    return audio_queue_count(device, queue);
+-                }
+-                SDL_Delay(1);
+-            }
++        if (pushed) return true;
++        if (!throttle) {
++            queue_error = true;
++            return false;
++        }
++        const uint64_t delay_start = SDL_GetPerformanceCounter();
++        SDL_Delay(1);
++        sleep_ticks += SDL_GetPerformanceCounter() - delay_start;
++    }
++}
++
++uint32_t drain_audio(const NdsAudioDevice& device, AudioQueue& queue,
++                     NdsAudioTimeStretcher& stretcher, bool throttle,
++                     uint32_t pace_floor, bool& queue_error,
++                     uint64_t& sleep_ticks) {
++    if (!device) return 0;
++    std::array<int16_t, 2048> samples{};
++    for (;;) {
++        const uint32_t frames = nds_spu_read_output(samples.data(), 1024);
++        if (!frames) break;
++        stretcher.push(samples.data(), frames);
++    }
++    for (;;) {
++        const uint32_t frames = stretcher.pull(samples.data(), 1024);
++        if (!frames) break;
++        if (!push_audio_block(device, queue, samples.data(), frames, throttle,
++                              queue_error, sleep_ticks)) {
++            return audio_queue_count(device, queue);
+         }
+     }
+     // Audio is the host's real-time clock. Never drop a produced block: if the
+@@ -1055,7 +1075,9 @@ uint32_t drain_audio(const NdsAudioDevice& device, AudioQueue& queue,
+     // buffered runway instead of having it slept away.
+     uint32_t queued = audio_queue_count(device, queue);
+     while (throttle && queued > pace_floor) {
++        const uint64_t delay_start = SDL_GetPerformanceCounter();
+         SDL_Delay(1);
++        sleep_ticks += SDL_GetPerformanceCounter() - delay_start;
+         queued = audio_queue_count(device, queue);
+     }
+     return queued;
+@@ -2578,6 +2600,12 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& options) {
+     const uint64_t relative_mouse_selftest_start_vblank =
+         environment_u64("NDS_FRONTEND_SELFTEST_RELATIVE_MOUSE_VBLANK");
+     bool audio_started = false;
++    auto audio_stretcher = std::make_unique<NdsAudioTimeStretcher>();
++    float audio_stretch_ratio = 1.0f;
++    float audio_stretch_min = 2.0f;
++    float audio_stretch_max = 1.0f;
++    double audio_work_ema_ticks = 0.0;
++    bool audio_work_ema_ready = false;
+     uint32_t audio_start_threshold = kAudioStartFrames;
+     bool audio_queue_error = false;
+     uint64_t audio_presentation_epoch = nds_spu_presentation_epoch();
+@@ -2686,6 +2714,7 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& options) {
+     uint64_t savestate_notice_until = 0;
+ 
+     while (running) {
++        const uint64_t frame_work_start = SDL_GetPerformanceCounter();
+ #if defined(NDS_HAVE_COMPUTE_RENDERER)
+         if (!nds_compute_host_make_current()) {
+             std::fprintf(stderr, "[gpu3d] lost compute GL context: %s\n",
+@@ -2711,6 +2740,10 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& options) {
+             audio_started = false;
+             audio_start_threshold = kAudioQueueFrames;
+             audio_pace_floor = kAudioQueueFrames;
++            audio_stretcher->reset();
++            audio_stretch_ratio = 1.0f;
++            audio_stretcher->set_ratio(1.0f);
++            audio_work_ema_ready = false;
+             audio_presentation_epoch = current_audio_epoch;
+         }
+         if (selftest_menu) {
+@@ -3479,6 +3512,10 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& options) {
+             audio_started = false;
+             audio_start_threshold = kAudioQueueFrames;
+             audio_pace_floor = audio_start_threshold;
++            audio_stretcher->reset();
++            audio_stretch_ratio = 1.0f;
++            audio_stretcher->set_ratio(1.0f);
++            audio_work_ema_ready = false;
+             audio_min_queue = std::numeric_limits<uint32_t>::max();
+             audio_max_queue = 0;
+             std::fprintf(stderr, "[sdl] turbo %s\n",
+@@ -3690,7 +3727,7 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& options) {
+         const uint64_t phase2 = SDL_GetPerformanceCounter();
+         // Glide: after the prebuffered start, the pacing allowance decays a
+         // fixed step per frame from the prebuffer level down to the steady
+-        // 63 ms target, shedding the extra startup latency over a couple of
++        // 125 ms target, shedding the extra startup latency over a couple of
+         // seconds without ever forcing the queue down during a slow stretch.
+         constexpr uint32_t kGlideStepFrames = 300;
+         if (audio_pace_floor > kAudioQueueFrames + kGlideStepFrames)
+@@ -3698,12 +3735,13 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& options) {
+         else
+             audio_pace_floor = kAudioQueueFrames;
+         uint32_t queued = audio_queue_count(audio, audio_queue);
++        uint64_t frame_sleep_ticks = 0;
+         if (turbo_active) {
+             discard_spu_output();
+         } else {
+             queued = drain_audio(
+-                audio, audio_queue, audio_started, audio_pace_floor,
+-                audio_queue_error);
++                audio, audio_queue, *audio_stretcher, audio_started,
++                audio_pace_floor, audio_queue_error, frame_sleep_ticks);
+         }
+         const uint64_t frame_drain_ticks =
+             SDL_GetPerformanceCounter() - phase2;
+@@ -3719,6 +3757,50 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& options) {
+             audio_min_queue = queued;
+             audio_pace_floor = audio_start_threshold;
+         }
++        if (audio && audio_started && !turbo_active) {
++            // Work time excludes the deliberate pacing sleeps below: those are
++            // the startup buffer being spent, not a slow host. A persistent
++            // work overrun is what the stretcher has to absorb.
++            const double guest_frame_ticks =
++                static_cast<double>(frequency) *
++                static_cast<double>(kSystemCyclesPerFrame) /
++                kSystemClockHz;
++            const uint64_t frame_wall_ticks =
++                SDL_GetPerformanceCounter() - frame_work_start;
++            const uint64_t frame_work_ticks =
++                frame_wall_ticks > frame_sleep_ticks
++                    ? frame_wall_ticks - frame_sleep_ticks : 0;
++            if (!audio_work_ema_ready) {
++                audio_work_ema_ticks =
++                    static_cast<double>(frame_work_ticks);
++                audio_work_ema_ready = true;
++            } else {
++                audio_work_ema_ticks +=
++                    (static_cast<double>(frame_work_ticks) -
++                     audio_work_ema_ticks) * 0.05;
++            }
++            const double work_ratio = std::clamp(
++                audio_work_ema_ticks / guest_frame_ticks, 1.0, 2.0);
++            const double fill_error = std::clamp(
++                (static_cast<double>(kAudioQueueFrames) -
++                 static_cast<double>(queued)) /
++                    static_cast<double>(kAudioQueueFrames),
++                -1.0, 1.0);
++            const double target_ratio = std::clamp(
++                work_ratio + fill_error * 0.04, 1.0, 2.0);
++            const float delta =
++                static_cast<float>(target_ratio - audio_stretch_ratio);
++            audio_stretch_ratio += std::clamp(delta, -0.01f, 0.01f);
++            audio_stretcher->set_ratio(audio_stretch_ratio);
++            audio_stretch_min =
++                std::min(audio_stretch_min, audio_stretch_ratio);
++            audio_stretch_max =
++                std::max(audio_stretch_max, audio_stretch_ratio);
++        } else {
++            audio_work_ema_ready = false;
++            audio_stretch_ratio = 1.0f;
++            audio_stretcher->set_ratio(1.0f);
++        }
+ 
+         const uint64_t current_underruns =
+             audio_queue.underruns.load(std::memory_order_relaxed);
+@@ -3933,6 +4015,13 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& options) {
+             static_cast<unsigned long long>(slow_frames_32ms),
+             static_cast<unsigned long long>(first_underrun_frame),
+             static_cast<unsigned long long>(last_underrun_frame));
++        std::fprintf(stderr,
++            "[sdl] stretch: ratio=[%.3f,%.3f] final=%.3f "
++            "overflow_frames=%llu\n",
++            audio_stretch_min == 2.0f ? 1.0f : audio_stretch_min,
++            audio_stretch_max, audio_stretch_ratio,
++            static_cast<unsigned long long>(
++                audio_stretcher->overflow_frames));
+         std::fprintf(stderr,
+             "[sdl] present detail: adaptive=%.3fs upload=%.3fs "
+             "draw=%.3fs swap=%.3fs\n",
+diff --git a/runner/tests/audio_time_stretch_test.cpp b/runner/tests/audio_time_stretch_test.cpp
+new file mode 100644
+index 0000000..17d1e1b
+--- /dev/null
++++ b/runner/tests/audio_time_stretch_test.cpp
+@@ -0,0 +1,225 @@
++#include "audio_time_stretch.h"
++
++#include <cmath>
++#include <cstdint>
++#include <cstdio>
++#include <memory>
++#include <vector>
++
++namespace {
++
++constexpr uint32_t kRate = 32728;
++constexpr uint32_t kChunk = 547;
++
++bool require(bool value, const char* what, int line)
++{
++    if (!value)
++        std::fprintf(stderr, "FAIL line %d: %s\n", line, what);
++    return value;
++}
++
++#define CHECK(expr)                                                                                \
++    do {                                                                                           \
++        if (!require((expr), #expr, __LINE__))                                                     \
++            return false;                                                                          \
++    } while (0)
++
++struct Run {
++    std::vector<int16_t> input;
++    std::vector<int16_t> output;
++};
++
++Run run_stretcher(const std::vector<int16_t>& input, float ratio, bool sweep = false)
++{
++    auto stretcher = std::make_unique<NdsAudioTimeStretcher>();
++    stretcher->reset();
++    stretcher->set_ratio(ratio);
++    std::vector<int16_t> output;
++    output.reserve(input.size() * 2);
++    std::vector<int16_t> block(NdsAudioTimeStretcher::kHopFrames * 4);
++    const size_t total_frames = input.size() / 2;
++    for (size_t offset = 0; offset < total_frames; offset += kChunk) {
++        const uint32_t frames
++            = static_cast<uint32_t>(std::min<size_t>(kChunk, total_frames - offset));
++        stretcher->push(input.data() + offset * 2, frames);
++        for (;;) {
++            const uint32_t produced
++                = stretcher->pull(block.data(), static_cast<uint32_t>(block.size()) / 2);
++            if (!produced)
++                break;
++            output.insert(output.end(), block.begin(), block.begin() + produced * 2);
++        }
++        if (sweep) {
++            const double progress = static_cast<double>(offset) / static_cast<double>(total_frames);
++            stretcher->set_ratio(static_cast<float>(1.0 + progress * 0.5));
++        }
++    }
++    return { input, std::move(output) };
++}
++
++std::vector<int16_t> sine(size_t frames, double frequency, double amplitude)
++{
++    std::vector<int16_t> samples(frames * 2);
++    for (size_t i = 0; i < frames; ++i) {
++        const int16_t value = static_cast<int16_t>(std::lround(amplitude * 32767.0
++            * std::sin(2.0 * 3.14159265358979323846 * frequency * static_cast<double>(i)
++                / static_cast<double>(kRate))));
++        samples[i * 2] = value;
++        samples[i * 2 + 1] = value;
++    }
++    return samples;
++}
++
++std::vector<int16_t> complex_signal(size_t frames)
++{
++    std::vector<int16_t> samples(frames * 2);
++    for (size_t i = 0; i < frames; ++i) {
++        const double t = static_cast<double>(i) / static_cast<double>(kRate);
++        const double envelope = 0.55 + 0.35 * std::sin(2.0 * 3.14159265358979323846 * 2.7 * t);
++        const double value = envelope
++            * (0.36 * std::sin(2.0 * 3.14159265358979323846 * 220.0 * t)
++                + 0.26 * std::sin(2.0 * 3.14159265358979323846 * 330.0 * t + 0.4)
++                + 0.12 * std::sin(2.0 * 3.14159265358979323846 * 1760.0 * t + 1.1));
++        const int16_t pcm = static_cast<int16_t>(std::lround(value * 32767.0));
++        samples[i * 2] = pcm;
++        samples[i * 2 + 1] = static_cast<int16_t>(-pcm / 2);
++    }
++    return samples;
++}
++
++double dominant_frequency(const std::vector<int16_t>& stereo, size_t start, size_t frames)
++{
++    int crossings = 0;
++    const size_t end = std::min(start + frames, stereo.size() / 2);
++    for (size_t i = start + 1; i < end; ++i) {
++        const int16_t previous = stereo[(i - 1) * 2];
++        const int16_t current = stereo[i * 2];
++        if ((previous < 0 && current >= 0) || (previous >= 0 && current < 0))
++            ++crossings;
++    }
++    return static_cast<double>(crossings) * kRate / (2.0 * static_cast<double>(end - start));
++}
++
++double max_step(const std::vector<int16_t>& stereo, size_t start, size_t end)
++{
++    double maximum = 0.0;
++    end = std::min(end, stereo.size() / 2);
++    for (size_t i = start + 1; i < end; ++i) {
++        maximum = std::max(maximum,
++            std::fabs(
++                static_cast<double>(stereo[i * 2]) - static_cast<double>(stereo[(i - 1) * 2])));
++    }
++    return maximum;
++}
++
++bool test_unity_ratio_reconstructs()
++{
++    const auto input = sine(kRate * 2, 440.0, 0.5);
++    const Run run = run_stretcher(input, 1.0f);
++    CHECK(run.output.size() > static_cast<size_t>(kRate + kRate / 2) * 2);
++    const size_t limit = std::min(run.input.size() / 2, run.output.size() / 2);
++    int worst = 0;
++    for (size_t i = NdsAudioTimeStretcher::kHopFrames; i < limit; ++i) {
++        worst = std::max(worst,
++            std::abs(static_cast<int>(run.input[i * 2]) - static_cast<int>(run.output[i * 2])));
++        worst = std::max(worst,
++            std::abs(
++                static_cast<int>(run.input[i * 2 + 1]) - static_cast<int>(run.output[i * 2 + 1])));
++    }
++    CHECK(worst <= 1);
++    CHECK(std::fabs(dominant_frequency(run.output, kRate / 2, kRate / 2) - 440.0) < 2.0);
++    return true;
++}
++
++bool test_ratio_preserves_pitch_and_duration(float ratio)
++{
++    const auto input = sine(kRate * 4, 440.0, 0.5);
++    const Run run = run_stretcher(input, ratio);
++    const double input_seconds = static_cast<double>(input.size() / 2) / kRate;
++    const double output_seconds = static_cast<double>(run.output.size() / 2) / kRate;
++    const double expected = input_seconds * ratio;
++    // The algorithm needs one window plus the search range of input before it
++    // can emit the final grain; that lookahead scales with the output ratio.
++    const double lookahead = static_cast<double>(NdsAudioTimeStretcher::kWindowFrames
++                                 + NdsAudioTimeStretcher::kSearchFrames)
++            / kRate * ratio
++        + static_cast<double>(NdsAudioTimeStretcher::kHopFrames) / kRate;
++    CHECK(output_seconds > expected - lookahead - 0.01);
++    CHECK(output_seconds < expected + 0.02);
++    CHECK(std::fabs(dominant_frequency(run.output, kRate, kRate) - 440.0) < 2.0);
++    const double input_step = max_step(input, kRate / 2, kRate * 2);
++    const double output_step = max_step(run.output, kRate / 2, kRate * 2);
++    CHECK(output_step <= input_step * 2.0 + 32.0);
++    return true;
++}
++
++bool test_complex_signal(float ratio)
++{
++    const auto input = complex_signal(kRate * 4);
++    const Run run = run_stretcher(input, ratio);
++    const double expected = 4.0 * ratio;
++    const double seconds = static_cast<double>(run.output.size() / 2) / kRate;
++    const double lookahead = static_cast<double>(NdsAudioTimeStretcher::kWindowFrames
++                                 + NdsAudioTimeStretcher::kSearchFrames)
++            / kRate * ratio
++        + static_cast<double>(NdsAudioTimeStretcher::kHopFrames) / kRate;
++    CHECK(seconds > expected - lookahead - 0.01);
++    CHECK(seconds < expected + 0.02);
++    const double input_step = max_step(input, 0, input.size() / 2);
++    const double output_step = max_step(run.output, kRate / 2, kRate * 2);
++    CHECK(output_step <= input_step * 2.0 + 32.0);
++    for (const int16_t sample : run.output) {
++        CHECK(sample > -32768 && sample < 32767);
++    }
++    return true;
++}
++
++bool test_variable_ratio()
++{
++    const auto input = sine(kRate * 4, 440.0, 0.5);
++    const Run run = run_stretcher(input, 1.0f, true);
++    CHECK(run.output.size() > static_cast<size_t>(kRate * 4 * 1.2) * 2);
++    CHECK(std::fabs(dominant_frequency(run.output, kRate, kRate) - 440.0) < 2.0);
++    const double input_step = max_step(input, kRate / 2, kRate * 2);
++    const double output_step = max_step(run.output, kRate / 2, kRate * 2);
++    CHECK(output_step <= input_step * 2.0 + 32.0);
++    return true;
++}
++
++bool test_overflow_is_bounded()
++{
++    auto stretcher = std::make_unique<NdsAudioTimeStretcher>();
++    stretcher->reset();
++    std::vector<int16_t> block((NdsAudioTimeStretcher::kInputCapacityFrames + 1) * 2, 0);
++    stretcher->push(block.data(), NdsAudioTimeStretcher::kInputCapacityFrames + 1);
++    CHECK(stretcher->buffered_input_frames() == NdsAudioTimeStretcher::kInputCapacityFrames);
++    CHECK(stretcher->overflow_frames == 1);
++    stretcher->push(block.data(), 16);
++    CHECK(stretcher->buffered_input_frames() == 16);
++    CHECK(stretcher->overflow_frames == NdsAudioTimeStretcher::kInputCapacityFrames + 1);
++    return true;
++}
++
++} // namespace
++
++int main()
++{
++    if (!test_unity_ratio_reconstructs())
++        return 1;
++    if (!test_ratio_preserves_pitch_and_duration(1.16f))
++        return 2;
++    if (!test_ratio_preserves_pitch_and_duration(1.5f))
++        return 3;
++    if (!test_ratio_preserves_pitch_and_duration(2.0f))
++        return 4;
++    if (!test_complex_signal(1.16f))
++        return 5;
++    if (!test_complex_signal(1.5f))
++        return 6;
++    if (!test_variable_ratio())
++        return 7;
++    if (!test_overflow_is_bounded())
++        return 8;
++    std::puts("audio_time_stretch_test: ok");
++    return 0;
++}
