@@ -10,10 +10,11 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from tui.app import App, LOG_BUTTON, PLAY_BUTTON
+from tui.app import App, LOG_BUTTON, PLAY_BUTTON, STATS_BUTTON
 from tui.commands import Command, Job
+from tui.fps import FrameAttrib, FramePhases
 from tui.model import Repo, Settings
-from tui.specs import GpuSpec
+from tui.specs import GpuSpec, HostSample
 from tui.terminal import MouseEvent, Terminal, strip_ansi
 
 
@@ -406,6 +407,66 @@ class PlayButtonTests(unittest.TestCase):
             self.assertEqual(
                 strip_ansi(lines[hit[0]])[hit[1] : hit[2] + 1], LOG_BUTTON
             )
+
+    def test_job_stats_button_toggles_the_live_panel(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            app, _ = make_app(Path(temp), Settings(preset="test-debug"))
+            command = Command("Play", [sys.executable, "-c", "pass"], Path(temp))
+            app.job = Job([command], "Play")
+            app.job.current_label = "Play"
+            app.mode = "job"
+            host = HostSample(
+                cpu_percent=23.4, used_bytes=12 * 1024**3, total_bytes=32 * 1024**3
+            )
+            app.host_sample = host
+            app.host_sampler.sample = lambda: host
+            app.runner_fps.phases = FramePhases(20.0, 0.5, 0.0, 0.0, 0.0, 0.0, 0.5)
+            app.runner_fps.attrib = FrameAttrib(10.0, 0.3, 2.6, 0.3, 0.3, 0.1)
+            app.runner_fps.fps = 40.0
+            app.runner_fps.connected = True
+
+            lines = app.render(110, 34)
+            hit = app.stats_hit
+            self.assertIsNotNone(hit)
+            assert hit is not None
+            self.assertEqual(
+                strip_ansi(lines[hit[0]])[hit[1] : hit[2] + 1], STATS_BUTTON
+            )
+            self.assertNotIn("bottleneck:", strip_ansi("\n".join(lines)))
+
+            app.handle_mouse(MouseEvent("press", "left", hit[1], hit[0]))
+
+            self.assertTrue(app.stats_panel)
+            text = strip_ansi("\n".join(app.render(110, 34)))
+            self.assertIn("CPU 23%", text)
+            self.assertIn("RAM 12.0 GiB/32.0 GiB", text)
+            self.assertIn("GPU 0.5 ms/frame", text)
+            self.assertIn("bottleneck: emulation (CPU) (20.0 ms)", text)
+            self.assertIn("interpreter 10.0 ms (50%)", text)
+            self.assertIn("2D 2.6 ms", text)
+
+            app.handle_key("u")
+            self.assertFalse(app.stats_panel)
+
+            lines = app.render(60, 30)
+            for hit, label in ((app.stats_hit, STATS_BUTTON), (app.log_hit, LOG_BUTTON)):
+                self.assertIsNotNone(hit)
+                assert hit is not None
+                self.assertEqual(
+                    strip_ansi(lines[hit[0]])[hit[1] : hit[2] + 1], label
+                )
+
+    def test_job_stats_button_is_absent_outside_play(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            app, _ = make_app(Path(temp), Settings(preset="test-debug"))
+            command = Command("Build", [sys.executable, "-c", "pass"], Path(temp))
+            app.job = Job([command], "Build")
+            app.mode = "job"
+
+            lines = app.render(100, 30)
+
+            self.assertIsNone(app.stats_hit)
+            self.assertNotIn(STATS_BUTTON, strip_ansi("\n".join(lines)))
 
     def test_job_save_logs_writes_the_current_output(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

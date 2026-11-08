@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import time
 import unittest
 
 from tui.specs import (
     GpuSpec,
+    HostSampler,
+    cpu_times,
     format_bytes,
     gpu_label,
     gpu_value,
+    memory_usage,
     parse_gpu_tsv,
     resolve_gpu,
     selected_gpu_text,
@@ -72,6 +76,34 @@ class GpuSelectionTests(unittest.TestCase):
     def test_selected_text_names_the_resolved_adapter(self) -> None:
         self.assertIn("RTX 4060", selected_gpu_text("discrete", self.gpus))
         self.assertIn("Arc Graphics", selected_gpu_text("integrated", self.gpus))
+
+
+class HostSamplerTests(unittest.TestCase):
+    def test_cpu_and_memory_reads_are_sane(self) -> None:
+        times = cpu_times()
+        if times is not None:
+            idle, total = times
+            self.assertGreater(total, 0)
+            self.assertGreaterEqual(idle, 0)
+            self.assertLessEqual(idle, total)
+        memory = memory_usage()
+        if memory is not None:
+            used, total = memory
+            self.assertGreater(total, 0)
+            self.assertGreaterEqual(used, 0)
+            self.assertLessEqual(used, total)
+
+    def test_sampler_reports_a_bounded_cpu_percentage(self) -> None:
+        sampler = HostSampler()
+        time.sleep(0.05)
+        sample = sampler.sample()
+        if sample.cpu_percent is not None:
+            self.assertGreaterEqual(sample.cpu_percent, 0.0)
+            self.assertLessEqual(sample.cpu_percent, 100.0)
+        if sample.total_bytes is not None:
+            self.assertGreater(sample.total_bytes, 0)
+            assert sample.used_bytes is not None
+            self.assertLessEqual(sample.used_bytes, sample.total_bytes)
 
 
 if __name__ == "__main__":

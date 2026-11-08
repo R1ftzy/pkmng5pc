@@ -10,7 +10,7 @@ Complete and verified locally on Windows. The launcher is pure Python, so it
 starts without the C++ build; `--check` and `--snapshot` also work without an
 interactive terminal.
 
-- `python -m unittest discover -s tui/tests` runs 114 tests (one
+- `python -m unittest discover -s tui/tests` runs 129 tests (one
   platform-specific case is skipped).
 - The Windows native console reader was exercised with injected mouse records:
   left press, release and wheel-up decoded correctly through
@@ -150,7 +150,10 @@ The SHA-1 is computed in a background thread and passed to Configure as
 - Save mode: default beside the ROM, a custom file, or off (blank cart).
 - Diagnostics: stats, coverage manifest and a performance bundle. Coverage is
   written beside the ROM; the performance bundle goes to `banks/play`. Both feed
-  the RECOMPILATION panel.
+  the RECOMPILATION panel. Coverage capture and the diagnostics bundle add
+  measurable overhead (page hashing/copies, the 250 Hz host sampler and phase
+  profiling), so leave them off for play and turn them on only for a bank or
+  performance run.
 - Extra runner arguments, runner/bank status and Play.
 - `Ctrl+R` or the `[Ctrl+R Play]` button in the header starts Play from any
   page; the final review still comes first.
@@ -167,6 +170,30 @@ The job screen has an `[S Save logs]` button at the bottom right (or press `S`).
 It writes the current job's header, settings, exact command(s) and output to
 `logs/tui/`. The folder is local and git-ignored, so it is safe to
 attach to a bug report after removing any personal paths.
+
+While Play runs, `[U Stats]` (or press `U`) toggles a live host/runner panel:
+
+```text
+CPU 23%  ·  RAM 12.4 GiB/31.8 GiB  ·  GPU 0.7 ms/frame
+emu 6.5 ms  ·  present 0.5 ms  ·  drain 0.0 ms  ·  budget 16.7 ms
+bottleneck: emulation (CPU) (6.5 ms)
+interpreter 3.1 ms (48%)  ·  2D 2.6 ms  ·  DMA 0.3 ms
+```
+
+System-wide CPU and RAM come from the OS (`GetSystemTimes`/
+`GlobalMemoryStatusEx` on Windows, `/proc` on Linux); no third-party package is
+used. The frame phases
+are `frontend_stats` deltas sampled once per second: `emu` is guest execution
+plus the 2D compositor and 3D sink, `present`/`upload`/`draw`/`swap` are the
+Vulkan presenter, and `drain` is audio/vsync pacing. The bottleneck line names
+the largest phase, or **at target** at 55 FPS or above. The last line is the
+`emu_attrib` breakdown of the same interval: `interpreter` is the Tier-3
+interpreter share (`tier3_arm9`), `2D` is the rasteriser (`raster2d`), and `DMA`
+is `dma_arm9`; it is what tells you whether a slow frame is interpreter
+coverage, the 2D compositor or bus work. If the runner's debug surface is
+unavailable the panel labels the figures instead of guessing. With
+`[S Save logs]` the host figures, phase split and attribution are included in
+the saved log.
 
 ### Setup (5)
 
@@ -194,7 +221,7 @@ local-state/legal notes.
 | Folder/ROM browser | `Up`/`Down`, `Enter` open or pick, `Backspace`/`Left` up, `Right` open, `S` use folder, `G` go to path, `H` hidden, `R` rescan, `Esc` cancel |
 | Folder/ROM browser (mouse) | Click an entry to select it; click the selected entry to open or pick it; wheel moves three entries |
 | Final review | `Up`/`Down`/`PgUp`/`PgDn`/`Home`/`End` scroll, `Enter` run, `Esc` cancel; `Run`/`Cancel` are clickable |
-| Job log | `Esc`/`Ctrl+C` cancel while running; `Up`/`Down`/`PgUp`/`PgDn`/`Home` scroll; `End`/`F` follow; `S` or `[S Save logs]` writes the job log to `logs/tui/`; `Enter` return after it finishes; the header shows the live presented FPS while Play runs |
+| Job log | `Esc`/`Ctrl+C` cancel while running; `Up`/`Down`/`PgUp`/`PgDn`/`Home` scroll; `End`/`F` follow; `S` or `[S Save logs]` writes the job log to `logs/tui/`; `U` or `[U Stats]` toggles the live CPU/RAM/GPU phase panel while Play runs; `Enter` return after it finishes; the header shows the live presented FPS while Play runs |
 
 ## Recompilation state
 

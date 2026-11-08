@@ -21,7 +21,7 @@ from tui.commands import (
     save_label,
     test_command,
 )
-from tui.fps import RunnerFpsProbe
+from tui.fps import FRAME_BUDGET_MS, FramePhases, RunnerFpsProbe
 from tui.model import (
     PLAY_ASPECTS,
     PLAY_LAYOUTS,
@@ -50,6 +50,8 @@ from tui.picker import Picker
 from tui.recomp import RecompStats, collect_recomp_stats, read_bank_stats
 from tui.specs import (
     GpuSpec,
+    HostSample,
+    HostSampler,
     cpu_name,
     format_bytes,
     gpu_label,
@@ -84,6 +86,7 @@ PAGE_NAMES = {
 }
 PLAY_BUTTON = "[Ctrl+R Play]"
 LOG_BUTTON = "[S Save logs]"
+STATS_BUTTON = "[U Stats]"
 SELECTABLE = {"toggle", "choice", "text", "folder", "action", "rom"}
 BUILDER = Callable[[], Command | list[Command]]
 
@@ -175,9 +178,14 @@ class App:
         self.row_hits: dict[int, str] = {}
         self.review_hits: list[tuple[int, int, int, str]] = []
         self.log_hit: tuple[int, int, int] | None = None
+        self.stats_hit: tuple[int, int, int] | None = None
         self.log_saved: tuple[str, bool, float] | None = None
         self.runner_fps = RunnerFpsProbe()
         self._fps_revision = 0
+        self.stats_panel = False
+        self.host_sampler = HostSampler()
+        self.host_sample: HostSample | None = None
+        self._host_sampled_at = 0.0
         self.log_follow = True
         self.log_back = 0
         self.toast: tuple[str, str, float] | None = None
@@ -1088,11 +1096,24 @@ class App:
         playing = bool(job and job.current_label == "Play")
         if playing:
             self.runner_fps.start()
+            if self.stats_panel and job.active:
+                now = time.monotonic()
+                if now - self._host_sampled_at >= 1.0:
+                    self._host_sampled_at = now
+                    self.host_sample = self.host_sampler.sample()
+                    self.dirty = True
         else:
             self.runner_fps.stop()
+            self.host_sample = None
         if self.runner_fps.revision != self._fps_revision:
             self._fps_revision = self.runner_fps.revision
             self.dirty = True
+
+    def toggle_stats_panel(self) -> None:
+        self.stats_panel = not self.stats_panel
+        self._host_sampled_at = 0.0
+        self.host_sample = self.host_sampler.sample() if self.stats_panel else None
+        self.dirty = True
 
     def maybe_save(self) -> None:
         if not self.persist or not self.settings_dirty:
@@ -1121,6 +1142,7 @@ class App:
         self.tab_hits.clear()
         self.play_hit = None
         self.log_hit = None
+        self.stats_hit = None
         self.row_hits.clear()
         self.review_hits.clear()
         if width < 60 or height < 18:
@@ -2009,18 +2031,27 @@ class App:
         items.extend(
             [
                 Item("diagnostics", "DIAGNOSTICS", kind="section"),
-                self._toggle("stats", "Print stats", "stats", "Print the runner performance summary on exit."),
+                self._toggle(
+                    "stats",
+                    "Print stats",
+                    "stats",
+                    "Print the runner performance summary on exit; small overhead.",
+                ),
                 self._toggle(
                     "coverage",
                     "Keep coverage manifest",
                     "coverage",
-                    "Keep the coverage manifest beside the ROM; the launcher pairs it with the diagnostics bundle for the recompilation panel.",
+                    "Keep the coverage manifest beside the ROM; the launcher pairs it "
+                    "with the diagnostics bundle for the recompilation panel. Page "
+                    "capture slows the run, so turn it off for play.",
                 ),
                 self._toggle(
                     "diagnostics-flag",
                     "Diagnostics bundle",
                     "diagnostics",
-                    "Write a performance bundle into banks/play for the recompilation panel.",
+                    "Write a performance bundle into banks/play for the recompilation "
+                    "panel. Adds host sampling and phase profiling, so expect a "
+                    "measurable slowdown; turn it off for play.",
                 ),
                 Item("advanced", "ADVANCED", kind="section"),
                 self._text(
@@ -2283,9 +2314,10 @@ class App:
         key_lines = [
             "Up/Down move · Left/Right change · Enter activate · Space toggle",
             "Ctrl+R starts Play from any page; the final review still comes first",
-            "Mouse: click a tab, the Play button, a row or [S Save logs], wheel scrolls; click a selected browser row to open it",
+            "Mouse: click a tab, the Play button, a row or the job buttons, wheel scrolls; click a selected browser row to open it",
             "Final review: Enter Run, Esc Cancel, Up/Down scroll; Run/Cancel are clickable",
             "Job log: S or [S Save logs] writes logs/tui; Enter returns after it finishes",
+            "Play stats: U or [U Stats] shows CPU, RAM, GPU ms, the phase bottleneck and the interpreter/2D split",
             "Tab / Shift+Tab change page · 1-6 jump · H/R/B/P/S shortcuts",
             "? help · L last log · Q quit · Esc closes a dialog",
             "In the ROM browser: Enter open, S use folder, G type a path, H hidden",
@@ -2510,6 +2542,7 @@ class App:
         term = self.terminal
         job = self.job
         assert job is not None
+        self.stats_hit = None
         lines = self.render_chrome(width)
         spinner = "|/-\\"[int(time.monotonic() * 8) % 4] if job.active else " "
         if job.active:
@@ -2537,7 +2570,10 @@ class App:
                 header += term.dim(f"  ·  {label}")
         lines.append(clip(header, width))
         lines.append("  " + term.dim(term.rule(width - 4)))
-        log_height = max(3, height - 9)
+        playing = job.current_label == "Play"
+        stats_lines = self.job_stats_lines(width) if playing and self.stats_panel else []
+        lines.extend(stats_lines)
+        log_height = max(3, height - 9 - len(stats_lines))
         total = len(job.lines)
         if self.log_follow:
             start = max(0, total - log_height)
@@ -2548,10 +2584,11 @@ class App:
             lines.append("  " + clip(sanitize(line), width - 4))
         while len(lines) < 5 + log_height:
             lines.append("")
+        stats_hint = " · U stats" if playing else ""
         if job.active:
-            hint = "Esc / Ctrl+C cancel · ↑↓ scroll · End follow · S save log"
+            hint = f"Esc / Ctrl+C cancel · ↑↓ scroll · End follow · S save log{stats_hint}"
         else:
-            hint = "Enter return · ↑↓ scroll · End follow · S save log"
+            hint = f"Enter return · ↑↓ scroll · End follow · S save log{stats_hint}"
         if not self.log_follow:
             hint += term.dim(f"  ·  {self.log_back} line(s) back")
         lines.append("  " + term.dim(clip(hint, width - 2)))
@@ -2567,17 +2604,91 @@ class App:
                     if saved
                     else "  " + term.red("Could not save log")
                 )
-        button_width = visible_len(LOG_BUTTON)
-        left = clip(left, max(0, width - button_width - 2))
-        button = (
-            term.style(LOG_BUTTON, color="black", background="cyan", bold=True)
-            if term.color
-            else LOG_BUTTON
-        )
-        lines.append(pad_between(left, button, width))
-        if width - visible_len(left) - button_width >= 0:
-            self.log_hit = (height - 1, width - button_width, width - 1)
+        log_width = visible_len(LOG_BUTTON)
+        if playing:
+            stats_width = visible_len(STATS_BUTTON)
+            gap = 2
+            total_width = stats_width + gap + log_width
+            left = clip(left, max(0, width - total_width - 2))
+            stats_label = (
+                term.style(
+                    STATS_BUTTON,
+                    color="black",
+                    background="yellow" if self.stats_panel else "cyan",
+                    bold=True,
+                )
+                if term.color
+                else STATS_BUTTON
+            )
+            log_label = (
+                term.style(LOG_BUTTON, color="black", background="cyan", bold=True)
+                if term.color
+                else LOG_BUTTON
+            )
+            lines.append(
+                pad_between(left, stats_label + (" " * gap) + log_label, width)
+            )
+            start = width - total_width
+            if start >= 0:
+                self.stats_hit = (height - 1, start, start + stats_width - 1)
+                self.log_hit = (height - 1, start + stats_width + gap, width - 1)
+        else:
+            left = clip(left, max(0, width - log_width - 2))
+            log_label = (
+                term.style(LOG_BUTTON, color="black", background="cyan", bold=True)
+                if term.color
+                else LOG_BUTTON
+            )
+            lines.append(pad_between(left, log_label, width))
+            if width - visible_len(left) - log_width >= 0:
+                self.log_hit = (height - 1, width - log_width, width - 1)
         return lines[:height]
+
+    def job_stats_lines(self, width: int) -> list[str]:
+        term = self.terminal
+        sample = self.host_sample
+        phases: FramePhases | None = self.runner_fps.phases
+        if sample is not None and sample.cpu_percent is not None:
+            cpu = f"CPU {sample.cpu_percent:.0f}%"
+        else:
+            cpu = "CPU --"
+        if sample is not None and sample.used_bytes is not None and sample.total_bytes:
+            ram = (
+                f"RAM {format_bytes(sample.used_bytes)}"
+                f"/{format_bytes(sample.total_bytes)}"
+            )
+        else:
+            ram = "RAM --"
+        gpu = f"GPU {phases.gpu_ms:.1f} ms/frame" if phases is not None else "GPU --"
+        first = "  " + term.bold(term.cyan("  ·  ".join((cpu, ram, gpu))))
+        if phases is not None:
+            second = (
+                f"  emu {phases.emu_ms:.1f} ms  ·  present {phases.present_ms:.1f} ms  ·  "
+                f"drain {phases.drain_ms:.1f} ms  ·  budget {FRAME_BUDGET_MS:.1f} ms"
+            )
+            third = f"  bottleneck: {phases.bottleneck(self.runner_fps.fps)}"
+        else:
+            second = "  sampling the runner phases…"
+            third = f"  frame budget {FRAME_BUDGET_MS:.1f} ms (60 Hz)"
+        lines = [
+            clip(first, width),
+            clip(term.dim(second), width),
+            clip(term.dim(third), width),
+        ]
+        attrib = self.runner_fps.attrib
+        if attrib is not None and phases is not None and phases.emu_ms > 0.0:
+            share = 100.0 * attrib.tier3_arm9_ms / phases.emu_ms
+            lines.append(
+                clip(
+                    term.dim(
+                        f"  interpreter {attrib.tier3_arm9_ms:.1f} ms ({share:.0f}%)  ·  "
+                        f"2D {attrib.raster2d_ms:.1f} ms  ·  "
+                        f"DMA {attrib.dma_arm9_ms:.1f} ms"
+                    ),
+                    width,
+                )
+            )
+        return lines
 
     def render_input(self, width: int, height: int) -> list[str]:
         term = self.terminal
@@ -2809,6 +2920,14 @@ class App:
                         self.cancel_review()
                     return
         elif self.mode == "job":
+            stats_hit = self.stats_hit
+            if (
+                stats_hit is not None
+                and event.y == stats_hit[0]
+                and stats_hit[1] <= event.x <= stats_hit[2]
+            ):
+                self.toggle_stats_panel()
+                return
             hit = self.log_hit
             if hit is not None and event.y == hit[0] and hit[1] <= event.x <= hit[2]:
                 self.save_job_log()
@@ -3034,6 +3153,35 @@ class App:
         ]
         if self.runner_fps.fps is not None:
             lines.append(f"Runner FPS: {self.runner_fps.fps:.1f}")
+        sample = self.host_sample
+        if sample is not None:
+            cpu = "unknown" if sample.cpu_percent is None else f"{sample.cpu_percent:.0f}%"
+            memory = (
+                "unknown"
+                if sample.used_bytes is None or not sample.total_bytes
+                else f"{format_bytes(sample.used_bytes)}/{format_bytes(sample.total_bytes)}"
+            )
+            lines.append(f"Host: CPU {cpu}  RAM {memory}")
+        phases = self.runner_fps.phases
+        if phases is not None:
+            lines.append(
+                f"Phases: emu {phases.emu_ms:.1f} ms  present {phases.present_ms:.1f} ms  "
+                f"drain {phases.drain_ms:.1f} ms  bottleneck: "
+                f"{phases.bottleneck(self.runner_fps.fps)}"
+            )
+            attrib = self.runner_fps.attrib
+            if attrib is not None:
+                share = (
+                    100.0 * attrib.tier3_arm9_ms / phases.emu_ms
+                    if phases.emu_ms > 0.0
+                    else 0.0
+                )
+                lines.append(
+                    f"Attribution: interpreter {attrib.tier3_arm9_ms:.1f} ms "
+                    f"({share:.0f}%)  ARM7 {attrib.tier3_arm7_ms:.1f} ms  "
+                    f"2D {attrib.raster2d_ms:.1f} ms  geometry {attrib.geometry_ms:.1f} ms  "
+                    f"DMA {attrib.dma_arm9_ms:.1f} ms  3D {attrib.gpu3d_ms:.1f} ms"
+                )
         lines.extend(["", "Commands:"])
         for command in job.commands:
             lines.append(f"  $ {command.preview()}")
@@ -3060,6 +3208,9 @@ class App:
     def handle_job_key(self, key: str) -> None:
         job = self.job
         assert job is not None
+        if key in ("u", "U") and job.current_label == "Play":
+            self.toggle_stats_panel()
+            return
         if key in ("s", "S"):
             self.save_job_log()
             return

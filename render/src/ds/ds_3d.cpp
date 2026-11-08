@@ -105,10 +105,10 @@ namespace {
         }
         switch (blend) {
         case 0:
-            return w ? ShaderId::ds_raster_tex_decal_w : ShaderId::ds_raster_tex_decal_z;
+            return w ? ShaderId::ds_raster_tex_modulate_w : ShaderId::ds_raster_tex_modulate_z;
         case 1:
         case 3:
-            return w ? ShaderId::ds_raster_tex_modulate_w : ShaderId::ds_raster_tex_modulate_z;
+            return w ? ShaderId::ds_raster_tex_decal_w : ShaderId::ds_raster_tex_decal_z;
         case 2:
             if (highlight) {
                 return w ? ShaderId::ds_raster_tex_highlight_w
@@ -128,17 +128,17 @@ namespace {
         case 0:
             return ShaderId::ds_final_0;
         case 1:
-            return ShaderId::ds_final_aa;
+            return ShaderId::ds_final_edge;
         case 2:
             return ShaderId::ds_final_fog;
         case 3:
-            return ShaderId::ds_final_aa_fog;
+            return ShaderId::ds_final_edge_fog;
         case 4:
-            return ShaderId::ds_final_edge;
+            return ShaderId::ds_final_aa;
         case 5:
             return ShaderId::ds_final_aa_edge;
         case 6:
-            return ShaderId::ds_final_edge_fog;
+            return ShaderId::ds_final_aa_fog;
         default:
             return ShaderId::ds_final_aa_edge_fog;
         }
@@ -261,6 +261,8 @@ namespace {
     struct Texture {
         Image image;
         uint32_t layers = 0;
+        bool batch_transitioned = false;
+        bool has_data = false;
     };
 
     bool create_host_buffer(
@@ -554,10 +556,17 @@ namespace {
 
     class TextureStore {
     public:
-        bool init(VulkanContext& context, CommandRunner& runner)
+        struct PendingUpload {
+            Buffer staging;
+            uint32_t id = 0;
+            uint32_t width = 0;
+            uint32_t height = 0;
+            uint32_t layer = 0;
+        };
+
+        bool init(VulkanContext& context)
         {
             context_ = &context;
-            runner_ = &runner;
             return true;
         }
 
@@ -593,36 +602,83 @@ namespace {
                 return false;
             }
             std::memcpy(staging.mapped, data, static_cast<std::size_t>(width) * height * 4);
+            pending_.push_back(PendingUpload { staging, id, width, height, layer });
+            texture->has_data = true;
+            return true;
+        }
 
-            const bool ok = runner_->run([&](VkCommandBuffer command) {
-                const VkImageLayout old_layout = texture->image.layout;
-                const VkAccessFlags old_access
-                    = old_layout == VK_IMAGE_LAYOUT_UNDEFINED ? 0 : VK_ACCESS_SHADER_READ_BIT;
-                image_barrier(command, texture->image.image, old_layout,
-                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, old_access, VK_ACCESS_TRANSFER_WRITE_BIT,
-                    old_layout == VK_IMAGE_LAYOUT_UNDEFINED ? VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT
-                                                            : VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                    VK_PIPELINE_STAGE_TRANSFER_BIT, texture->layers);
+        void record_pending_uploads(VkCommandBuffer command)
+        {
+            abort_pending_uploads();
+            if (pending_.empty()) {
+                return;
+            }
+            for (const PendingUpload& upload : pending_) {
+                Texture* texture = get(upload.id);
+                if (!texture) {
+                    continue;
+                }
+                if (!texture->batch_transitioned) {
+                    const VkImageLayout old_layout = texture->image.layout;
+                    const VkAccessFlags old_access
+                        = old_layout == VK_IMAGE_LAYOUT_UNDEFINED ? 0 : VK_ACCESS_SHADER_READ_BIT;
+                    image_barrier(command, texture->image.image, old_layout,
+                        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, old_access,
+                        VK_ACCESS_TRANSFER_WRITE_BIT,
+                        old_layout == VK_IMAGE_LAYOUT_UNDEFINED
+                            ? VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT
+                            : VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                        VK_PIPELINE_STAGE_TRANSFER_BIT, texture->layers);
+                    texture->batch_transitioned = true;
+                    batch_ids_.push_back(upload.id);
+                }
 
                 VkBufferImageCopy copy {};
                 copy.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
                 copy.imageSubresource.mipLevel = 0;
-                copy.imageSubresource.baseArrayLayer = layer;
+                copy.imageSubresource.baseArrayLayer = upload.layer;
                 copy.imageSubresource.layerCount = 1;
-                copy.imageExtent = { width, height, 1 };
-                vkCmdCopyBufferToImage(command, staging.buffer, texture->image.image,
+                copy.imageExtent = { upload.width, upload.height, 1 };
+                vkCmdCopyBufferToImage(command, upload.staging.buffer, texture->image.image,
                     VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
-
+            }
+            for (uint32_t id : batch_ids_) {
+                Texture* texture = get(id);
+                if (!texture) {
+                    continue;
+                }
                 image_barrier(command, texture->image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_ACCESS_TRANSFER_WRITE_BIT,
                     VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
                     VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, texture->layers);
-            });
-            destroy_buffer(*context_, staging);
-            if (ok) {
-                texture->image.layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
             }
-            return ok;
+        }
+
+        void finish_pending_uploads()
+        {
+            for (PendingUpload& upload : pending_) {
+                destroy_buffer(*context_, upload.staging);
+            }
+            pending_.clear();
+            for (uint32_t id : batch_ids_) {
+                Texture* texture = get(id);
+                if (!texture) {
+                    continue;
+                }
+                texture->image.layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                texture->batch_transitioned = false;
+            }
+            batch_ids_.clear();
+        }
+
+        void abort_pending_uploads()
+        {
+            for (uint32_t id : batch_ids_) {
+                if (Texture* texture = get(id)) {
+                    texture->batch_transitioned = false;
+                }
+            }
+            batch_ids_.clear();
         }
 
         void destroy_texture(uint32_t id)
@@ -647,6 +703,11 @@ namespace {
             if (!context_) {
                 return;
             }
+            for (PendingUpload& upload : pending_) {
+                destroy_buffer(*context_, upload.staging);
+            }
+            pending_.clear();
+            batch_ids_.clear();
             for (auto& texture : textures_) {
                 if (texture) {
                     destroy_image(*context_, texture->image);
@@ -654,18 +715,19 @@ namespace {
             }
             textures_.clear();
             context_ = nullptr;
-            runner_ = nullptr;
         }
 
     private:
         VulkanContext* context_ = nullptr;
-        CommandRunner* runner_ = nullptr;
         std::vector<std::unique_ptr<Texture>> textures_;
+        std::vector<PendingUpload> pending_;
+        std::vector<uint32_t> batch_ids_;
         uint32_t next_id_ = 1;
     };
 
     struct VulkanTextureLoader {
         std::shared_ptr<TextureStore> store;
+        std::function<void(uint32_t, uint32_t, uint32_t, uint32_t, const void*)> on_upload;
 
         uint32_t GenerateTexture(uint32_t width, uint32_t height, uint32_t layers) const
         {
@@ -676,6 +738,9 @@ namespace {
             uint32_t id, uint32_t width, uint32_t height, uint32_t layer, const void* data) const
         {
             store->upload_texture(id, width, height, layer, data);
+            if (on_upload) {
+                on_upload(id, width, height, layer, data);
+            }
         }
 
         void DeleteTexture(uint32_t id) const { store->destroy_texture(id); }
@@ -751,6 +816,15 @@ struct VulkanComputeRenderer::Impl {
     uint32_t verify_max_channel_diff = 0;
     bool verify_logged_detail = false;
 
+    std::string dump_dir;
+    uint64_t dump_frame = 0;
+    uint64_t dump_every = 30;
+    uint64_t frame_counter = 0;
+    bool dump_uploads = false;
+    void dump_upload(
+        uint32_t id, uint32_t width, uint32_t height, uint32_t layer, const void* data);
+    void dump_frame_tables(uint32_t num_variants, uint32_t num_polygons, bool wbuffer);
+
     bool initialize(SDL_Window* window, const Config& config);
     void shutdown();
 
@@ -811,12 +885,25 @@ bool VulkanComputeRenderer::Impl::initialize(SDL_Window* window, const Config& c
     }
 
     texture_store = std::make_shared<TextureStore>();
-    if (!texture_store->init(*context, *upload_runner)) {
+    if (!texture_store->init(*context)) {
         std::fprintf(stderr, "[native-render] texture store creation failed\n");
         return false;
     }
+    if (const char* dir = std::getenv("PKMNG5PC_DS3D_DUMP_DIR")) {
+        dump_dir = dir;
+    }
+    if (const char* value = std::getenv("PKMNG5PC_DS3D_DUMP_FRAME")) {
+        dump_frame = std::strtoull(value, nullptr, 10);
+    }
+    if (const char* value = std::getenv("PKMNG5PC_DS3D_DUMP_EVERY")) {
+        dump_every = std::strtoull(value, nullptr, 10);
+    }
+    dump_uploads = std::getenv("PKMNG5PC_DS3D_DUMP_UPLOADS") != nullptr;
     texcache = std::make_unique<melonDS::Texcache<VulkanTextureLoader, uint32_t>>(
-        VulkanTextureLoader { texture_store });
+        VulkanTextureLoader { texture_store,
+            [this](uint32_t id, uint32_t width, uint32_t height, uint32_t layer, const void* data) {
+                dump_upload(id, width, height, layer, data);
+            } });
 
     yspans.resize(kMaxYSpanSetups);
     setup_indices.resize(kMaxYSpanIndices);
@@ -1271,6 +1358,9 @@ bool VulkanComputeRenderer::Impl::wait_frame()
         return false;
     }
     frame_submitted = false;
+    if (texture_store) {
+        texture_store->finish_pending_uploads();
+    }
     return true;
 }
 
@@ -1308,8 +1398,69 @@ void VulkanComputeRenderer::Impl::reset(melonDS::GPU& gpu)
     std::memset(attr_readback.mapped, 0, static_cast<std::size_t>(kReadbackSize));
 }
 
+void VulkanComputeRenderer::Impl::dump_upload(
+    uint32_t id, uint32_t width, uint32_t height, uint32_t layer, const void* data)
+{
+    if (dump_dir.empty() || !dump_uploads || !data) {
+        return;
+    }
+    static uint64_t sequence = 0;
+    char path[1024];
+    std::snprintf(path, sizeof(path), "%s\\tex-%04llu-%u-%u-%ux%u.bin", dump_dir.c_str(),
+        static_cast<unsigned long long>(sequence), id, layer, width, height);
+    if (FILE* file = std::fopen(path, "wb")) {
+        std::fwrite(data, 4, static_cast<std::size_t>(width) * height, file);
+        std::fclose(file);
+    }
+    std::snprintf(path, sizeof(path), "%s\\uploads.txt", dump_dir.c_str());
+    if (FILE* file = std::fopen(path, "ab")) {
+        std::fprintf(file, "%llu %u %u %ux%u\n", static_cast<unsigned long long>(sequence), id,
+            layer, width, height);
+        std::fclose(file);
+    }
+    ++sequence;
+}
+
+void VulkanComputeRenderer::Impl::dump_frame_tables(
+    uint32_t num_variants, uint32_t num_polygons, bool wbuffer)
+{
+    if (dump_dir.empty()) {
+        return;
+    }
+    char path[1024];
+    std::snprintf(path, sizeof(path), "%s\\frame-%llu-meta.txt", dump_dir.c_str(),
+        static_cast<unsigned long long>(frame_counter));
+    if (FILE* file = std::fopen(path, "wb")) {
+        std::fprintf(file, "wbuffer %d\nnum_variants %u\n", wbuffer ? 1 : 0, num_variants);
+        std::fclose(file);
+    }
+    std::snprintf(path, sizeof(path), "%s\\frame-%llu-variants.txt", dump_dir.c_str(),
+        static_cast<unsigned long long>(frame_counter));
+    if (FILE* file = std::fopen(path, "wb")) {
+        for (uint32_t i = 0; i < num_variants; ++i) {
+            std::fprintf(file, "%u tex=%u layer? sampler=%u blend=%u %ux%u\n", i,
+                variants_[i].Texture, variants_[i].Sampler, variants_[i].BlendMode,
+                variants_[i].Width, variants_[i].Height);
+        }
+        std::fclose(file);
+    }
+    std::snprintf(path, sizeof(path), "%s\\frame-%llu-polys.txt", dump_dir.c_str(),
+        static_cast<unsigned long long>(frame_counter));
+    if (FILE* file = std::fopen(path, "wb")) {
+        for (uint32_t i = 0; i < num_polygons; ++i) {
+            const RenderPolygon& p = render_polygons[i];
+            std::fprintf(file, "%u attr=%08X variant=%u layer=%.0f y=%d..%d x=%d..%d spans=%u\n", i,
+                p.Attr, p.Variant, p.TextureLayer, p.YTop, p.YBot, p.XMin, p.XMax, p.FirstXSpan);
+        }
+        std::fclose(file);
+    }
+}
+
 void VulkanComputeRenderer::Impl::verify_frame(melonDS::GPU& gpu)
 {
+    if (!wait_frame()) {
+        return;
+    }
     soft->RenderFrame(gpu);
     ++verify_frames;
     if (gpu.GPU3D.RenderNumPolygons > 0) {
@@ -1334,8 +1485,8 @@ void VulkanComputeRenderer::Impl::verify_frame(melonDS::GPU& gpu)
             continue;
         }
         for (int x = 0; x < static_cast<int>(kWidth); ++x) {
-            const uint32_t vk = vk_color[x];
-            const uint32_t soft = soft_color[x];
+            const uint32_t vk = vk_color[x] & 0x1F3F3F3Fu;
+            const uint32_t soft = soft_color[x] & 0x1F3F3F3Fu;
             const uint32_t dr = static_cast<uint32_t>(std::abs(
                 static_cast<int>((vk >> 16) & 0x3Fu) - static_cast<int>((soft >> 16) & 0x3Fu)));
             const uint32_t dg = static_cast<uint32_t>(std::abs(
@@ -1366,7 +1517,11 @@ void VulkanComputeRenderer::Impl::verify_frame(melonDS::GPU& gpu)
     verify_attr_bad_pixels += attr_bad;
 
     if (const char* dump = std::getenv("PKMNG5PC_DS3D_VERIFY_DUMP")) {
-        if (verify_frames == 1 || verify_frames == 30) {
+        uint64_t every = 30;
+        if (const char* value = std::getenv("PKMNG5PC_DS3D_VERIFY_DUMP_EVERY")) {
+            every = std::strtoull(value, nullptr, 10);
+        }
+        if (verify_frames == 1 || (every != 0 && (verify_frames % every) == 0)) {
             std::vector<uint32_t> soft_color(kWidth * kHeight);
             std::vector<uint32_t> soft_attr(kWidth * kHeight);
             for (int y = 0; y < static_cast<int>(kHeight); ++y) {
@@ -1677,7 +1832,7 @@ bool VulkanComputeRenderer::Impl::build_spans(
                 texcache->GetTexture(gpu, polygon->TexParam, polygon->TexPalette, variant.Texture,
                     prev_tex_layer, texture_last_variant);
                 Texture* texture = texture_store->get(variant.Texture);
-                if (!texture || texture->image.layout != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+                if (!texture || !texture->has_data) {
                     fail("texture upload");
                     return false;
                 }
@@ -1890,7 +2045,7 @@ bool VulkanComputeRenderer::Impl::build_variant_sets(
     for (uint32_t i = 0; i < num_variants; ++i) {
         Texture* texture = variants[i].Texture != 0 ? texture_store->get(variants[i].Texture)
                                                     : texture_store->get(dummy_texture);
-        if (!texture || texture->image.layout != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+        if (!texture || !texture->has_data) {
             fail("texture descriptor");
             return false;
         }
@@ -1923,6 +2078,8 @@ bool VulkanComputeRenderer::Impl::record_frame(uint32_t num_variants, const Vari
         fail("command buffer begin");
         return false;
     }
+
+    texture_store->record_pending_uploads(frame_command);
 
     VkDescriptorSet common_sets[1] = { set0 };
     vkCmdBindDescriptorSets(frame_command, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_layout, 0, 1,
@@ -2065,14 +2222,6 @@ bool VulkanComputeRenderer::Impl::record_frame(uint32_t num_variants, const Vari
         return false;
     }
     frame_submitted = true;
-    if (!wait_frame()) {
-        return false;
-    }
-
-    uint32_t* colors = static_cast<uint32_t*>(color_readback.mapped);
-    for (uint32_t i = 0; i < kWidth * kHeight; ++i) {
-        colors[i] &= 0x1F3F3F3Fu;
-    }
     return true;
 }
 
@@ -2087,6 +2236,7 @@ void VulkanComputeRenderer::Impl::render_cpu(melonDS::GPU& gpu)
 void VulkanComputeRenderer::Impl::render_frame(melonDS::GPU& gpu)
 {
     cpu_lines = false;
+    ++frame_counter;
 
     SinkFrameState state;
     state.initialized = initialized;
@@ -2101,6 +2251,7 @@ void VulkanComputeRenderer::Impl::render_frame(melonDS::GPU& gpu)
         render_cpu(gpu);
         return;
     }
+
     const bool texture_changed = texcache->Update(gpu);
     if (have_frame && !texture_changed && gpu.GPU3D.RenderFrameIdentical) {
         if (verify) {
@@ -2118,6 +2269,10 @@ void VulkanComputeRenderer::Impl::render_frame(melonDS::GPU& gpu)
     if (!build_spans(gpu, num_variants, wbuffer)) {
         render_cpu(gpu);
         return;
+    }
+    if (!dump_dir.empty()
+        && (dump_every == 0 || (frame_counter % dump_every) == 0 || frame_counter == dump_frame)) {
+        dump_frame_tables(num_variants, gpu.GPU3D.RenderNumPolygons, wbuffer);
     }
     build_meta(gpu, variants_.data(), num_variants);
 
@@ -2195,7 +2350,7 @@ melonDS::u32* VulkanComputeRenderer::GetLine(int line)
     if (impl_->cpu_lines && impl_->soft) {
         return impl_->soft->GetLine(line);
     }
-    if (!impl_->color_readback.mapped) {
+    if (!impl_->color_readback.mapped || !impl_->wait_frame()) {
         return nullptr;
     }
     return static_cast<melonDS::u32*>(impl_->color_readback.mapped)
@@ -2210,7 +2365,7 @@ const melonDS::u32* VulkanComputeRenderer::GetAttrLine(int line)
     if (impl_->cpu_lines && impl_->soft) {
         return impl_->soft->GetAttrLine(line);
     }
-    if (!impl_->attr_readback.mapped) {
+    if (!impl_->attr_readback.mapped || !impl_->wait_frame()) {
         return nullptr;
     }
     return static_cast<const melonDS::u32*>(impl_->attr_readback.mapped)

@@ -28,7 +28,8 @@ int main(int argc, char** argv)
     if (argc < 2) {
         std::fprintf(stderr,
             "usage: romdump <rom.nds> [--list] [--narcs] [--overlays]\n"
-            "                          [--extract <dir>] [--narc-limit <n>]\n");
+            "                          [--extract <dir>] [--narc-limit <n>]\n"
+            "                          [--prepare-overlays <images-dir>]\n");
         return 2;
     }
     std::vector<u8> rom = read_file(argv[1]);
@@ -71,6 +72,7 @@ int main(int argc, char** argv)
     bool list_files = false;
     bool list_narcs = false;
     std::string extract_dir;
+    std::string prepare_overlays_dir;
     u32 narc_limit = 0;
     for (int i = 2; i < argc; ++i) {
         std::string arg = argv[i];
@@ -82,11 +84,61 @@ int main(int argc, char** argv)
             list_narcs = true;
         } else if (arg == "--extract" && i + 1 < argc) {
             extract_dir = argv[++i];
+        } else if (arg == "--prepare-overlays" && i + 1 < argc) {
+            prepare_overlays_dir = argv[++i];
         } else if (arg == "--narc-limit" && i + 1 < argc) {
             narc_limit = static_cast<u32>(std::strtoul(argv[++i], nullptr, 10));
         } else {
             std::fprintf(stderr, "warning: ignoring unknown argument '%s'\n", arg.c_str());
         }
+    }
+
+    if (!prepare_overlays_dir.empty()) {
+        const std::filesystem::path root(prepare_overlays_dir);
+        const std::filesystem::path overlay_dir = root / "overlays";
+        std::error_code error;
+        std::filesystem::create_directories(overlay_dir, error);
+        std::ofstream manifest(root / "overlays.json", std::ios::binary | std::ios::trunc);
+        manifest << "[\n";
+        usize written = 0;
+        usize skipped = 0;
+        const usize count = nds::overlay_count(rom);
+        for (usize i = 0; i < count; ++i) {
+            auto ov = nds::overlay(rom, i);
+            if (!ov) {
+                ++skipped;
+                continue;
+            }
+            auto data = nds::file_data(rom, ov->file_id);
+            if (!data) {
+                ++skipped;
+                continue;
+            }
+            std::vector<u8> bytes;
+            if (ov->compressed()) {
+                try {
+                    bytes = compression::blz_decompress(*data);
+                } catch (const std::exception&) {
+                    ++skipped;
+                    continue;
+                }
+            } else {
+                bytes.assign(data->begin(), data->end());
+            }
+            char name[32];
+            std::snprintf(name, sizeof(name), "ov%03u.bin", ov->id);
+            std::ofstream file(overlay_dir / name, std::ios::binary | std::ios::trunc);
+            file.write(reinterpret_cast<const char*>(bytes.data()),
+                static_cast<std::streamsize>(bytes.size()));
+            manifest << (written ? ",\n" : "") << "  {\"file\": \"" << name
+                     << "\", \"load_address\": \"0x" << std::hex << std::uppercase << ov->ram_addr
+                     << std::dec << "\"}";
+            ++written;
+        }
+        manifest << "\n]\n";
+        std::printf("overlays     : %zu written, %zu skipped -> %s\n", written, skipped,
+            overlay_dir.string().c_str());
+        std::printf("manifest     : %s\n", (root / "overlays.json").string().c_str());
     }
 
     if (!extract_dir.empty()) {
@@ -160,8 +212,8 @@ int main(int argc, char** argv)
         if (!ov) {
             continue;
         }
-        std::printf("ov%03u file=%-5u ram=0x%-8X bss=0x%-6X %s", ov->id, ov->file_id, ov->ram_size,
-            ov->bss_size, ov->compressed() ? "blz" : "raw");
+        std::printf("ov%03u file=%-5u addr=0x%-8X size=0x%-8X bss=0x%-6X %s", ov->id, ov->file_id,
+            ov->ram_addr, ov->ram_size, ov->bss_size, ov->compressed() ? "blz" : "raw");
         auto data = nds::file_data(rom, ov->file_id);
         if (ov->compressed()) {
             ++compressed;

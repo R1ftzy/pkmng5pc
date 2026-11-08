@@ -91,6 +91,104 @@ def format_bytes(value: int) -> str:
     return f"{mib:.0f} MiB"
 
 
+@dataclass(frozen=True)
+class HostSample:
+    cpu_percent: float | None = None
+    used_bytes: int | None = None
+    total_bytes: int | None = None
+
+
+class _FileTime(ctypes.Structure):
+    _fields_ = [("low", ctypes.c_ulong), ("high", ctypes.c_ulong)]
+
+
+def _filetime_value(value: _FileTime) -> int:
+    return (int(value.high) << 32) | int(value.low)
+
+
+def cpu_times() -> tuple[int, int] | None:
+    if os.name == "nt":
+        idle = _FileTime()
+        kernel = _FileTime()
+        user = _FileTime()
+        try:
+            if ctypes.windll.kernel32.GetSystemTimes(
+                ctypes.byref(idle), ctypes.byref(kernel), ctypes.byref(user)
+            ):
+                return _filetime_value(idle), _filetime_value(kernel) + _filetime_value(user)
+        except (AttributeError, OSError):
+            return None
+        return None
+    try:
+        first = Path("/proc/stat").read_text(encoding="utf-8").splitlines()[0]
+    except (OSError, IndexError):
+        return None
+    fields = first.split()
+    if len(fields) < 5 or fields[0] != "cpu":
+        return None
+    try:
+        values = [int(value) for value in fields[1:]]
+    except ValueError:
+        return None
+    idle = values[3] + (values[4] if len(values) > 4 else 0)
+    return idle, sum(values[:8])
+
+
+def memory_usage() -> tuple[int, int] | None:
+    if os.name == "nt":
+        status = _MemoryStatusEx()
+        status.dwLength = ctypes.sizeof(status)
+        try:
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+                total = int(status.ullTotalPhys)
+                available = int(status.ullAvailPhys)
+                return max(0, total - available), total
+        except (AttributeError, OSError):
+            return None
+        return None
+    try:
+        values: dict[str, int] = {}
+        for line in Path("/proc/meminfo").read_text(
+            encoding="utf-8", errors="replace"
+        ).splitlines():
+            key, _, rest = line.partition(":")
+            fields = rest.split()
+            if not fields:
+                continue
+            try:
+                values[key] = int(fields[0]) * 1024
+            except ValueError:
+                continue
+        total = values.get("MemTotal")
+        available = values.get("MemAvailable")
+        if total is None or available is None:
+            return None
+        return max(0, total - available), total
+    except OSError:
+        return None
+
+
+class HostSampler:
+    """CPU and memory usage sampled from the OS at call time."""
+
+    def __init__(self) -> None:
+        self._previous = cpu_times()
+
+    def sample(self) -> HostSample:
+        current = cpu_times()
+        cpu: float | None = None
+        if current is not None and self._previous is not None:
+            idle = current[0] - self._previous[0]
+            total = current[1] - self._previous[1]
+            if total > 0:
+                cpu = max(0.0, min(100.0, 100.0 * (1.0 - idle / total)))
+        self._previous = current
+        memory = memory_usage()
+        if memory is None:
+            return HostSample(cpu_percent=cpu)
+        return HostSample(cpu_percent=cpu, used_bytes=memory[0], total_bytes=memory[1])
+
+
 def list_gpus(tool: Path | str | None, timeout: float = 5.0) -> list[GpuSpec]:
     if tool is None:
         return []
