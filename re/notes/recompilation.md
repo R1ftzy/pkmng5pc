@@ -1504,3 +1504,165 @@ like, and how much of the measured interpreter cost they actually carry.
   interpreter *entries* (dispatch misses), not instructions — an entry is the
   unit the ingest acts on, but instructions-per-entry is not constant. Windows,
   RelWithDebInfo, `NDS_GPU2D_THREADED=0`.
+
+### In play, the interpreter is 0.02% of guest cycles: the overlays a save loads are banked (2026-11-11)
+
+The design pass above left one question open and named it: "the overlay share
+over a *gameplay* window", because every manifest on disk was a 1200-frame boot
+window with no scripted input. This is that measurement, and the bank work it
+drove. The window is a save-loaded run that reaches the overworld and wanders a
+bridge/water route for 262 emulated seconds, driven through the frontend's own
+input path and captured three times: baseline, after banking the overlays the
+route loads, after seeding the ARM7 alias bank. A fourth, identical-binary run
+is the control for the comparison itself.
+
+- **Observation (method, and why a control run is needed).** `banks/drive_cov.py`
+  is `banks/drive_live.py` with `--coverage-out`: it drives a live window from
+  `banks/scratch/world-black.sav`, replays a 93-press plan
+  (`plan-world.json`: title → menu → CONTINUE → 255 s of walking, turning and
+  interacting), and flushes the Tier-3 manifest at the end. Per-frame cost comes
+  from `emu_attrib`/`tier3_delta` in the diagnostics bundle, bucketed by the
+  cumulative ARM9 cycle counter. `banks/scratch/compare_run.py` totals a
+  bundle, `tier3_share.py` splits it by emulated time, and `page_owners.py`
+  names the resident overlay behind every interpreted address by comparing the
+  manifest's live page bytes against the decoded overlay images — needed
+  because 30 overlay generations share a load base, so attributing by address
+  range is a coin flip.
+
+- **Observation (baseline, 9 overlays banked, ARM7 alias bank 3,567 functions).**
+  Whole 262 s window: interpreted ARM9 **41,260,476** instructions and ARM7
+  **27,963,764**; `tier3_arm9` 0.2981, `tier3_arm7` 0.3688 ms/frame. In play
+  (t ≥ 200 s) that is `tier3_arm9` **1.112** of 10.605 ms/frame (10.5 %) and
+  `tier3_arm7` **0.669** (6.3 %). The whole-run ARM9 number is mostly boot and
+  title — the overlays that load on this save did not exist in the bank at all.
+
+- **Observation (the ingest resolves the overlays this save actually loads).**
+  The manifest (241 page versions, 63 of them not in ROM) went through the
+  submodule's `ingest_coverage_manifests.py` against the current dispatch:
+  **7,654** entry points merged, **1,498** placed in banks, 667 ARM9 and 10 ARM7
+  left unresolved. Resolved overlays: `ov010`, `ov021`, `ov067`, `ov206`,
+  `ov208` (ingest names are decimal ids; the banks they generate are
+  `ov00A`-style hex, so `ov067` is bank `ov043`, `ov206` is `ov0CE`, `ov208` is
+  `ov0D0`). Merged as a union with the checked-in per-title seeds by
+  `banks/scratch/merge_seeds.py` — ingest output is an increment, not a corpus —
+  which took `arm9_arm9_02004000.toml` to 9,337 addresses and added four seed
+  files. `pkmn_bankgen --title-config re/config/black.toml --overlays
+  --overlay-seeds re/config/black/seeds` then emitted **14 banks**: the ARM9
+  module (23,527 functions), the ARM7 image (3,567 → see below), and 12
+  overlays — `ov009 00A 00B 00E 012 014 015 01D 043 058 0CE 0D0` — 1.00 MB of
+  the 3.11 MB overlay table (30.8 %) and the first overlays this project has
+  banked at all. Every overlay bank is recompiled with `--validate-live-bytes`
+  because the shared bases make generation collisions the design case.
+
+- **Observation (ARM9 in-play interpreter cost collapses).** Same run, same
+  save, same plan, after the bank rebuild: interpreted ARM9 **41,260,476 →
+  1,890,503** instructions for the window; `tier3_arm9` 0.2981 → **0.0413**
+  ms/frame overall and **1.112 → 0.045** in play (10.5 % → 0.35 % of the frame).
+  Per-owner attribution of what is left: `ov053` 16,968 entry hits (60 %),
+  `ov179` 4,837, `ov230` 2,163, then the already-banked `ov009` 647 and
+  `ov088` 232 (their resident page version is a runtime-modified generation, so
+  validation keeps their rows inert, which is the designed behaviour), the ARM9
+  module 27, and 3,325 hits on a page at `0x02189xxx` that matches no decoded
+  overlay.
+
+- **Observation (the ARM7 half was not closed, and the reason was seeds, not
+  banks).** ARM7 interpreted work did **not** move with the ARM9 bank: 27,963,764
+  → 29,117,180 instructions, `tier3_arm7` 0.3688 → 0.3954 ms/frame, 0.562 in
+  play. All 629,440 interpreted ARM7 entry *hits* sat in the IWRAM/shared-WRAM
+  copy — `0x03800000`-`0x03803000`, `0x03805000` and `0x037FE000` — and **none
+  of them was in the ARM7 bank**, even though the bank already declared those
+  bases as `[[code_copy]]` aliases: the aliases were seeded from a 2026-10-16
+  corpus that never observed this code. The hits concentrate here because the ARM7 sound and IRQ handlers
+  only run hot once the game is in the overworld, which no boot corpus covers.
+  The fix is the same union loop as the overlays, and the ARM7 seeds live in
+  `re/config/arm7/seeds/` (shared by all four titles, whose ARM7 image is
+  byte-identical), so the merge there is cross-title by construction.
+
+- **Observation (seeding the alias bank closes 88 % of it).** The union takes
+  `arm7_arm7_02fce5a8.toml` to 1,168 and `arm7_arm7_037f79bc.toml` to 1,211
+  addresses, **2,379** seeds in total; `pkmn_bankgen` re-emits the ARM7 bank at
+  **6,015** functions (from 3,567) and every previously-hot address is now a
+  bank row. Result on the same window: interpreted ARM7 **29,117,180 →
+  3,458,479** instructions (88 %), `tier3_arm7` 0.3954 → **0.0761** ms/frame
+  overall and **0.562 → 0.115** in play (4.4 % → 0.9 %).
+
+- **Observation (what is left, and why it is not a bank gap).** In the
+  post-bank manifest `entry_points_arm7` is **empty** — no call or indirect
+  target is left unbanked — yet `tier3_entries7` is 605,708 with 3.46 M
+  instructions, i.e. ~5.7 instructions per entry. `root_map` pins 605,702 of
+  those 605,708 entries to five IWRAM/shared-WRAM pages (`0x03800000` 424,889;
+  `0x03803000` 99,997; `0x03801000` 37,339; `0x03809000` 32,257; `0x03802000`
+  11,220). Four of the five are byte-identical to the ARM7 module at the alias
+  mapping (measured: 0 of 4,096 bytes differ at `0x03800000`, `0x03801000`,
+  `0x03802000`, `0x03803000`); `0x03809000` sits just past the alias span and is
+  a runtime-materialized page. So the rows exist and the bytes agree; what
+  rejects them is the runner's provenance gate, not its
+  byte comparison: `dispatch_validation_live` → `validation_identity_live`
+  (`runtime_arm.cpp:379-398`) additionally requires
+  `bus_range_has_write_provenance` over the row's whole expected span, and that
+  (`bus.cpp:743-768`) demands every byte of the span be recorded as *written*.
+  An inferred consequence: a row whose span covers a byte the copy never wrote —
+  the block has zero gaps the guest leaves untouched — can never activate even
+  though its bytes match, and that is the shape of the five pages above. It is
+  the one hypothesis consistent with "no unbanked entry points, rows present,
+  bytes equal, entries still counted as interpreter", but it is inferred from
+  the predicate rather than instrumented per row.
+
+- **Observation (the bank set now, and the policy that was gated on it).**
+  14 banks for Black: ARM9 module 23,527 functions (9,337 seeds, `skip_call`
+  patch at `0x02075F7C` applied), ARM7 image 6,015 functions (2,379 seeds, two
+  `[[code_copy]]` aliases, `--validate-live-bytes`), 12 overlays. Interpreted
+  instructions for the whole 262 s window, against guest cycles at 67.03 MHz
+  (ARM9) and 33.51 MHz (ARM7):
+
+  | | instructions interpreted | guest cycles | share |
+  | --- | --- | --- | --- |
+  | ARM9 before → after | 41,260,476 → **1,894,923** | 17.56 G | 0.235 % → **0.011 %** |
+  | ARM7 before → after | 27,963,764 → **3,458,479** | 8.78 G | 0.319 % → **0.039 %** |
+  | both | 69,224,240 → **5,353,402** | 26.34 G | 0.263 % → **0.020 %** |
+
+  This is the filter `docs/adr/0003-tier3-interpreter-policy.md` set — Tier 3
+  under 0.1 % of executed work **in play** — measured on a gameplay window for
+  the first time. On host time the same residue is 0.049 + 0.115 = **0.164
+  ms/frame** of a 13.1 ms emulated frame (1.25 %), because the interpreter costs
+  ~200× native per instruction.
+
+- **Observation (the guest is unchanged, and the comparison needed a control).**
+  Presented-frame digests are identical for every frame before the first
+  injected press in all four runs (2,238 frames shared by all four, frames
+  0..6254, across boot, title and menu). After a press they are not comparable by frame index at
+  all: the debug server polls in wall time, so a press lands one or two frames
+  apart between runs. The control is a fourth run of the *same* binary against
+  the *same* plan: it diverges from its twin at **frame 6255**, the first press,
+  with a 50 ms press-time delta — i.e. at exactly the point where the pre-change
+  baseline diverges from the post-change runs. Baseline vs a post-change run
+  that happened to land its first press on the same frame then stays identical
+  for **210 frames past the press** (2,450 common frames, through the menu into
+  the overworld) until press 14 lands 17 ms apart. So the guest is unchanged
+  under the banking; the only difference between runs is input timing.
+
+- **Inference (high).** For a save-loaded gameplay window on Black, the
+  static-bank design now carries the whole game: every overlay the route loads,
+  the ARM9 module and the ARM7 image (module + both relocated copies) are
+  native, and what remains interpreted is (a) three small overlays the ingest
+  cannot resolve to a whole ROM page, (b) two runtime-modified overlay page
+  generations, (c) one page at `0x02189xxx` with no decoded owner, and (d) the
+  ARM7 IWRAM block the provenance gate holds back. Adding the 12 overlays is
+  what took in-play ARM9 cost to noise; adding 1,211 ARM7 seeds is what took
+  ARM7 from 4.4 % to 0.9 %.
+
+- **Unknown.** How much of the remaining 0.9 % the provenance gate is worth
+  under a relaxed rule (the rows are already emitted, so it is a runner change,
+  not a bank change); whether the `0x02189xxx` page is a fourth overlay
+  generation or a runtime-patched page; whether the 225 overlays never observed
+  on this route behave like the 12 banked ones when a manifest finally names
+  them (offset 0 is not a reliable entry, so they cannot be banked blind); and
+  whether other areas (battle, menus, other towns) load overlays this route
+  never touches — the measured corpus is one save on one route.
+
+- **Confidence.** High on the instruction counts, the per-frame costs, the bank
+  set, the per-owner attribution and the digest control (all read from the
+  runner's own diagnostics, manifests and drive reports). Medium on the ARM7
+  provenance explanation: the gate is cited by file:line and the rows provably
+  exist with matching bytes, but the per-row rejection reason was inferred
+  rather than instrumented. Windows, RelWithDebInfo, `NDS_GPU2D_THREADED=0`.

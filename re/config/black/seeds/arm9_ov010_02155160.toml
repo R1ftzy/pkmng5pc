@@ -128,6 +128,20 @@ kind = "runtime_observed"
 # hits = 12, seen as span
 
 [[entry_point]]
+addr = 0x0215870C
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as call
+
+[[entry_point]]
+addr = 0x02158714
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as span
+
+[[entry_point]]
 addr = 0x02158A90
 mode = "thumb"
 cpu  = "arm9"
@@ -667,6 +681,160 @@ kind = "runtime_observed"
 # hits = 1, seen as span
 
 [[entry_point]]
+addr = 0x0215E840
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as call
+
+[[entry_point]]
+addr = 0x0215E852
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as span
+
+[[entry_point]]
+addr = 0x0215E858
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as span
+
+[[entry_point]]
+addr = 0x0215E860
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as span
+
+[[entry_point]]
+addr = 0x0215E86A
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as span
+
+[[entry_point]]
+addr = 0x0215E86E
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 2, seen as span
+
+[[entry_point]]
+addr = 0x0215E876
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 2, seen as span
+
+[[entry_point]]
+addr = 0x0215E8C4
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 3, seen as span
+
+[[entry_point]]
+addr = 0x0215E8CE
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as span
+
+[[entry_point]]
+addr = 0x0215E8D6
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 2, seen as span
+
+[[entry_point]]
+addr = 0x0215E8E2
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 4, seen as span
+
+[[entry_point]]
+addr = 0x0215E8F8
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 2, seen as span
+
+[[entry_point]]
+addr = 0x0215E90A
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 2, seen as span
+
+[[entry_point]]
+addr = 0x0215E924
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as span
+
+[[entry_point]]
+addr = 0x0215E938
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as span
+
+[[entry_point]]
+addr = 0x0215E93C
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as span
+
+[[entry_point]]
+addr = 0x0215E940
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as span
+
+[[entry_point]]
+addr = 0x0215E956
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 2, seen as span
+
+[[entry_point]]
+addr = 0x0215E96A
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 3, seen as span
+
+[[entry_point]]
+addr = 0x0215E9F4
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as span
+
+[[entry_point]]
+addr = 0x0215E9F8
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as span
+
+[[entry_point]]
+addr = 0x0215EA00
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as span
+
+[[entry_point]]
 addr = 0x0215FA00
 mode = "thumb"
 cpu  = "arm9"
@@ -686,6 +854,13 @@ mode = "thumb"
 cpu  = "arm9"
 kind = "runtime_observed"
 # hits = 2, seen as span
+
+[[entry_point]]
+addr = 0x0215FA44
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as call
 
 [[entry_point]]
 addr = 0x0215FC40
@@ -828,6 +1003,55 @@ kind = "runtime_observed"
 # hits = 4, seen as span
 
 [[entry_point]]
+addr = 0x0215FDA2
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as span
+
+[[entry_point]]
+addr = 0x0215FDA6
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as span
+
+[[entry_point]]
+addr = 0x0215FDAA
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as span
+
+[[entry_point]]
+addr = 0x0215FDB2
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 4, seen as span
+
+[[entry_point]]
+addr = 0x0215FDC2
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as span
+
+[[entry_point]]
+addr = 0x0215FDC8
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 2, seen as span
+
+[[entry_point]]
+addr = 0x0215FDD2
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 2, seen as span
+
+[[entry_point]]
 addr = 0x0215FDDC
 mode = "thumb"
 cpu  = "arm9"
@@ -863,7 +1087,819 @@ kind = "runtime_observed"
 # hits = 2, seen as span
 
 [[entry_point]]
+addr = 0x0215FE5C
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as span
+
+[[entry_point]]
+addr = 0x0215FE64
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 2, seen as span
+
+[[entry_point]]
+addr = 0x0215FE6E
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as span
+
+[[entry_point]]
 addr = 0x0215FEC0
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 2, seen as span
+
+[[entry_point]]
+addr = 0x0215FEC8
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as call
+
+[[entry_point]]
+addr = 0x0215FF34
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as span
+
+[[entry_point]]
+addr = 0x0215FF3A
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as span
+
+[[entry_point]]
+addr = 0x0215FF3E
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as span
+
+[[entry_point]]
+addr = 0x0215FF42
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 6, seen as span
+
+[[entry_point]]
+addr = 0x0215FF54
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as span
+
+[[entry_point]]
+addr = 0x0215FF62
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as span
+
+[[entry_point]]
+addr = 0x0215FF66
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 9, seen as span
+
+[[entry_point]]
+addr = 0x0215FF6E
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as span
+
+[[entry_point]]
+addr = 0x0215FF88
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as span
+
+[[entry_point]]
+addr = 0x0215FF90
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as span
+
+[[entry_point]]
+addr = 0x0215FF9A
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as span
+
+[[entry_point]]
+addr = 0x0215FFB8
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as span
+
+[[entry_point]]
+addr = 0x0215FFC2
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as span
+
+[[entry_point]]
+addr = 0x0215FFD0
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as span
+
+[[entry_point]]
+addr = 0x0215FFD6
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 2, seen as span
+
+[[entry_point]]
+addr = 0x0215FFF2
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as span
+
+[[entry_point]]
+addr = 0x0215FFF6
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as span
+
+[[entry_point]]
+addr = 0x0215FFFC
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as span
+
+[[entry_point]]
+addr = 0x02160018
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 10, seen as span
+
+[[entry_point]]
+addr = 0x0216001E
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 5, seen as span
+
+[[entry_point]]
+addr = 0x0216002E
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 5, seen as span
+
+[[entry_point]]
+addr = 0x02160032
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 78, seen as span
+
+[[entry_point]]
+addr = 0x02160054
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as indirect
+
+[[entry_point]]
+addr = 0x0216005A
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as indirect
+
+[[entry_point]]
+addr = 0x02160060
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 7, seen as span
+
+[[entry_point]]
+addr = 0x02160066
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as indirect
+
+[[entry_point]]
+addr = 0x0216006A
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 2, seen as span
+
+[[entry_point]]
+addr = 0x02160070
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 49, seen as indirect/span
+
+[[entry_point]]
+addr = 0x0216007A
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 8, seen as span
+
+[[entry_point]]
+addr = 0x02160082
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 75, seen as indirect/span
+
+[[entry_point]]
+addr = 0x0216008E
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 62, seen as span
+
+[[entry_point]]
+addr = 0x021600A2
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 2, seen as span
+
+[[entry_point]]
+addr = 0x021600BC
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 4, seen as span
+
+[[entry_point]]
+addr = 0x021600C0
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 4, seen as span
+
+[[entry_point]]
+addr = 0x021600D4
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 3, seen as span
+
+[[entry_point]]
+addr = 0x021600DC
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 2, seen as span
+
+[[entry_point]]
+addr = 0x0216010E
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as span
+
+[[entry_point]]
+addr = 0x0216011A
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as span
+
+[[entry_point]]
+addr = 0x021601A4
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 3, seen as indirect
+
+[[entry_point]]
+addr = 0x021601A8
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 6, seen as span
+
+[[entry_point]]
+addr = 0x021601B6
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as span
+
+[[entry_point]]
+addr = 0x021601C2
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 2, seen as span
+
+[[entry_point]]
+addr = 0x0216020A
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 2, seen as span
+
+[[entry_point]]
+addr = 0x0216020E
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as indirect
+
+[[entry_point]]
+addr = 0x02160214
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as span
+
+[[entry_point]]
+addr = 0x02160218
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as span
+
+[[entry_point]]
+addr = 0x02160256
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as span
+
+[[entry_point]]
+addr = 0x0216040C
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as span
+
+[[entry_point]]
+addr = 0x0216041C
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 2, seen as span
+
+[[entry_point]]
+addr = 0x02160450
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as indirect
+
+[[entry_point]]
+addr = 0x02160564
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as call
+
+[[entry_point]]
+addr = 0x02160576
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 2, seen as span
+
+[[entry_point]]
+addr = 0x02160586
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as indirect
+
+[[entry_point]]
+addr = 0x021605C0
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as call
+
+[[entry_point]]
+addr = 0x021605DC
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as span
+
+[[entry_point]]
+addr = 0x021605E2
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as span
+
+[[entry_point]]
+addr = 0x021605E8
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 2, seen as span
+
+[[entry_point]]
+addr = 0x021605F0
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as span
+
+[[entry_point]]
+addr = 0x021605F4
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 2, seen as span
+
+[[entry_point]]
+addr = 0x02160604
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 2, seen as span
+
+[[entry_point]]
+addr = 0x0216060C
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 3, seen as call
+
+[[entry_point]]
+addr = 0x0216060E
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as span
+
+[[entry_point]]
+addr = 0x02160638
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as span
+
+[[entry_point]]
+addr = 0x0216063C
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 87, seen as span
+
+[[entry_point]]
+addr = 0x02160650
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 3, seen as span
+
+[[entry_point]]
+addr = 0x0216065E
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as span
+
+[[entry_point]]
+addr = 0x0216075C
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as call
+
+[[entry_point]]
+addr = 0x02160770
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 332, seen as span
+
+[[entry_point]]
+addr = 0x02160776
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 332, seen as span
+
+[[entry_point]]
+addr = 0x02160780
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 332, seen as span
+
+[[entry_point]]
+addr = 0x02160798
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 332, seen as span
+
+[[entry_point]]
+addr = 0x021607B6
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 332, seen as span
+
+[[entry_point]]
+addr = 0x021607BA
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 2, seen as span
+
+[[entry_point]]
+addr = 0x021607C6
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as span
+
+[[entry_point]]
+addr = 0x021607D2
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 334, seen as span
+
+[[entry_point]]
+addr = 0x021607E0
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 664, seen as span
+
+[[entry_point]]
+addr = 0x021607E6
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 331, seen as span
+
+[[entry_point]]
+addr = 0x021607EA
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 331, seen as span
+
+[[entry_point]]
+addr = 0x021607EE
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 331, seen as span
+
+[[entry_point]]
+addr = 0x021607F2
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 331, seen as span
+
+[[entry_point]]
+addr = 0x021607F6
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 331, seen as span
+
+[[entry_point]]
+addr = 0x021607FA
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 8559, seen as span
+
+[[entry_point]]
+addr = 0x02160818
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as indirect
+
+[[entry_point]]
+addr = 0x0216081A
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as indirect
+
+[[entry_point]]
+addr = 0x021608B2
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as indirect
+
+[[entry_point]]
+addr = 0x021608BC
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 2, seen as span
+
+[[entry_point]]
+addr = 0x021608C6
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as span
+
+[[entry_point]]
+addr = 0x021608CA
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as indirect
+
+[[entry_point]]
+addr = 0x021608D0
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 2, seen as span
+
+[[entry_point]]
+addr = 0x021608DA
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as span
+
+[[entry_point]]
+addr = 0x021608DE
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 2, seen as span
+
+[[entry_point]]
+addr = 0x021608E8
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as span
+
+[[entry_point]]
+addr = 0x0216094C
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as indirect
+
+[[entry_point]]
+addr = 0x02160960
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 2, seen as span
+
+[[entry_point]]
+addr = 0x0216099C
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 647, seen as span
+
+[[entry_point]]
+addr = 0x021609A0
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 7988, seen as indirect/span
+
+[[entry_point]]
+addr = 0x02160A0A
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 42, seen as span
+
+[[entry_point]]
+addr = 0x02160A0E
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 41, seen as span
+
+[[entry_point]]
+addr = 0x02160A28
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as call
+
+[[entry_point]]
+addr = 0x02160A3A
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 41, seen as span
+
+[[entry_point]]
+addr = 0x02160A46
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 41, seen as span
+
+[[entry_point]]
+addr = 0x02160A64
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as call
+
+[[entry_point]]
+addr = 0x02160A74
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 41, seen as span
+
+[[entry_point]]
+addr = 0x02160D6C
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as call
+
+[[entry_point]]
+addr = 0x02160D86
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as span
+
+[[entry_point]]
+addr = 0x02160D90
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as span
+
+[[entry_point]]
+addr = 0x02160D98
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as span
+
+[[entry_point]]
+addr = 0x02160D9E
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as span
+
+[[entry_point]]
+addr = 0x02160DA6
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 2, seen as span
+
+[[entry_point]]
+addr = 0x02160DAE
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as span
+
+[[entry_point]]
+addr = 0x02160DB8
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as span
+
+[[entry_point]]
+addr = 0x02160DBE
 mode = "thumb"
 cpu  = "arm9"
 kind = "runtime_observed"
@@ -1136,6 +2172,167 @@ kind = "runtime_observed"
 # hits = 1, seen as call
 
 [[entry_point]]
+addr = 0x02162598
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 95, seen as call/span
+
+[[entry_point]]
+addr = 0x0216259E
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 39, seen as span
+
+[[entry_point]]
+addr = 0x021625A2
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 195, seen as span
+
+[[entry_point]]
+addr = 0x021625AE
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1745, seen as span
+
+[[entry_point]]
+addr = 0x021625B8
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 76, seen as span
+
+[[entry_point]]
+addr = 0x021625BE
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 38, seen as span
+
+[[entry_point]]
+addr = 0x021625C2
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 76, seen as span
+
+[[entry_point]]
+addr = 0x021628E4
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 94, seen as call/span
+
+[[entry_point]]
+addr = 0x021628F2
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as span
+
+[[entry_point]]
+addr = 0x02162926
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 11, seen as span
+
+[[entry_point]]
+addr = 0x02162958
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 199, seen as span
+
+[[entry_point]]
+addr = 0x02162966
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 21, seen as span
+
+[[entry_point]]
+addr = 0x02162970
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 39, seen as call/span
+
+[[entry_point]]
+addr = 0x0216297A
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 10, seen as span
+
+[[entry_point]]
+addr = 0x0216297E
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 10, seen as span
+
+[[entry_point]]
+addr = 0x02162A44
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 8, seen as span
+
+[[entry_point]]
+addr = 0x02162A5C
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 7, seen as span
+
+[[entry_point]]
+addr = 0x02162A60
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 45, seen as span
+
+[[entry_point]]
+addr = 0x02162E00
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 891, seen as call/span
+
+[[entry_point]]
+addr = 0x02162E0E
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 19, seen as span
+
+[[entry_point]]
+addr = 0x02162E12
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 55, seen as span
+
+[[entry_point]]
+addr = 0x02162E42
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 18, seen as span
+
+[[entry_point]]
+addr = 0x02162E46
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 18, seen as span
+
+[[entry_point]]
 addr = 0x02163E1C
 mode = "thumb"
 cpu  = "arm9"
@@ -1344,6 +2541,349 @@ mode = "thumb"
 cpu  = "arm9"
 kind = "runtime_observed"
 # hits = 1, seen as call
+
+[[entry_point]]
+addr = 0x02164480
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 2, seen as call
+
+[[entry_point]]
+addr = 0x0216448E
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 5, seen as span
+
+[[entry_point]]
+addr = 0x02164492
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 5, seen as span
+
+[[entry_point]]
+addr = 0x021644A0
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 5, seen as span
+
+[[entry_point]]
+addr = 0x021644A8
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 45, seen as span
+
+[[entry_point]]
+addr = 0x021644AE
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 4, seen as span
+
+[[entry_point]]
+addr = 0x021644B2
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 40, seen as span
+
+[[entry_point]]
+addr = 0x021644C0
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 4, seen as span
+
+[[entry_point]]
+addr = 0x021644C4
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 20, seen as call
+
+[[entry_point]]
+addr = 0x021644C6
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 4, seen as span
+
+[[entry_point]]
+addr = 0x021644CE
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 8, seen as span
+
+[[entry_point]]
+addr = 0x021644D6
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 4, seen as span
+
+[[entry_point]]
+addr = 0x021644DA
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 4, seen as span
+
+[[entry_point]]
+addr = 0x021644DE
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 4, seen as span
+
+[[entry_point]]
+addr = 0x021644E2
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 4, seen as span
+
+[[entry_point]]
+addr = 0x021644EA
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 28, seen as span
+
+[[entry_point]]
+addr = 0x021644F4
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as call
+
+[[entry_point]]
+addr = 0x02164500
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 2, seen as span
+
+[[entry_point]]
+addr = 0x02164508
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 2, seen as call
+
+[[entry_point]]
+addr = 0x02164514
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 3, seen as span
+
+[[entry_point]]
+addr = 0x0216451C
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 3, seen as span
+
+[[entry_point]]
+addr = 0x02164526
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 3, seen as span
+
+[[entry_point]]
+addr = 0x0216452A
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 3, seen as span
+
+[[entry_point]]
+addr = 0x0216452E
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 8, seen as span
+
+[[entry_point]]
+addr = 0x02164548
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 2, seen as span
+
+[[entry_point]]
+addr = 0x02164564
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 2, seen as call
+
+[[entry_point]]
+addr = 0x0216456C
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 2, seen as span
+
+[[entry_point]]
+addr = 0x02164570
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 13, seen as span
+
+[[entry_point]]
+addr = 0x0216457E
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 7, seen as span
+
+[[entry_point]]
+addr = 0x0216458C
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 2, seen as call
+
+[[entry_point]]
+addr = 0x02164594
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 4, seen as span
+
+[[entry_point]]
+addr = 0x0216459C
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 2, seen as call
+
+[[entry_point]]
+addr = 0x021645A8
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 4, seen as span
+
+[[entry_point]]
+addr = 0x021645BC
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 12, seen as span
+
+[[entry_point]]
+addr = 0x021645C0
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 4, seen as call
+
+[[entry_point]]
+addr = 0x021645C8
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 2, seen as span
+
+[[entry_point]]
+addr = 0x021645CE
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 2, seen as span
+
+[[entry_point]]
+addr = 0x021645DA
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 4, seen as span
+
+[[entry_point]]
+addr = 0x021645E0
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 2, seen as span
+
+[[entry_point]]
+addr = 0x021645EC
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 2, seen as span
+
+[[entry_point]]
+addr = 0x021645F2
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 2, seen as span
+
+[[entry_point]]
+addr = 0x02164608
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 3, seen as span
+
+[[entry_point]]
+addr = 0x02164610
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 2, seen as span
+
+[[entry_point]]
+addr = 0x02164620
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 2, seen as span
+
+[[entry_point]]
+addr = 0x0216462E
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 4, seen as span
+
+[[entry_point]]
+addr = 0x02164644
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 5, seen as span
+
+[[entry_point]]
+addr = 0x02164654
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as call
+
+[[entry_point]]
+addr = 0x02164666
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as span
+
+[[entry_point]]
+addr = 0x0216466C
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as span
 
 [[entry_point]]
 addr = 0x021647A0
@@ -1899,6 +3439,55 @@ kind = "runtime_observed"
 # hits = 2, seen as span
 
 [[entry_point]]
+addr = 0x02166CD0
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 2, seen as call
+
+[[entry_point]]
+addr = 0x02166CDA
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 2, seen as span
+
+[[entry_point]]
+addr = 0x02166CE2
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 2, seen as span
+
+[[entry_point]]
+addr = 0x02166CEA
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 2, seen as span
+
+[[entry_point]]
+addr = 0x02166CF2
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 8, seen as span
+
+[[entry_point]]
+addr = 0x02166D0E
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 2, seen as span
+
+[[entry_point]]
+addr = 0x02166D1A
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 3, seen as span
+
+[[entry_point]]
 addr = 0x02168EEC
 mode = "thumb"
 cpu  = "arm9"
@@ -2186,6 +3775,62 @@ kind = "runtime_observed"
 # hits = 2, seen as span
 
 [[entry_point]]
+addr = 0x0216928C
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 6, seen as call
+
+[[entry_point]]
+addr = 0x02169294
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 10, seen as span
+
+[[entry_point]]
+addr = 0x021692BC
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 5, seen as span
+
+[[entry_point]]
+addr = 0x021692C6
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 5, seen as span
+
+[[entry_point]]
+addr = 0x021692D0
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 5, seen as span
+
+[[entry_point]]
+addr = 0x021692E4
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 5, seen as span
+
+[[entry_point]]
+addr = 0x021692EA
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 4, seen as span
+
+[[entry_point]]
+addr = 0x021692FE
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 4, seen as span
+
+[[entry_point]]
 addr = 0x02169308
 mode = "thumb"
 cpu  = "arm9"
@@ -2333,11 +3978,25 @@ kind = "runtime_observed"
 # hits = 6, seen as call
 
 [[entry_point]]
+addr = 0x021693BC
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 6, seen as call
+
+[[entry_point]]
 addr = 0x021693C4
 mode = "thumb"
 cpu  = "arm9"
 kind = "runtime_observed"
 # hits = 6, seen as call
+
+[[entry_point]]
+addr = 0x021693CC
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 6, seen as call/span
 
 [[entry_point]]
 addr = 0x02169470
@@ -3369,6 +5028,27 @@ kind = "runtime_observed"
 # hits = 1, seen as span
 
 [[entry_point]]
+addr = 0x0216BF9C
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as call
+
+[[entry_point]]
+addr = 0x0216BFB0
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as span
+
+[[entry_point]]
+addr = 0x0216BFB8
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 3, seen as span
+
+[[entry_point]]
 addr = 0x0216CC58
 mode = "thumb"
 cpu  = "arm9"
@@ -3451,6 +5131,69 @@ mode = "thumb"
 cpu  = "arm9"
 kind = "runtime_observed"
 # hits = 5, seen as span
+
+[[entry_point]]
+addr = 0x0216CD30
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as call
+
+[[entry_point]]
+addr = 0x0216CD36
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as span
+
+[[entry_point]]
+addr = 0x0216CD3A
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as span
+
+[[entry_point]]
+addr = 0x0216CD40
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as span
+
+[[entry_point]]
+addr = 0x0216CD46
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as span
+
+[[entry_point]]
+addr = 0x0216CD4E
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as span
+
+[[entry_point]]
+addr = 0x0216CD50
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as call
+
+[[entry_point]]
+addr = 0x0216CD56
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 2, seen as span
+
+[[entry_point]]
+addr = 0x0216CD60
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 2, seen as span
 
 [[entry_point]]
 addr = 0x0216CD64
@@ -3640,6 +5383,62 @@ mode = "thumb"
 cpu  = "arm9"
 kind = "runtime_observed"
 # hits = 1962, seen as span
+
+[[entry_point]]
+addr = 0x0216D2AC
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as call
+
+[[entry_point]]
+addr = 0x0216D2BA
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 3, seen as span
+
+[[entry_point]]
+addr = 0x0216D2CC
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 2, seen as span
+
+[[entry_point]]
+addr = 0x0216D2D6
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 8, seen as span
+
+[[entry_point]]
+addr = 0x0216D2DC
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 8, seen as span
+
+[[entry_point]]
+addr = 0x0216D2E0
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 2, seen as span
+
+[[entry_point]]
+addr = 0x0216D2E6
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 2, seen as span
+
+[[entry_point]]
+addr = 0x0216D2F0
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 2, seen as span
 
 [[entry_point]]
 addr = 0x0216D2F8
@@ -4055,6 +5854,13 @@ kind = "runtime_observed"
 # hits = 1, seen as call
 
 [[entry_point]]
+addr = 0x0216D528
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 2, seen as call
+
+[[entry_point]]
 addr = 0x0216D52C
 mode = "thumb"
 cpu  = "arm9"
@@ -4293,6 +6099,41 @@ kind = "runtime_observed"
 # hits = 2129, seen as call/span
 
 [[entry_point]]
+addr = 0x0216D6BC
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 35, seen as call
+
+[[entry_point]]
+addr = 0x0216D6BE
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 12, seen as span
+
+[[entry_point]]
+addr = 0x0216D6C2
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 376, seen as span
+
+[[entry_point]]
+addr = 0x0216D6CE
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 12, seen as span
+
+[[entry_point]]
+addr = 0x0216D6D4
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 353, seen as call/span
+
+[[entry_point]]
 addr = 0x0216D6D8
 mode = "thumb"
 cpu  = "arm9"
@@ -4410,6 +6251,20 @@ mode = "thumb"
 cpu  = "arm9"
 kind = "runtime_observed"
 # hits = 2, seen as span
+
+[[entry_point]]
+addr = 0x0216D780
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 4, seen as call
+
+[[entry_point]]
+addr = 0x0216D790
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 4, seen as span
 
 [[entry_point]]
 addr = 0x0216D7A8
@@ -4641,6 +6496,13 @@ mode = "thumb"
 cpu  = "arm9"
 kind = "runtime_observed"
 # hits = 64, seen as span
+
+[[entry_point]]
+addr = 0x0216D8E0
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 1, seen as call
 
 [[entry_point]]
 addr = 0x0216D8F0
@@ -5278,6 +7140,83 @@ mode = "thumb"
 cpu  = "arm9"
 kind = "runtime_observed"
 # hits = 2, seen as span
+
+[[entry_point]]
+addr = 0x0216DFAC
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 4, seen as call
+
+[[entry_point]]
+addr = 0x0216DFBC
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 4, seen as span
+
+[[entry_point]]
+addr = 0x0216DFC4
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 4, seen as span
+
+[[entry_point]]
+addr = 0x0216DFCA
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 4, seen as span
+
+[[entry_point]]
+addr = 0x0216DFD4
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 4, seen as span
+
+[[entry_point]]
+addr = 0x0216DFDE
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 4, seen as span
+
+[[entry_point]]
+addr = 0x0216DFE4
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 3, seen as span
+
+[[entry_point]]
+addr = 0x0216DFEE
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 3, seen as span
+
+[[entry_point]]
+addr = 0x0216DFFC
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 6, seen as span
+
+[[entry_point]]
+addr = 0x0216E006
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 9, seen as span
+
+[[entry_point]]
+addr = 0x0216E00A
+mode = "thumb"
+cpu  = "arm9"
+kind = "runtime_observed"
+# hits = 8, seen as span
 
 [[entry_point]]
 addr = 0x0216E114

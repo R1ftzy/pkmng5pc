@@ -206,20 +206,27 @@ constraints first:
       keeps original RAM addresses; live-code fallback path for undecoded/mutable
       code. **ARM9 + ARM7 static banks now generate, link, and are wired into the
       build** (`pkmn_bankgen` → `banks/<title>/`, `PKMNG5PC_BUILD_RUNNER`); see
-      `re/notes/recompilation.md`. Overlays are deliberately left to the runner's
-      live-overlay path. Discovery is uneven: the ARM9 bank holds 5265 functions
-      without seeds, and the ARM7's 49 discovered functions become **3567** once
-      its two relocated copies and the shared Tier-3 seeds are declared. All four
+      `re/notes/recompilation.md`. Overlays are banked ahead of time from
+      observed entry points, not left to the runner's live-overlay path.
+      Discovery is uneven: the ARM9 bank holds 5265 functions without seeds, and
+      the ARM7's 49 discovered functions become **3567** once its two relocated
+      copies and the shared Tier-3 seeds are declared (Black's is **6015** with
+      the 2026-11-11 gameplay corpus). All four
       titles now use that ARM7 bank, and **since 2026-10-19 all four carry their
-      own ARM9 Tier-3 seeds too** (Black 8422 functions, White 8438, B2/W2
-      9553/9464; Black 2 and White 2 additionally declare the ITCM crt0 copy as
+      own ARM9 Tier-3 seeds too** (Black 8422 functions then, 23,527 now that its
+      gameplay corpus seeds the walk; White 8438, B2/W2 9553/9464; Black 2 and
+      White 2 additionally declare the ITCM crt0 copy as
       an ARM9 `[[alias]]`, because there its byte content is the ARM9 module
       itself). Interpreted ARM9 instructions per boot frame fall from 101-105 k
       to **635-645** on all four, `tier3_arm9` from ~21 ms to **0.03-0.06
       ms/frame**, with each title's presented-frame digest unchanged - the
       details and the counter tables are in `re/notes/recompilation.md`
-      §"The ARM9 ingest lands on all four titles". By static code volume about
-      1/5 of the game's ARM code is banked at all; the 3.3 MB of overlays is not.
+      §"The ARM9 ingest lands on all four titles". **Since 2026-11-11 Black also
+      carries 12 overlay banks** (the ones a save-loaded overworld route loads,
+      1.00 MB of the 3.11 MB overlay table), so on that gameplay window the
+      interpreter is **0.020 % of guest cycles** (0.164 ms of a 13.1 ms frame)
+      against 0.263 % before - `re/notes/recompilation.md` §"In play, the
+      interpreter is 0.02% of guest cycles".
 - [x] Memory bus, CP15/TCM, WRAM, IRQ + timers, DMA, IPC/FIFO, SPI/firmware
       defaults; a **reimplemented BIOS** (FreeBIOS, `--freebios`) so no retail
       BIOS dump is required. Supplied by the adopted runner; now exercised by a
@@ -593,6 +600,37 @@ Do not vendor or copy their content; cite and reimplement.
 ## 8. Progress log
 
 Newest first. Keep entries short; details and evidence live in `re/notes/`.
+
+- **2026-11-11 (measured in play: the interpreter is 0.02 % of guest cycles on
+  Black, and the overlays a save loads are banked)** — the first gameplay-window
+  measurement this project has, and the bank work it drove. A save-loaded run
+  driven through the frontend's own input path for 262 emulated seconds (title →
+  menu → CONTINUE → 255 s of overworld wandering) was captured three times plus
+  an identical-binary control. Baseline (9 overlays): in play `tier3_arm9`
+  **1.112** of 10.6 ms/frame (10.5 %) and `tier3_arm7` 0.669 (6.3 %), 69.2 M
+  interpreted instructions over the window. The run's own coverage manifest
+  resolved the five overlays the route loads (`ov010`, `ov021`, `ov067`,
+  `ov206`, `ov208`), which went in as a union with the checked-in seeds and
+  produced **12 overlay banks** (`ov009 00A 00B 00E 012 014 015 01D 043 058 0CE
+  0D0`, 1.00 MB of 3.11 MB). ARM9 interpreted work fell 41.26 M → **1.89 M**
+  instructions, in play 1.112 → **0.045** ms/frame. ARM7 did **not** move, and
+  the manifest said why: every interpreted ARM7 entry sat in the IWRAM copy, at
+  addresses the alias bank had never been seeded for — the 2026-10-16 corpus is
+  boot-only and these handlers only run hot in the overworld. Unioning 1,211
+  ARM7 seeds took that bank 3,567 → **6,015** functions and ARM7 interpreted work
+  29.1 M → **3.46 M** (in play 0.562 → **0.115** ms/frame). Totals: **69.2 M →
+  5.35 M** interpreted instructions, **0.263 % → 0.020 %** of guest cycles,
+  **0.164 ms** of a 13.1 ms frame in play. Presented-frame digests are identical
+  for all 2,238 pre-press frames shared by the four runs; after a press, the
+  same-binary control diverges at exactly the same frame as the changed builds,
+  so the only difference between runs is input timing. What is left: three small
+  overlays the ingest cannot resolve to a whole ROM page, two runtime-modified
+  overlay page generations, one page at `0x02189xxx`, and the ARM7 IWRAM block
+  held back by the runner's write-provenance gate rather than by missing rows.
+  Scope: Windows, one save on one route; the 225 overlays never observed here and
+  other areas (battle, menus, other towns) are unmeasured.
+  `re/notes/recompilation.md` §"In play, the interpreter is 0.02% of guest
+  cycles".
 
 - **2026-10-21 (native DS render sinks designed: 3D first, 2D second, alpha
   and off by default)** — owner-approved early M8 spike, recorded in
