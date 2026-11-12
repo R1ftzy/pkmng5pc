@@ -1,6 +1,7 @@
 #include "pkmn/render/backend.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 
 namespace pkmn::render {
@@ -91,28 +92,63 @@ namespace {
         bool visible = false;
     };
 
-    // The one placement rule for the already-composed stack: integer scale to
-    // fit, centred, letterboxed. Shared by both source formats.
-    StackPlacement place_stack(
-        uint32_t native_w, uint32_t native_h, uint32_t output_width, uint32_t output_height)
+    // The one placement rule for the already-composed stack: scale to fit,
+    // centred, letterboxed. Shared by both source formats.
+    StackPlacement place_stack(uint32_t native_w, uint32_t native_h, uint32_t output_width,
+        uint32_t output_height, Scaling scaling)
     {
         StackPlacement placement;
+        if (native_w == 0 || native_h == 0 || output_width == 0 || output_height == 0) {
+            return placement;
+        }
         uint32_t scale = std::min(output_width / native_w, output_height / native_h);
         if (scale == 0) {
             scale = 1; // too small to letterbox: fill and clip
         }
         placement.scale = scale;
-        placement.width = std::min(output_width, native_w * scale);
-        placement.height = std::min(output_height, native_h * scale);
+        if (scaling == Scaling::Fit) {
+            const double factor = std::min(static_cast<double>(output_width) / native_w,
+                static_cast<double>(output_height) / native_h);
+            placement.width
+                = std::min(output_width, static_cast<uint32_t>(std::lround(native_w * factor)));
+            placement.height
+                = std::min(output_height, static_cast<uint32_t>(std::lround(native_h * factor)));
+        } else {
+            placement.width = std::min(output_width, native_w * scale);
+            placement.height = std::min(output_height, native_h * scale);
+        }
         placement.x = (output_width - placement.width) / 2;
         placement.y = (output_height - placement.height) / 2;
         placement.visible = placement.width != 0 && placement.height != 0;
         return placement;
     }
 
+    // The native size of the stack before any output scaling, with zero widths
+    // replaced by the DS width.
+    struct NativeStack {
+        uint32_t top_width = kScreenWidth;
+        uint32_t bottom_width = kScreenWidth;
+        uint32_t width = 0;
+        uint32_t height = 0;
+    };
+
+    NativeStack native_stack(uint32_t top_width, uint32_t bottom_width, ScreenLayout layout)
+    {
+        NativeStack stack;
+        stack.top_width = top_width ? top_width : kScreenWidth;
+        stack.bottom_width = bottom_width ? bottom_width : kScreenWidth;
+        const bool stacked = layout == ScreenLayout::Stacked;
+        stack.width = stacked ? std::max(stack.top_width, stack.bottom_width)
+                              : stack.top_width + stack.bottom_width;
+        stack.height = stacked ? kScreenHeight * 2 : kScreenHeight;
+        return stack;
+    }
+
     // The placement of both screens in the composed canvas. `compose_screens_bgra8()`
     // draws from it and `stack_placement()` reports the enclosing stack, so a
     // pointer maps back through the very rectangle the pixels were written into.
+    // The composed canvas is always laid out at whole-pixel multiples: `Fit`
+    // only changes how the presenter scales that canvas into the window.
     void place_screens(uint32_t top_width, uint32_t bottom_width, ScreenLayout layout,
         uint32_t output_width, uint32_t output_height, StackPlacement& stack, ScreenPlacement& top,
         ScreenPlacement& bottom)
@@ -124,19 +160,13 @@ namespace {
             return;
         }
 
-        if (top_width == 0) {
-            top_width = kScreenWidth;
-        }
-        if (bottom_width == 0) {
-            bottom_width = kScreenWidth;
-        }
-
+        const NativeStack native = native_stack(top_width, bottom_width, layout);
+        top_width = native.top_width;
+        bottom_width = native.bottom_width;
         const bool stacked = layout == ScreenLayout::Stacked;
-        const uint32_t native_w
-            = stacked ? std::max(top_width, bottom_width) : top_width + bottom_width;
-        const uint32_t native_h = stacked ? kScreenHeight * 2 : kScreenHeight;
 
-        stack = place_stack(native_w, native_h, output_width, output_height);
+        stack = place_stack(
+            native.width, native.height, output_width, output_height, Scaling::Integer);
         const uint32_t stack_w = stack.width;
         const uint32_t stack_h = stack.height;
 
@@ -194,7 +224,8 @@ CanvasBuffer compose_screens(const uint16_t* top, const uint16_t* bottom, Screen
         native_w = kScreenWidth * 2;
     }
 
-    const StackPlacement placement = place_stack(native_w, native_h, output_width, output_height);
+    const StackPlacement placement
+        = place_stack(native_w, native_h, output_width, output_height, Scaling::Integer);
     const uint32_t draw_w = placement.width;
     const uint32_t draw_h = placement.height;
     const uint32_t origin_x = placement.x;
@@ -246,7 +277,8 @@ void compose_screen_bgra8_into(CanvasBuffer& canvas, const uint8_t* screen, uint
     if (!screen || width == 0 || output_width == 0 || output_height == 0) {
         return;
     }
-    const StackPlacement placement = place_stack(width, kScreenHeight, output_width, output_height);
+    const StackPlacement placement
+        = place_stack(width, kScreenHeight, output_width, output_height, Scaling::Integer);
     draw_screen_bgra8(
         screen, width, placement.x, placement.y, placement.width, placement.height, canvas);
 }
@@ -260,23 +292,19 @@ CanvasBuffer compose_screen_bgra8(
 }
 
 StackPlacement stack_placement(uint32_t top_width, uint32_t bottom_width, ScreenLayout layout,
-    uint32_t output_width, uint32_t output_height)
+    uint32_t output_width, uint32_t output_height, Scaling scaling)
 {
-    StackPlacement stack;
-    ScreenPlacement top_placement;
-    ScreenPlacement bottom_placement;
-    place_screens(top_width, bottom_width, layout, output_width, output_height, stack,
-        top_placement, bottom_placement);
-    return stack;
+    const NativeStack native = native_stack(top_width, bottom_width, layout);
+    return place_stack(native.width, native.height, output_width, output_height, scaling);
 }
 
-StackPlacement fit_placement(
-    uint32_t source_width, uint32_t source_height, uint32_t output_width, uint32_t output_height)
+StackPlacement fit_placement(uint32_t source_width, uint32_t source_height, uint32_t output_width,
+    uint32_t output_height, Scaling scaling)
 {
     if (source_width == 0 || source_height == 0) {
         return StackPlacement {};
     }
-    return place_stack(source_width, source_height, output_width, output_height);
+    return place_stack(source_width, source_height, output_width, output_height, scaling);
 }
 
 } // namespace pkmn::render

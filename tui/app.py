@@ -28,6 +28,13 @@ from tui.model import (
     RENDER_ASPECT_WIDTHS,
     RENDER_SCALES,
     SAVE_MODES,
+    SCREEN_HEIGHT,
+    SCREEN_WIDTH,
+    WINDOW_MAX_HEIGHT,
+    WINDOW_MAX_WIDTH,
+    WINDOW_MIN_HEIGHT,
+    WINDOW_MIN_WIDTH,
+    WINDOW_SCALE_FACTORS,
     Repo,
     RomInfo,
     Settings,
@@ -39,6 +46,7 @@ from tui.model import (
     find_cmake,
     find_ctest,
     platform_label,
+    play_window_text,
     read_rom_info,
     same_path,
     scan_roms,
@@ -496,9 +504,9 @@ class App:
         current = self.s.render_native and not compatibility
         hint = (
             "Installs the Vulkan compute 3D sink (alpha, on by default). "
-            "Slice 1 renders 4:3 at 1x only; choose another aspect or scale and "
-            "Play asks you to turn it off first. The 2D rasterizer still uses the "
-            "soft path. Requires native presentation."
+            "Slice 1 renders 4:3 at 1x only; any other aspect or scale falls "
+            "back to the CPU compositor at launch, with a note. The 2D "
+            "rasterizer still uses the soft path. Requires native presentation."
         )
         if compatibility:
             hint = f"Disabled by Compatibility mode. {hint}"
@@ -557,12 +565,66 @@ class App:
             kind="choice",
             value=f"{current}x",
             hint=(
-                "Internal 3D resolution multiplier. Applies only while the native "
-                "renderer is on. Slice 1 supports 1x only; 2x-4x are refused until "
-                "a later slice."
+                "Internal 3D resolution multiplier for the native sink. Slice 1 "
+                "renders 1x only, so 2x-4x launches the CPU compositor at 1x "
+                "instead of the sink (with a note)."
             ),
+            enabled=not self.s.compatibility_mode,
             on_activate=lambda: adjust(1),
             on_adjust=adjust,
+        )
+
+    def window_size_item(self) -> Item:
+        options = [("native", "Runner default")]
+        for value, factor in WINDOW_SCALE_FACTORS.items():
+            width = RENDER_ASPECT_WIDTHS.get(self.s.render_aspect, SCREEN_WIDTH) * factor
+            height = (
+                SCREEN_HEIGHT if self.s.play_layout == "separate" else SCREEN_HEIGHT * 2
+            ) * factor
+            options.append((value, f"{value}  ·  {width}x{height}"))
+        options.append(("custom", "Custom size"))
+        return self._choice(
+            "window-size",
+            "Window size",
+            "window_size",
+            options,
+            "Sizes each game window once at launch; it stays freely resizable. "
+            "Presets follow the chosen aspect and layout, so 2x of 16:9 stacked "
+            "is 684x768. Needs Native present.",
+            enabled=not self.s.compatibility_mode,
+        )
+
+    def present_scaling_item(self) -> Item:
+        return self._choice(
+            "present-scaling",
+            "Present scaling",
+            "present_scaling",
+            [
+                ("integer", "Integer  ·  whole-pixel blocks, letterboxed"),
+                ("fit", "Fit  ·  fill the window, keep the aspect"),
+            ],
+            "Integer keeps every DS pixel a square block and bars the unused "
+            "window area. Fit scales to the window's tighter axis without "
+            "distorting, so the image is resampled rather than blocky. Needs "
+            "Native present.",
+            enabled=not self.s.compatibility_mode,
+        )
+
+    def window_dimension_item(
+        self, key: str, label: str, attribute: str, minimum: int, maximum: int
+    ) -> Item:
+        def set_value(value: str) -> None:
+            setattr(self.s, attribute, int(value.strip()))
+            self.touch()
+
+        return self._text(
+            key,
+            label,
+            lambda: str(getattr(self.s, attribute)),
+            set_value,
+            f"{label} in pixels",
+            f"{minimum}-{maximum} px.",
+            validator=lambda value: validate_window_pixels(value, minimum, maximum),
         )
 
     def _text(
@@ -909,6 +971,14 @@ class App:
             f"Extra args: {self.s.extra_args.strip() or '(none)'}",
             f"Runner used: {play_runner_label}",
         ]
+        if self.s.compatibility_mode:
+            output_row = "Output: SDL 4:3 (compatibility); aspect, window size and scaling unused"
+        else:
+            output_row = (
+                f"Output: aspect {self.s.render_aspect}  ·  window "
+                f"{play_window_text(self.s)}  ·  {self.s.present_scaling} scaling"
+            )
+        play_rows.insert(1, output_row)
         if self.s.render_native:
             render_available, _ = self.repo.native_renderer_state(self.s.preset, cache)
             render_state = "ON" if render_available else "requested; build unavailable"
@@ -1989,7 +2059,8 @@ class App:
                     kind="notice",
                     value=term.dim(
                         "Compatibility mode: SDL presentation at 4:3. "
-                        "Aspect ratio and 3D scale are unavailable."
+                        "Aspect ratio, window size, present scaling and 3D scale "
+                        "are unavailable."
                     ),
                 )
             )
@@ -2006,9 +2077,8 @@ class App:
                         "",
                         kind="notice",
                         value=term.yellow(
-                            "Slice 1 supports 4:3 at 1x only; Play stops before launch "
-                            f"while {', '.join(limits)} is selected. Turn the native "
-                            "renderer off to use that output."
+                            "The native 3D sink is 4:3 at 1x; Play launches the CPU "
+                            f"compositor instead while {', '.join(limits)} is selected."
                         ),
                     )
                 )
@@ -2032,11 +2102,31 @@ class App:
                         (value, f"{value}  ·  {RENDER_ASPECT_WIDTHS[value]} px source")
                         for value in PLAY_ASPECTS
                     ],
-                    "Widens the top screen band (256, 342 or 448 px). Needs Native "
-                    "present; the 3D scene can stretch until a title widens the "
-                    "guest frustum.",
+                    "Widens the top screen band (256, 342 or 448 px) through Native "
+                    "present. Measured on the overworld: the extra band is real "
+                    "scene content, not a stretch. The native 3D sink is 4:3 only, "
+                    "so 16:9 and 21:9 use the CPU compositor.",
                     enabled=not self.s.compatibility_mode,
                 ),
+                self.window_size_item(),
+            ]
+        )
+        if self.s.window_size == "custom" and not self.s.compatibility_mode:
+            items.extend(
+                [
+                    self.window_dimension_item(
+                        "window-width", "Window width", "window_width",
+                        WINDOW_MIN_WIDTH, WINDOW_MAX_WIDTH,
+                    ),
+                    self.window_dimension_item(
+                        "window-height", "Window height", "window_height",
+                        WINDOW_MIN_HEIGHT, WINDOW_MAX_HEIGHT,
+                    ),
+                ]
+            )
+        items.append(self.present_scaling_item())
+        items.extend(
+            [
                 Item("save-section", "SAVE", kind="section"),
                 self._choice(
                     "save-mode",
@@ -3189,7 +3279,8 @@ class App:
             f"Compatibility mode: {'on' if self.s.compatibility_mode else 'off'}",
             (
                 f"Renderer: {renderer}  Aspect: {self.s.render_aspect}  "
-                f"Scale: {self.s.render_scale}x"
+                f"Scale: {self.s.render_scale}x  Window: {play_window_text(self.s)}  "
+                f"Scaling: {self.s.present_scaling}"
             ),
             (
                 f"Native present: {'on' if self.s.play_native and not self.s.compatibility_mode else 'off'}  "
@@ -3341,6 +3432,21 @@ def validate_frames(value: str) -> str | None:
         return "Enter a whole number."
     if number < 0:
         return "Frames cannot be negative."
+    return None
+
+
+def validate_window_pixels(value: str, minimum: int, maximum: int) -> str | None:
+    text = value.strip()
+    if not text:
+        return "Enter a pixel size."
+    try:
+        number = int(text)
+    except ValueError:
+        return "Enter a whole number."
+    if number < minimum:
+        return f"The minimum is {minimum} px."
+    if number > maximum:
+        return f"Pick {maximum} px or fewer."
     return None
 
 

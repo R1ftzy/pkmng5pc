@@ -602,6 +602,23 @@ Do not vendor or copy their content; cite and reimplement.
 
 Newest first. Keep entries short; details and evidence live in `re/notes/`.
 
+- **2026-11-12 (wide output is measured true widening; the launcher gains
+  window size and present scaling)** — a save-loaded overworld capture settles
+  the question the GPU-default entry below left open. At 342 wide, the centre
+  256 columns match the 4:3 frame (mean absolute difference 1.24/255, p95 4.0)
+  while downscaling the same 342 frame to 256 differs by a mean of 11.14, and
+  the player sprite keeps the same 4x6 px footprint and horizontal centre.
+  `GPU3D::SubmitVertex`'s clip-X rescale shows scene content the guest already
+  submits, so the 3D scene does not stretch and no guest wide-frustum patch is
+  needed for this scene; only guest-side culling/streaming can limit the side
+  band. Presentation-only options land with it: **window size** (runner default,
+  1x..4x of the selected aspect/layout, or explicit pixels) and **present
+  scaling** (whole-pixel integer blocks versus an aspect-preserving fill), both
+  applied once at window init and inverted exactly by the pointer mapping. The
+  sink's 4:3/1x limit no longer refuses to launch: another aspect or scale runs
+  the CPU compositor with a note, so the options stay usable.
+  `re/notes/wide-output.md`.
+
 - **2026-11-12 (the GPU path is the default, Compatibility mode is the escape
   hatch, and the wide output path is proven)** — `PKMNG5PC_NATIVE_RENDERER` and
   the launcher's native-present/native-renderer defaults are now on, and a new
@@ -611,8 +628,9 @@ Newest first. Keep entries short; details and evidence live in `re/notes/`.
   `PKMNG5PC_NATIVE_PRESENT`. An interactive presented-frame digest-ring probe
   records 342x192 top / 256x192 bottom on every frame at 16:9, 256x256 at 4:3,
   and 256x256 under Compatibility mode even with the wide environment set.
-  True scene widening is still blocked on a title-side wide-frustum patch and a
-  safe-area policy.
+  True scene widening was still believed blocked on a title-side wide-frustum
+  patch and a safe-area policy; the overworld measurement above supersedes that
+  for the tested scene.
 
 - **2026-11-11 (measured in play: the interpreter is 0.02 % of guest cycles on
   Black, and the overlays a save loads are banked)** — the first gameplay-window
@@ -660,10 +678,11 @@ Newest first. Keep entries short; details and evidence live in `re/notes/`.
   sink-install hook, widen the 256/320/384/448 parser to any even 256..448, and
   expose the active `GPU3D` device to the sink. Widescreen is scene
   widening with a 4:3 safe area; TUI ratios are 4:3=256, 16:9=342, 21:9=448, and
-  32:9=682 is deferred. Only the output path (widening the top band, with the
-  3D layer still stretched) is verified so far; the title-side wide-frustum
-  patch and safe-area policy are outstanding. Verification keeps the CPU
-  reference:
+  32:9=682 is deferred. The output path (widening the top band) is verified and
+  was later measured as true widening rather than a stretched 3D layer; the
+  title-side wide-frustum patch is only needed if guest culling/streaming proves
+  visibly wrong, and the safe-area policy is still outstanding. Verification
+  keeps the CPU reference:
   guest RAM/save/guest-frame digest identical, 3D at most 1 LSB at native, 2D
   bit-exact where the path is bit-exact. Slice 0 scaffolding is in place: shared
   `VulkanContext`, pinned

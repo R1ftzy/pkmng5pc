@@ -136,8 +136,8 @@ The SHA-1 is computed in a background thread and passed to Configure as
   selected layout.
 - **Compatibility mode**: turns the whole GPU path off — no native present and
   no native 3D sink — and presents through the runner's SDL blit at 4:3. Use it
-  when a driver or the GPU path misbehaves; aspect and 3D scale are unavailable
-  while it is on.
+  when a driver or the GPU path misbehaves; aspect, window size, present scaling
+  and 3D scale are unavailable while it is on.
 - Native renderer (alpha), on by default: installs the Vulkan compute **3D** sink
   on the host GPU and forces native present on. The 2D rasterizer still uses the
   soft path. This is distinct from the native-present toggle. If the selected
@@ -149,10 +149,20 @@ The SHA-1 is computed in a background thread and passed to Configure as
 - 3D internal resolution (`1x`..`4x`) and aspect ratio (`4:3`, `16:9`, `21:9`,
   with nominal source widths 256/342/448). Aspect applies whenever native
   present is on, including without the native renderer. Slice 1 of the native
-  renderer supports `4:3` at `1x` only; the other values stay selectable, and
-  the Play page warns that Play will stop before launch while they are chosen
-  with the renderer on. Wide output widens the top-screen band; the 3D scene can
-  stretch until a title-specific wide-frustum patch lands.
+  renderer supports `4:3` at `1x` only; other values stay selectable and Play
+  launches the CPU compositor with a note instead of stopping, so the output
+  options stay usable.
+- Window size: runner default, `1x`..`4x` of the chosen aspect and layout (2x of
+  16:9 stacked is 684x768; separate windows are one screen tall), or an explicit
+  pixel size. The window is sized once at launch and stays freely resizable.
+- Present scaling: `integer` keeps every DS pixel a square block and letterboxes
+  the unused window area; `fit` fills the window on its tighter axis at an
+  aspect-preserving fractional scale. Neither stretches.
+- Wide output really widens the scene: measured on a save-loaded overworld run,
+  the 342-wide frame's centre 256 columns match the 4:3 frame while a
+  downscale-to-256 does not, and the player sprite keeps its size and centre.
+  The extra band is scene content the guest already submits, so the 3D scene
+  does not stretch and guest frames are unchanged.
 - Frame limit (`0` runs until the window is closed).
 - Save mode: default beside the ROM, a custom file, or off (blank cart).
 - Diagnostics: stats, coverage manifest and a performance bundle. Coverage is

@@ -252,6 +252,38 @@ TEST_CASE(render_single_screen_compose_and_fit_placement)
     CHECK(!fit_placement(0, kScreenHeight, 100, 100).visible);
 }
 
+TEST_CASE(render_fit_scaling_fills_the_window_without_stretching)
+{
+    // 640x800 around a 256x384 stack: the height is the tighter axis, so fit
+    // uses all 800 rows and centres the 533-px-wide image (640 * 256/384 is
+    // 533.33, rounded to the nearest pixel). Integer mode stays at 2x and
+    // letterboxes both axes instead.
+    const StackPlacement fit = stack_placement(
+        kScreenWidth, kScreenWidth, ScreenLayout::Stacked, 640, 800, Scaling::Fit);
+    CHECK(fit.visible);
+    CHECK(fit.width == 533 && fit.height == 800);
+    CHECK(fit.x == 53 && fit.y == 0);
+
+    const StackPlacement integer = stack_placement(
+        kScreenWidth, kScreenWidth, ScreenLayout::Stacked, 640, 800, Scaling::Integer);
+    CHECK(integer.width == kScreenWidth * 2 && integer.height == kScreenHeight * 4);
+    CHECK(integer.x == 64 && integer.y == 16);
+
+    // A widened band keeps its own aspect: 684x768 is exactly 2x of 342x384,
+    // so fit and integer agree.
+    const StackPlacement wide
+        = stack_placement(342, kScreenWidth, ScreenLayout::Stacked, 684, 768, Scaling::Fit);
+    CHECK(wide.width == 684 && wide.height == 768);
+    CHECK(wide.x == 0 && wide.y == 0);
+
+    const StackPlacement single = fit_placement(342, kScreenHeight, 700, 400, Scaling::Fit);
+    CHECK(single.width == 700 && single.height == 393);
+    CHECK(single.x == 0 && single.y == 3);
+
+    CHECK(!stack_placement(kScreenWidth, kScreenWidth, ScreenLayout::Stacked, 0, 0, Scaling::Fit)
+            .visible);
+}
+
 TEST_CASE(ds_sink_failure_resumes_the_cpu_path)
 {
     ds::SinkFrameState state;

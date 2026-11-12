@@ -187,27 +187,43 @@ CanvasBuffer compose_screen_bgra8(
 void compose_screen_bgra8_into(CanvasBuffer& canvas, const uint8_t* screen, uint32_t width,
     uint32_t output_width, uint32_t output_height);
 
+// How the composed stack is sized into the output surface.
+enum class Scaling {
+    // Largest whole-pixel multiple that fits, centred and letterboxed. Every
+    // source pixel becomes an exact square block: crisp, with bars wherever
+    // the window is not an exact multiple.
+    Integer,
+    // Largest aspect-preserving size that fits, centred and letterboxed on the
+    // unconstrained axis. Fills the window at non-integer factors, so pixels
+    // are resampled by the presenter instead of landing on whole blocks.
+    Fit,
+};
+
 // Where the composed two-screen stack lands in the output canvas: the integer
 // scale, and the centred, letterboxed rectangle both screens are drawn inside.
 // Composition and the frontend's pointer mapping both read this, so the
-// inverse of the layout is never a second, drifting copy of the rule.
+// inverse of the layout is never a second, drifting copy of the rule. The
+// pointer mapping inverts `width`/`height` against the composed canvas size,
+// so it stays exact in either `Scaling` mode.
 struct StackPlacement {
     uint32_t x = 0;
     uint32_t y = 0;
     uint32_t width = 0;
     uint32_t height = 0;
+    // Whole-pixel multiple in `Integer` mode; the floor of the fit factor in
+    // `Fit` mode, which is what the CPU compositor's integer layout needs.
     uint32_t scale = 1;
     // False when the output is too small to show the stack at all.
     bool visible = false;
 };
 
 StackPlacement stack_placement(uint32_t top_width, uint32_t bottom_width, ScreenLayout layout,
-    uint32_t output_width, uint32_t output_height);
+    uint32_t output_width, uint32_t output_height, Scaling scaling = Scaling::Integer);
 
-// The same integer-scale placement rule for one source rectangle. The native
-// separate layout uses it to size each screen's window target.
-StackPlacement fit_placement(
-    uint32_t source_width, uint32_t source_height, uint32_t output_width, uint32_t output_height);
+// The same placement rule for one source rectangle. The native separate layout
+// uses it to size each screen's window target.
+StackPlacement fit_placement(uint32_t source_width, uint32_t source_height, uint32_t output_width,
+    uint32_t output_height, Scaling scaling = Scaling::Integer);
 
 // Expose the BGR555 -> BGRA8 conversion for the compositor and its tests.
 void bgr555_to_bgra8(const uint16_t* src, uint8_t* dst, uint32_t pixels);

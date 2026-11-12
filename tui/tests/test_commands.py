@@ -268,15 +268,55 @@ class NativeRenderCommandTests(unittest.TestCase):
         command, _ = self.make_command(render_native=True, play_native=False)
         self.assertIn("-Native" if os.name == "nt" else "--native", command.argv)
 
-    def test_native_renderer_refuses_non_4_by_3(self) -> None:
-        with self.assertRaises(LaunchError) as raised:
-            self.make_command(render_native=True, render_aspect="21:9")
-        self.assertIn("4:3 only", str(raised.exception))
+    def test_non_4_by_3_falls_back_to_the_cpu_compositor(self) -> None:
+        command, _ = self.make_command(render_native=True, render_aspect="21:9")
+        self.assertNotIn("-Renderer", command.argv)
+        self.assertNotIn("--renderer", command.argv)
+        self.assertIn("-Native" if os.name == "nt" else "--native", command.argv)
+        aspect_flag = "-Aspect" if os.name == "nt" else "--aspect"
+        self.assertEqual(command.argv[command.argv.index(aspect_flag) + 1], "21:9")
+        self.assertIn("CPU compositor", command.note)
 
-    def test_native_renderer_refuses_non_1x(self) -> None:
-        with self.assertRaises(LaunchError) as raised:
-            self.make_command(render_native=True, render_scale=3)
-        self.assertIn("1x only", str(raised.exception))
+    def test_non_1x_falls_back_to_the_cpu_compositor(self) -> None:
+        command, _ = self.make_command(render_native=True, render_scale=3)
+        self.assertNotIn("-Renderer", command.argv)
+        self.assertNotIn("--renderer", command.argv)
+        self.assertIn("1x", command.note)
+        self.assertIn("CPU compositor", command.note)
+
+    def test_window_preset_follows_the_aspect(self) -> None:
+        command, _ = self.make_command(
+            render_native=False,
+            play_native=True,
+            render_aspect="16:9",
+            window_size="2x",
+        )
+        window_flag = "-Window" if os.name == "nt" else "--window"
+        scaling_flag = "-Scaling" if os.name == "nt" else "--scaling"
+        self.assertEqual(command.argv[command.argv.index(window_flag) + 1], "684x768")
+        self.assertEqual(command.argv[command.argv.index(scaling_flag) + 1], "integer")
+        self.assertIn("684x768", command.note)
+
+    def test_custom_window_and_fit_scaling(self) -> None:
+        command, _ = self.make_command(
+            render_native=False,
+            play_native=True,
+            window_size="custom",
+            window_width=1280,
+            window_height=960,
+            present_scaling="fit",
+        )
+        window_flag = "-Window" if os.name == "nt" else "--window"
+        scaling_flag = "-Scaling" if os.name == "nt" else "--scaling"
+        self.assertEqual(command.argv[command.argv.index(window_flag) + 1], "1280x960")
+        self.assertEqual(command.argv[command.argv.index(scaling_flag) + 1], "fit")
+
+    def test_window_options_skip_the_sdl_path(self) -> None:
+        command, _ = self.make_command(
+            render_native=False, play_native=False, window_size="3x", present_scaling="fit"
+        )
+        for flag in ("-Window", "--window", "-Scaling", "--scaling", "-Aspect", "--aspect"):
+            self.assertNotIn(flag, command.argv)
 
     def test_verify_only_adds_the_debug_environment(self) -> None:
         command, _ = self.make_command(render_native=True, render_verify=True)

@@ -37,6 +37,15 @@ RENDER_ASPECT_WIDTHS: dict[str, int] = {
     "16:9": 342,
     "21:9": 448,
 }
+WINDOW_SIZES = ("native", "1x", "2x", "3x", "4x", "custom")
+WINDOW_SCALE_FACTORS: dict[str, int] = {"1x": 1, "2x": 2, "3x": 3, "4x": 4}
+PRESENT_SCALINGS = ("integer", "fit")
+WINDOW_MIN_WIDTH = 160
+WINDOW_MIN_HEIGHT = 120
+WINDOW_MAX_WIDTH = 7680
+WINDOW_MAX_HEIGHT = 4320
+SCREEN_WIDTH = 256
+SCREEN_HEIGHT = 192
 PRESET_FLAVOURS = ("relwithdebinfo", "release", "debug")
 STATE_VERSION = 1
 
@@ -553,6 +562,10 @@ class Settings:
     render_native: bool = True
     render_scale: int = 1
     render_aspect: str = "4:3"
+    window_size: str = "native"
+    window_width: int = 1024
+    window_height: int = 768
+    present_scaling: str = "integer"
     compatibility_mode: bool = False
     render_verify: bool = False
     save_mode: str = "default"
@@ -623,6 +636,16 @@ class Settings:
             self.render_scale = 1
         if self.render_aspect not in PLAY_ASPECTS:
             self.render_aspect = "4:3"
+        if self.window_size not in WINDOW_SIZES:
+            self.window_size = "native"
+        if self.present_scaling not in PRESENT_SCALINGS:
+            self.present_scaling = "integer"
+        if isinstance(self.window_width, bool):
+            self.window_width = 1024
+        if isinstance(self.window_height, bool):
+            self.window_height = 768
+        self.window_width = max(WINDOW_MIN_WIDTH, min(int(self.window_width), WINDOW_MAX_WIDTH))
+        self.window_height = max(WINDOW_MIN_HEIGHT, min(int(self.window_height), WINDOW_MAX_HEIGHT))
         if self.render_native and not self.compatibility_mode:
             self.play_native = True
         self.frames = max(0, min(int(self.frames), 10_000_000))
@@ -638,6 +661,22 @@ class Settings:
         except OSError:
             path.write_text(temporary.read_text(encoding="utf-8"), encoding="utf-8")
             temporary.unlink(missing_ok=True)
+
+
+def play_window_size(settings: Settings) -> tuple[int, int] | None:
+    if settings.window_size == "custom":
+        return settings.window_width, settings.window_height
+    factor = WINDOW_SCALE_FACTORS.get(settings.window_size)
+    if factor is None:
+        return None
+    width = RENDER_ASPECT_WIDTHS.get(settings.render_aspect, SCREEN_WIDTH) * factor
+    height = (SCREEN_HEIGHT if settings.play_layout == "separate" else SCREEN_HEIGHT * 2) * factor
+    return width, height
+
+
+def play_window_text(settings: Settings) -> str:
+    size = play_window_size(settings)
+    return f"{size[0]}x{size[1]}" if size else "runner default"
 
 
 def default_state_path() -> Path:

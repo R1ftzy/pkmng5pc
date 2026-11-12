@@ -102,6 +102,15 @@ configure refuses to guess if the patch applies in neither direction.
 - **Adaptive wide top works.** The bridge passes the real widths through, and
   `compose_screens_bgra8()` gives each screen its own width at the shared
   integer scale, so a widened top screen does not stretch the bottom one.
+- **Window size and present scaling are env-configured.** `PKMNG5PC_WINDOW_SIZE`
+  (`WxH`) sizes each window once at init, before the swapchain exists, and
+  centres it; later user resizes still rebuild only the swapchain.
+  `PKMNG5PC_PRESENT_SCALING=integer|fit` selects whole-pixel blocks with
+  letterboxing (default) or the largest aspect-preserving fractional size.
+  Placement stays in `stack_placement()`/`fit_placement()` (`Scaling` argument),
+  and the pointer mapping derives its factor from the placed width/height, so
+  it inverts either mode exactly. Neither option changes guest execution or the
+  presented-frame digest.
 - **Pointer/touch is mapped by the compositor.** The frontend normally converts
   pointer positions through the SDL renderer's logical presentation, and this
   path has no renderer. `convert_mouse_event_to_logical_coordinates()` therefore

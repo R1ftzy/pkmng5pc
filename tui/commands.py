@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from tui.model import (
+    PRESENT_SCALINGS,
     RENDER_ASPECT_WIDTHS,
     RENDER_SCALES,
     Repo,
@@ -26,6 +27,7 @@ from tui.model import (
     find_cmake,
     find_ctest,
     find_powershell,
+    play_window_size,
     read_rom_info,
     split_paths,
 )
@@ -299,7 +301,11 @@ def play_command(repo: Repo, settings: Settings, require_artifacts: bool = True)
     render_aspect = (
         settings.render_aspect if settings.render_aspect in RENDER_ASPECT_WIDTHS else "4:3"
     )
-    render_scale = 1
+    render_scale = (
+        settings.render_scale
+        if not isinstance(settings.render_scale, bool) and settings.render_scale in RENDER_SCALES
+        else 1
+    )
     render_env: dict[str, str] = {}
     compatibility = bool(settings.compatibility_mode)
     render_requested = settings.render_native and not compatibility
@@ -309,26 +315,26 @@ def play_command(repo: Repo, settings: Settings, require_artifacts: bool = True)
         if not render_native:
             render_requested = False
             render_note = f"Native renderer unavailable: {render_reason}"
-    if render_native:
-        render_scale = (
-            settings.render_scale
-            if not isinstance(settings.render_scale, bool)
-            and settings.render_scale in RENDER_SCALES
-            else 1
-        )
-        if render_aspect != "4:3":
-            raise LaunchError(
-                "Native renderer Slice 1 supports 4:3 only; choose 4:3, turn the "
-                "renderer off, or enable Compatibility mode."
+        elif render_aspect != "4:3" or render_scale != 1:
+            limits = []
+            if render_aspect != "4:3":
+                limits.append(f"aspect {render_aspect}")
+            if render_scale != 1:
+                limits.append(f"scale {render_scale}x")
+            render_native = False
+            render_note = (
+                f"Native 3D sink is 4:3 at 1x; {', '.join(limits)} uses the CPU "
+                "compositor instead"
             )
-        if render_scale != 1:
-            raise LaunchError(
-                "Native renderer Slice 1 supports 1x only; choose 1x, turn the "
-                "renderer off, or enable Compatibility mode."
-            )
-        if settings.render_verify:
-            render_env["PKMNG5PC_DS3D_VERIFY"] = "1"
+    if render_native and settings.render_verify:
+        render_env["PKMNG5PC_DS3D_VERIFY"] = "1"
+
     native_present = (settings.play_native or render_native) and not compatibility
+    present_scaling = (
+        settings.present_scaling if settings.present_scaling in PRESENT_SCALINGS else "integer"
+    )
+    window = play_window_size(settings) if native_present else None
+    window_text = f"{window[0]}x{window[1]}" if window else "runner default"
 
     save_path = ""
     if settings.save_mode == "custom":
@@ -363,6 +369,9 @@ def play_command(repo: Repo, settings: Settings, require_artifacts: bool = True)
             argv.append("-Native")
             argv.extend(["-Gpu", settings.play_gpu or "auto"])
             argv.extend(["-Aspect", render_aspect])
+            argv.extend(["-Scaling", present_scaling])
+            if window:
+                argv.extend(["-Window", window_text])
         if render_native:
             argv.extend(
                 [
@@ -404,6 +413,9 @@ def play_command(repo: Repo, settings: Settings, require_artifacts: bool = True)
             argv.append("--native")
             argv.extend(["--gpu", settings.play_gpu or "auto"])
             argv.extend(["--aspect", render_aspect])
+            argv.extend(["--scaling", present_scaling])
+            if window:
+                argv.extend(["--window", window_text])
         if render_native:
             argv.extend(
                 [
@@ -431,6 +443,11 @@ def play_command(repo: Repo, settings: Settings, require_artifacts: bool = True)
             argv.append("--")
             argv.extend(extra)
     note = f"Runner from {runner_preset or settings.preset}; close the game window to return here."
+    if native_present:
+        note = (
+            f"Output: {render_aspect}, window {window_text}, {present_scaling} scaling. "
+            + note
+        )
     if render_note:
         fallback = "native present only" if native_present else "the SDL path"
         note = f"{render_note}; using {fallback}. " + note

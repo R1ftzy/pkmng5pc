@@ -18,6 +18,9 @@
 #   sh tools/play.sh --native                 # present through render/ (Vulkan)
 #   sh tools/play.sh --native --gpu discrete  # pick the discrete Vulkan adapter
 #   sh tools/play.sh --native --gpu index:1   # or pin a listed adapter
+#   sh tools/play.sh --native --aspect 16:9   # widen the top screen band
+#   sh tools/play.sh --native --window-size 3x --scaling fit
+#   sh tools/play.sh --native --window 1280x960   # explicit pixel size
 #   sh tools/play.sh --renderer native        # 3D sink, slice 1 (4:3, 1x)
 #   sh tools/play.sh --frames 600 --stats     # present 600 frames, print stats, exit
 #   sh tools/play.sh --sav banks/black.sav    # keep a different save file
@@ -41,9 +44,16 @@
 #
 # --renderer native enables the alpha 3D sink and implies --native; the runner
 # must be built with PKMNG5PC_NATIVE_RENDERER=ON. 3d, 2d and both are debug-only
-# renderer selections, not normal play. Slice 1 renders 4:3 at 256 px and 1x:
-# the bridge rejects other aspect widths, and the sink does not use
-# --render-scale yet.
+# renderer selections, not normal play. Slice 1 renders 4:3 at 256 px and 1x;
+# --aspect 16:9/21:9 or --render-scale above 1 therefore runs the CPU
+# compositor instead of the sink and prints a note, rather than refusing to
+# launch.
+#
+# --window-size sizes each game window once at launch from the aspect and
+# layout (2x of 16:9 stacked is 684x768); --window takes explicit pixels
+# instead. The window stays freely resizable. --scaling integer (default) keeps
+# whole-pixel blocks and letterboxes; fit fills the window at an
+# aspect-preserving fractional scale. Both need --native.
 #
 # Saves are on by default: the run loads the save next to the ROM (<rom>.sav),
 # starts blank when it is missing, and keeps writing it. --sav (alias
@@ -72,6 +82,11 @@ aspect=4:3
 render_scale=
 aspect_set=0
 render_scale_set=0
+window_size=native
+window=
+window_set=0
+scaling=integer
+scaling_set=0
 frames=0
 stats=0
 coverage=0
@@ -92,6 +107,9 @@ while [ $# -gt 0 ]; do
     --renderer) renderer=$2; shift 2 ;;
     --aspect)   aspect=$2; aspect_set=1; shift 2 ;;
     --render-scale) render_scale=$2; render_scale_set=1; shift 2 ;;
+    --window-size) window_size=$2; shift 2 ;;
+    --window)   window=$2; window_set=1; shift 2 ;;
+    --scaling)  scaling=$2; scaling_set=1; shift 2 ;;
     --frames)   frames=$2; shift 2 ;;
     --save-path) save_path=$2; save_path_set=1; shift 2 ;;
     --sav)      save_path=$2; save_path_set=1; shift 2 ;;
@@ -127,12 +145,46 @@ if [ "$render_scale_set" -eq 1 ]; then
     fail "--render-scale must be 1, 2, 3 or 4."
   fi
 fi
+window_text=$window
+if [ -z "$window_text" ]; then
+  case $window_size in
+    native) ;;
+    1x|2x|3x|4x)
+      factor=${window_size%x}
+      rows=384
+      [ "$layout" = separate ] && rows=192
+      window_text="$((aspect_width * factor))x$((rows * factor))" ;;
+    *) fail "--window-size must be native, 1x, 2x, 3x or 4x." ;;
+  esac
+fi
+if [ -n "$window_text" ]; then
+  case $window_text in
+    *x*) window_w=${window_text%x*}; window_h=${window_text#*x} ;;
+    *) fail "--window must be WxH in pixels." ;;
+  esac
+  case $window_w in ''|*[!0-9]*) fail "--window must be WxH in pixels." ;; esac
+  case $window_h in ''|*[!0-9]*) fail "--window must be WxH in pixels." ;; esac
+  if [ "$window_w" -lt 160 ] || [ "$window_h" -lt 120 ] ||
+     [ "$window_w" -gt 7680 ] || [ "$window_h" -gt 4320 ]; then
+    fail "--window must be between 160x120 and 7680x4320."
+  fi
+fi
+case $scaling in
+  integer|fit) ;;
+  *) fail "--scaling must be integer or fit." ;;
+esac
 if [ "$renderer_on" -eq 1 ]; then native=1; fi
 if [ "$native" -eq 0 ] && [ "$aspect_set" -eq 1 ] && [ "$aspect" != "4:3" ]; then
   echo "play: --aspect applies to --native; ignored on the SDL path" >&2
 fi
 if [ "$renderer_on" -eq 0 ] && [ "$render_scale_set" -eq 1 ]; then
   echo "play: --render-scale applies to --renderer; ignored while the renderer is off" >&2
+fi
+if [ "$native" -eq 0 ] && { [ "$window_set" -eq 1 ] || [ "$window_size" != native ]; }; then
+  echo "play: --window-size/--window apply to --native; ignored on the SDL path" >&2
+fi
+if [ "$native" -eq 0 ] && [ "$scaling_set" -eq 1 ]; then
+  echo "play: --scaling applies to --native; ignored on the SDL path" >&2
 fi
 
 # --- runner -----------------------------------------------------------------
@@ -236,8 +288,13 @@ if [ -z "${NDS_GPU2D_THREADED:-}" ]; then NDS_GPU2D_THREADED=0; export NDS_GPU2D
 if [ "$native" -eq 1 ]; then
   PKMNG5PC_PRESENT=native
   PKMNG5PC_GPU=$gpu
+  PKMNG5PC_PRESENT_SCALING=$scaling
   PKMNG5PC_WIDESCREEN_SUPPORTED=top
-  export PKMNG5PC_PRESENT PKMNG5PC_GPU PKMNG5PC_WIDESCREEN_SUPPORTED
+  export PKMNG5PC_PRESENT PKMNG5PC_GPU PKMNG5PC_PRESENT_SCALING PKMNG5PC_WIDESCREEN_SUPPORTED
+  if [ -n "$window_text" ]; then
+    PKMNG5PC_WINDOW_SIZE=$window_text
+    export PKMNG5PC_WINDOW_SIZE
+  fi
   if [ "$aspect" != "4:3" ]; then
     NDS_ADAPTIVE_WIDESCREEN=top
     NDS_WIDESCREEN_WIDTH=$aspect_width
@@ -262,6 +319,8 @@ echo "rom:    $rom"
 echo "banks:  $banks"
 if [ "$native" -eq 1 ]; then
   echo "present: native (render/ - Vulkan, $layout, gpu=$gpu)"
+  if [ -n "$window_text" ]; then window_label=$window_text; else window_label='runner default'; fi
+  echo "output: aspect $aspect, window $window_label, $scaling scaling"
 else
   echo "present: runner SDL blit ($layout)"
 fi

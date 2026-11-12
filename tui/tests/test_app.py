@@ -770,6 +770,46 @@ class PlayViewNativeRendererTests(unittest.TestCase):
             self.assertFalse(app.s.render_native)
             self.assertTrue(app.s.play_native)
 
+    def test_window_and_scaling_rows_follow_the_output(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            write_renderer_cache(root)
+            app, _ = make_app(root, Settings(preset="test-debug"))
+            app.s.render_aspect = "16:9"
+            app.s.window_size = "2x"
+
+            items = {item.key: item for item in app.play_view(120).items}
+            self.assertIn("684x768", items["window-size"].value)
+            self.assertTrue(items["window-size"].enabled)
+            self.assertIn("Integer", items["present-scaling"].value)
+            self.assertNotIn("window-width", items)
+
+            items["window-size"].on_adjust(1)
+            self.assertEqual(app.s.window_size, "3x")
+            items = {item.key: item for item in app.play_view(120).items}
+            self.assertIn("1026x1152", items["window-size"].value)
+
+            app.s.window_size = "custom"
+            items = {item.key: item for item in app.play_view(120).items}
+            self.assertEqual(items["window-width"].value, "1024")
+            self.assertEqual(items["window-height"].value, "768")
+
+            items["present-scaling"].on_adjust(1)
+            self.assertEqual(app.s.present_scaling, "fit")
+            items = {item.key: item for item in app.play_view(120).items}
+            self.assertIn("Fit", items["present-scaling"].value)
+
+    def test_non_4_by_3_sink_choice_explains_the_cpu_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            write_renderer_cache(root)
+            app, _ = make_app(root, Settings(preset="test-debug", render_aspect="21:9"))
+            items = {item.key: item for item in app.play_view(120).items}
+
+            self.assertIn("render-slice1-note", items)
+            self.assertIn("CPU compositor", items["render-slice1-note"].value)
+            self.assertNotIn("stops before launch", items["render-slice1-note"].value)
+
     def test_native_renderer_requires_native_present(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -796,6 +836,9 @@ class PlayViewNativeRendererTests(unittest.TestCase):
             self.assertFalse(items["play-native"].enabled)
             self.assertFalse(items["play-gpu"].enabled)
             self.assertFalse(items["render-aspect"].enabled)
+            self.assertFalse(items["window-size"].enabled)
+            self.assertFalse(items["present-scaling"].enabled)
+            self.assertFalse(items["render-scale"].enabled)
             self.assertEqual(items["render-native"].value, "OFF (compat)")
             self.assertFalse(items["render-native"].enabled)
             self.assertIn("compatibility-note", items)

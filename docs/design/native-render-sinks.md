@@ -257,7 +257,19 @@ That is deliberately not in the first alpha.
 
 The selected ratio is a *source* width. The presenter fits the source rectangle
 into the window with integer scaling where possible and letterboxes/pillarboxes
-otherwise. It never stretches.
+otherwise. It never stretches by default; `PKMNG5PC_PRESENT_SCALING=fit` uses
+the window's tighter axis at an aspect-preserving fractional scale instead
+(section 7.5).
+
+Measured on a save-loaded overworld scene (2026-11): the 342-wide frame's
+centre 256 columns match the 4:3 frame (mean absolute difference 1.24/255, p95
+4.0) while downscaling the 342 frame to 256 differs by a mean of 11.14. The
+player sprite keeps the same 4x6 px footprint and horizontal centre. The host
+path therefore truly widens: `GPU3D::SubmitVertex` rescales clip X by
+`256/RenderWidth` when the guest viewport stays 0..256, showing scene content
+the guest already submits. A guest wide-frustum patch is not required for this
+scene; only guest-side culling/streaming can limit the side band. Guest
+execution and the presented-frame digest are unchanged.
 
 ### 7.4 Per-title policy
 
@@ -288,8 +300,27 @@ report the effective width and the reason. A title without a policy stays at
 256. Black is the first audited title; White and B2/W2 inherit `[default]`
 until audited.
 
-## 8. TUI and launch surface
+### 7.5 Window size and present scaling
 
+Two presentation-only options, applied by `render/src/native_present.cpp` and
+read only with native present:
+
+- `PKMNG5PC_WINDOW_SIZE=WxH` sizes each game window once at init (before the
+  swapchain is created, then centres it). The window stays freely resizable and
+  later resizes still re-derive the swapchain extent. The TUI presets derive the
+  size from the chosen aspect and layout (2x of 16:9 stacked is 684x768; 1x of
+  21:9 separate is 448x192), or take explicit pixels.
+- `PKMNG5PC_PRESENT_SCALING=integer|fit`. `integer` (default) keeps whole-pixel
+  blocks and letterboxes both axes. `fit` uses the window's tighter axis at an
+  aspect-preserving fractional scale: the window is filled, one axis gets bars,
+  and the presenter resamples. Neither value stretches, and the pointer mapping
+  inverts the same placement rectangle, so touches stay exact in both modes.
+
+Both change the presented image only: guest execution and the presented-frame
+digest are untouched. Compatibility mode ignores them along with the rest of
+the GPU path.
+
+## 8. TUI and launch surface
 Existing pieces: `Settings` (`tui/model.py:485`), `play_command`
 (`tui/commands.py:264`), the Play page (`tui/app.py`), and
 `tools/play.ps1 -Native`.
@@ -300,6 +331,10 @@ Add to `Settings`:
 render_native: bool = False   # master alpha toggle
 render_scale: int = 1         # 1..4, 3D internal resolution
 render_aspect: str = "4:3"    # 4:3, 16:9, 21:9
+window_size: str = "native"   # native, 1x, 2x, 3x, 4x, custom
+window_width: int = 1024      # custom size in pixels
+window_height: int = 768
+present_scaling: str = "integer"  # integer, fit
 render_verify: bool = False   # advanced/debug only
 ```
 
@@ -313,18 +348,26 @@ to `tui/model.py`. The Play page gets three rows:
 - **Aspect ratio:** 4:3/16:9/21:9, with the nominal source width shown
   (256/342/448). 32:9 is listed only after the cap work lands. The runner
   reports the effective width after the per-title cap.
+- **Window size:** runner default, 1x..4x of the chosen aspect/layout, or an
+  explicit pixel size.
+- **Present scaling:** `integer` (whole-pixel, letterboxed) or `fit` (fill the
+  window, keep the aspect).
 
 When `render_native` is on, `play_native` is forced on (the Vulkan window and
 presenter are required). The Play command adds `-Native`, `-Gpu`, `-Renderer
 native`, `-Aspect` and `-RenderScale`; the play scripts translate those flags
 into the environment values below. At 4:3 the scripts leave
 `NDS_ADAPTIVE_WIDESCREEN` unset because slice 1 renders at the native 256-wide
-framebuffer.
+framebuffer. The sink is 4:3 at 1x: choosing another aspect or a scale above 1
+launches the CPU compositor with a note instead of refusing to start, so those
+options stay usable while the sink is slice-1 limited.
 
 ```
 PKMNG5PC_RENDERER=native
 PKMNG5PC_TITLE_ID=black         # selected title profile
 PKMNG5PC_WIDESCREEN_SUPPORTED=top
+PKMNG5PC_WINDOW_SIZE=684x768    # from window_size; absent = runner default
+PKMNG5PC_PRESENT_SCALING=fit    # from present_scaling, integer by default
 NDS_ADAPTIVE_WIDESCREEN=top     # only when the aspect widens past 256
 NDS_WIDESCREEN_WIDTH=342        # from render_aspect, capped by policy
 NDS_INTERNAL_RESOLUTION=3       # from render_scale
@@ -335,10 +378,12 @@ before its fail-closed adaptive test; `NDS_ADAPTIVE_WIDESCREEN` is the request.
 The TUI sets `supported=top` for the Gen 5 alpha; the bridge's policy caps the
 width and can opt out. The stats report the effective width and the reason.
 
-`tools/play.ps1`/`tools/play.sh` gain `-Renderer <off|native|3d|2d|both>` and
-`-Aspect <4:3|16:9|21:9>` for CLI parity; `native` is the master toggle and
-`3d`/`2d`/`both` are the debug switches. Aspect is passed with `-Native`, so the
-wide CPU compositor works without the sink; render scale is sink-only. If the
+`tools/play.ps1`/`tools/play.sh` gain `-Renderer <off|native|3d|2d|both>`,
+`-Aspect <4:3|16:9|21:9>`, `-WindowSize <native|1x..4x>`, `-Window <WxH>` and
+`-Scaling <integer|fit>` for CLI parity; `native` is the master toggle and
+`3d`/`2d`/`both` are the debug switches. Aspect, window size and scaling are
+passed with `-Native`, so the wide CPU compositor works without the sink;
+render scale is sink-only. If the
 binary was built without `pkmn_render_ds`, the TUI checks the build cache
 (`PKMNG5PC_NATIVE_RENDERER=ON` and `PKMNG5PC_NATIVE_PRESENT=ON`). While the
 setting is on, the row reads `unavailable` and turning it on shows the rebuild

@@ -8,7 +8,7 @@ import unittest
 from dataclasses import asdict
 from pathlib import Path
 
-from tui.model import STATE_VERSION, Settings
+from tui.model import STATE_VERSION, Settings, play_window_size, play_window_text
 
 PRESETS = ["test-debug", "test-release"]
 
@@ -31,6 +31,10 @@ class SettingsLoadTests(unittest.TestCase):
         self.assertFalse(settings.compatibility_mode)
         self.assertEqual(settings.render_scale, 1)
         self.assertEqual(settings.render_aspect, "4:3")
+        self.assertEqual(settings.window_size, "native")
+        self.assertEqual(settings.window_width, 1024)
+        self.assertEqual(settings.window_height, 768)
+        self.assertEqual(settings.present_scaling, "integer")
         self.assertFalse(settings.render_verify)
 
     def test_malformed_json_gives_defaults(self) -> None:
@@ -56,6 +60,10 @@ class SettingsLoadTests(unittest.TestCase):
             "compatibility_mode": "on",
             "render_scale": 9,
             "render_aspect": "32:9",
+            "window_size": "warp",
+            "window_width": 10,
+            "window_height": 100_000,
+            "present_scaling": "stretch",
             "render_verify": "yes",
         }
         with tempfile.TemporaryDirectory() as temp:
@@ -75,7 +83,26 @@ class SettingsLoadTests(unittest.TestCase):
         self.assertFalse(settings.compatibility_mode)
         self.assertEqual(settings.render_scale, 1)
         self.assertEqual(settings.render_aspect, "4:3")
+        self.assertEqual(settings.window_size, "native")
+        self.assertEqual(settings.window_width, 160)
+        self.assertEqual(settings.window_height, 4320)
+        self.assertEqual(settings.present_scaling, "integer")
         self.assertFalse(settings.render_verify)
+
+    def test_window_size_presets_follow_aspect_and_layout(self) -> None:
+        settings = Settings(render_aspect="16:9", window_size="2x")
+        self.assertEqual(play_window_size(settings), (684, 768))
+
+        settings = Settings(render_aspect="21:9", window_size="1x", play_layout="separate")
+        self.assertEqual(play_window_size(settings), (448, 192))
+
+        settings = Settings(window_size="custom", window_width=1600, window_height=900)
+        self.assertEqual(play_window_size(settings), (1600, 900))
+        self.assertEqual(play_window_text(settings), "1600x900")
+
+        settings = Settings(window_size="native")
+        self.assertIsNone(play_window_size(settings))
+        self.assertEqual(play_window_text(settings), "runner default")
 
     def test_out_of_range_values_are_clamped(self) -> None:
         payload = {"frames": 20_000_000, "shards": 1_000}
@@ -156,6 +183,10 @@ class SettingsRoundTripTests(unittest.TestCase):
             render_native=True,
             render_scale=3,
             render_aspect="21:9",
+            window_size="custom",
+            window_width=1600,
+            window_height=1000,
+            present_scaling="fit",
             compatibility_mode=True,
             render_verify=True,
             save_mode="custom",

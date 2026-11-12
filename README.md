@@ -269,6 +269,11 @@ sh tools/play.sh
 | `--layout stacked\|separate` | one top-over-bottom window (default) or two windows |
 | `--native` | present the two screens through this project's own `render/` compositor (Vulkan) instead of the runner's SDL blit — see [Native present](#native-present) |
 | `--gpu <choice>` | Vulkan adapter for `--native`: `auto` (prefer discrete), `discrete`, `integrated`, `index:<n>`, or a name substring (`-Gpu` in PowerShell) |
+| `--aspect 4:3\|16:9\|21:9` | widen the top-screen band (256/342/448 px source) through `--native` |
+| `--window-size native\|1x..4x` | size each game window from the aspect and layout; `--window WxH` takes explicit pixels |
+| `--scaling integer\|fit` | whole-pixel blocks with letterboxing (default) or an aspect-preserving fill of the window |
+| `--renderer native` | enable the alpha 3D sink (4:3 at 1x); other aspects/scales fall back to the CPU compositor with a note |
+| `--render-scale 1..4` | internal 3D resolution for the sink (slice 1 uses 1x) |
 | `--frames N` | present N frames, print fps and a frame hash, exit — a self-test |
 | `--stats` | print the performance summary on exit |
 | `--sav [<file>]` | keep the battery save at another path; the default is the ROM's own `<rom>.sav`. Aliases: `--save-path`, `--save`; `--no-save` (`-NoSave` in PowerShell) runs a blank cart and writes nothing |
@@ -303,6 +308,14 @@ one screen's native size), uploads that fixed-size canvas, and lets the GPU
 blit it into the window with nearest-neighbour scaling and a letterbox. A
 window resize therefore rebuilds the swapchain but does not re-composite the
 whole window on the CPU, which keeps the fullscreen presentation cost flat.
+`--window-size`/`--window` choose the initial window size (presets follow the
+aspect and layout: 2x of 16:9 stacked is 684x768; the window stays freely
+resizable), and `--scaling fit` fills the window instead of letterboxing at
+whole-pixel multiples. Neither changes guest execution or the presented-frame
+digest. `--aspect` widens the top band: measured on a save-loaded overworld run,
+the 342-wide frame's centre 256 columns match the 4:3 frame and the 3D scene is
+not stretched, so the extra band is real scene content rather than a stretch
+(`re/notes/wide-output.md`).
 Pointer and touch input work in both layouts: the compositor's placement rule
 is inverted to turn a window click into a stylus coordinate (the window id
 selects the screen in separate mode), and a click outside the bottom screen

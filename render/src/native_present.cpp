@@ -23,6 +23,7 @@ using pkmn::render::CanvasBuffer;
 using pkmn::render::Config;
 using pkmn::render::Presenter;
 using pkmn::render::PresentTarget;
+using pkmn::render::Scaling;
 using pkmn::render::ScreenLayout;
 using pkmn::render::StackPlacement;
 using pkmn::render::Window;
@@ -65,6 +66,38 @@ const char* configured_gpu()
     return value && *value ? value : "auto";
 }
 
+// `WxH` in output pixels, or false when unset/malformed. Written by the
+// launcher's window-size choice; each window is sized once at init and stays
+// freely resizable afterwards.
+bool configured_window_size(int& width, int& height)
+{
+    const char* value = std::getenv("PKMNG5PC_WINDOW_SIZE");
+    if (!value || !*value) {
+        return false;
+    }
+    int parsed_width = 0;
+    int parsed_height = 0;
+    if (std::sscanf(value, "%dx%d", &parsed_width, &parsed_height) != 2) {
+        std::fprintf(stderr, "[native] ignoring window size '%s' (expected WxH)\n", value);
+        return false;
+    }
+    if (parsed_width < 160 || parsed_height < 120 || parsed_width > 7680 || parsed_height > 4320) {
+        std::fprintf(stderr, "[native] ignoring window size '%s' (out of range)\n", value);
+        return false;
+    }
+    width = parsed_width;
+    height = parsed_height;
+    return true;
+}
+
+// `integer` (default) keeps whole-pixel blocks and letterboxes; `fit` fills the
+// window at an aspect-preserving fractional scale.
+Scaling configured_scaling()
+{
+    const char* value = std::getenv("PKMNG5PC_PRESENT_SCALING");
+    return value && std::strcmp(value, "fit") == 0 ? Scaling::Fit : Scaling::Integer;
+}
+
 // Keep each swapchain at its window's pixel size. The canvas is kept at the
 // native screen size and the GPU scales it into the swapchain, so a window
 // resize costs one swapchain rebuild, not a per-frame full-window composite.
@@ -97,6 +130,16 @@ bool init_output(int index, void* sdl_window, const Config& config)
     }
     Output& output = outputs[index];
     output.window = static_cast<SDL_Window*>(sdl_window);
+
+    int window_width = 0;
+    int window_height = 0;
+    if (configured_window_size(window_width, window_height)) {
+        SDL_SetWindowSize(output.window, window_width, window_height);
+        SDL_SetWindowPosition(output.window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
+        std::fprintf(
+            stderr, "[native] window=%dx%d screen=%d\n", window_width, window_height, index);
+    }
+
     output.presenter = pkmn::render::create_presenter(BackendKind::Vulkan);
     if (!output.presenter) {
         return false;
@@ -161,8 +204,9 @@ extern "C" int pkmng5pc_native_present_init(void* top_window, void* bottom_windo
         return 0;
     }
 
-    std::fprintf(stderr, "[native] layout=%s gpu=%s\n", separate_layout ? "separate" : "stacked",
-        config.gpu.c_str());
+    std::fprintf(stderr, "[native] layout=%s scaling=%s gpu=%s\n",
+        separate_layout ? "separate" : "stacked",
+        configured_scaling() == Scaling::Fit ? "fit" : "integer", config.gpu.c_str());
     return 1;
 }
 
@@ -189,10 +233,10 @@ extern "C" int pkmng5pc_native_present_frame(
             reinterpret_cast<const uint8_t*>(bottom), presented_bottom_width,
             presented_bottom_width, pkmn::render::kScreenHeight);
 
-        const StackPlacement top_target = pkmn::render::fit_placement(
-            presented_top_width, pkmn::render::kScreenHeight, outputs[0].width, outputs[0].height);
+        const StackPlacement top_target = pkmn::render::fit_placement(presented_top_width,
+            pkmn::render::kScreenHeight, outputs[0].width, outputs[0].height, configured_scaling());
         const StackPlacement bottom_target = pkmn::render::fit_placement(presented_bottom_width,
-            pkmn::render::kScreenHeight, outputs[1].width, outputs[1].height);
+            pkmn::render::kScreenHeight, outputs[1].width, outputs[1].height, configured_scaling());
         present_one(
             0, PresentTarget { top_target.x, top_target.y, top_target.width, top_target.height });
         present_one(1,
@@ -212,8 +256,9 @@ extern "C" int pkmng5pc_native_present_frame(
         reinterpret_cast<const uint8_t*>(bottom), presented_bottom_width, ScreenLayout::Stacked,
         native_width, pkmn::render::kScreenHeight * 2);
 
-    const StackPlacement stack = pkmn::render::stack_placement(presented_top_width,
-        presented_bottom_width, ScreenLayout::Stacked, outputs[0].width, outputs[0].height);
+    const StackPlacement stack
+        = pkmn::render::stack_placement(presented_top_width, presented_bottom_width,
+            ScreenLayout::Stacked, outputs[0].width, outputs[0].height, configured_scaling());
     present_one(0, PresentTarget { stack.x, stack.y, stack.width, stack.height });
     return 1;
 }
@@ -263,26 +308,33 @@ extern "C" int pkmng5pc_native_present_logical_point(
     }
 
     StackPlacement placement;
+    uint32_t native_w = 0;
     if (separate_layout) {
         const uint32_t screen_width = index == 0 ? presented_top_width : presented_bottom_width;
-        placement = pkmn::render::fit_placement(
-            screen_width, pkmn::render::kScreenHeight, output.width, output.height);
+        native_w = screen_width;
+        placement = pkmn::render::fit_placement(screen_width, pkmn::render::kScreenHeight,
+            output.width, output.height, configured_scaling());
     } else {
+        native_w = std::max(presented_top_width, presented_bottom_width);
         placement = pkmn::render::stack_placement(presented_top_width, presented_bottom_width,
-            ScreenLayout::Stacked, output.width, output.height);
+            ScreenLayout::Stacked, output.width, output.height, configured_scaling());
     }
-    if (!placement.visible || placement.scale == 0) {
+    const uint32_t native_h
+        = separate_layout ? pkmn::render::kScreenHeight : pkmn::render::kScreenHeight * 2;
+    if (!placement.visible || placement.width == 0 || placement.height == 0 || native_w == 0) {
         return 0;
     }
 
-    // The inverse of the compositor's integer scale: the stack's top-left corner
-    // is logical (0,0), and each scale pixels is one logical pixel. Points on the
-    // letterbox land outside the logical canvas, which the frontend's own
-    // routing then rejects as "not a touch" - the same outcome as the SDL path.
-    *x = static_cast<int>(std::floor(
-        (pixel_x - static_cast<float>(placement.x)) / static_cast<float>(placement.scale)));
-    *y = static_cast<int>(std::floor(
-        (pixel_y - static_cast<float>(placement.y)) / static_cast<float>(placement.scale)));
+    // The inverse of the presented rectangle: the stack's top-left corner is
+    // logical (0,0), and the composed canvas spans the placement. Deriving the
+    // factor from width/height (not the integer `scale`) keeps the mapping
+    // exact in both integer and fit modes. Points on the letterbox land outside
+    // the logical canvas, which the frontend's own routing then rejects as
+    // "not a touch" - the same outcome as the SDL path.
+    const float scale_x = static_cast<float>(placement.width) / static_cast<float>(native_w);
+    const float scale_y = static_cast<float>(placement.height) / static_cast<float>(native_h);
+    *x = static_cast<int>(std::floor((pixel_x - static_cast<float>(placement.x)) / scale_x));
+    *y = static_cast<int>(std::floor((pixel_y - static_cast<float>(placement.y)) / scale_y));
     return 1;
 }
 

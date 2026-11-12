@@ -172,10 +172,26 @@ master toggle is inverted into an escape hatch:
   presents 342x192 on top and 256x192 below on 413/413 frames, a 256 run stays
   256/256 on 410/410, and a Compatibility-mode run stays 256/256 on 405/405
   while ignoring the wide environment.
-- **Not yet item 9.** The wide path widens the 2D band; the 3D layer still
-  stretches from the DS's 0..256 viewport because no title patch widens the
-  guest frustum. Wide output is therefore an output-path result, not true scene
-  widening, and the design's per-title policy and safe area remain outstanding.
+- **Wide output is true widening, not a stretch.** Measured on a save-loaded
+  overworld run: the 342-wide frame's centre 256 columns match the 4:3 frame
+  (mean absolute difference 1.24/255, p95 4.0), whereas downscaling the 342
+  frame to 256 differs by a mean of 11.14; the player sprite keeps its 4x6 px
+  footprint and horizontal centre. `GPU3D::SubmitVertex` rescales clip X by
+  `256/RenderWidth` while the guest viewport stays 0..256, so the extra band
+  shows scene content the guest already submits and the guest's own frame
+  digests are unchanged. A guest wide-frustum patch is therefore not needed for
+  this scene; only guest-side culling/streaming can limit the side band, and the
+  design's safe-area policy remains outstanding.
+- Window size and present scaling are presentation-only additions:
+  `PKMNG5PC_WINDOW_SIZE=WxH` sizes each window once before the swapchain is
+  created (the TUI derives 1x..4x from aspect and layout, or takes explicit
+  pixels), and `PKMNG5PC_PRESENT_SCALING=integer|fit` chooses whole-pixel blocks
+  with letterboxing or an aspect-preserving fill. The pointer mapping inverts
+  the placement rectangle in both modes, so touch positions stay exact. Guest
+  execution and the presented-frame digest are untouched.
+- The sink's 4:3-at-1x limit no longer blocks the output options: choosing
+  another aspect or a scale above 1 launches the CPU compositor with a note
+  instead of refusing to start, and the TUI says so before Play.
 
 ## Considered and rejected
 

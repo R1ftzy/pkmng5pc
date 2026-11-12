@@ -17,6 +17,9 @@
 #   pwsh tools/play.ps1 -Native               # present through render/ (Vulkan)
 #   pwsh tools/play.ps1 -Native -Gpu discrete # pick the discrete Vulkan adapter
 #   pwsh tools/play.ps1 -Native -Gpu "index:1" # or pin a listed adapter
+#   pwsh tools/play.ps1 -Native -Aspect 16:9  # widen the top screen band
+#   pwsh tools/play.ps1 -Native -WindowSize 3x -Scaling fit
+#   pwsh tools/play.ps1 -Native -Window 1280x960   # explicit pixel size
 #   pwsh tools/play.ps1 -Renderer native      # 3D sink, slice 1 (4:3, 1x)
 #   pwsh tools/play.ps1 -Frames 600 -Stats    # present 600 frames, print stats, exit
 #   pwsh tools/play.ps1 -Sav "banks/black.sav"  # keep a different save file
@@ -40,9 +43,15 @@
 #
 # -Renderer native enables the alpha 3D sink and implies -Native; the runner
 # must be built with PKMNG5PC_NATIVE_RENDERER=ON. 3d, 2d and both are debug-only
-# renderer selections, not normal play. Slice 1 renders 4:3 at 256 px and 1x:
-# the bridge rejects other aspect widths, and the sink does not use
-# -RenderScale yet.
+# renderer selections, not normal play. Slice 1 renders 4:3 at 256 px and 1x;
+# -Aspect 16:9/21:9 or -RenderScale above 1 therefore runs the CPU compositor
+# instead of the sink and prints a note, rather than refusing to launch.
+#
+# -WindowSize sizes each game window once at launch from the aspect and layout
+# (2x of 16:9 stacked is 684x768); -Window takes explicit pixels instead. The
+# window stays freely resizable. -Scaling integer (default) keeps whole-pixel
+# blocks and letterboxes; fit fills the window at an aspect-preserving
+# fractional scale. Both need -Native.
 #
 # Saves are on by default: the run loads the save next to the ROM (<rom>.sav),
 # starts blank when it is missing, and keeps writing it. -Sav (alias -SavePath)
@@ -66,6 +75,9 @@ param(
   [ValidateSet('off', 'native', '3d', '2d', 'both')][string]$Renderer = 'off',
   [ValidateSet('4:3', '16:9', '21:9')][string]$Aspect = '4:3',
   [int]$RenderScale = 0,
+  [ValidateSet('native', '1x', '2x', '3x', '4x')][string]$WindowSize = 'native',
+  [ValidatePattern('^(\d+x\d+)?$')][string]$Window = '',
+  [ValidateSet('integer', 'fit')][string]$Scaling = 'integer',
   [int]$Frames = 0,
   [Alias('SavePath')][string]$Sav,
   [switch]$Save,
@@ -96,6 +108,21 @@ if ($renderScaleSet -and ($RenderScale -lt 1 -or $RenderScale -gt 4)) {
   Fail '-RenderScale must be 1, 2, 3 or 4.'
 }
 $aspectWidths = @{ '4:3' = 256; '16:9' = 342; '21:9' = 448 }
+$windowText = $Window
+if (-not $windowText -and $WindowSize -ne 'native') {
+  $factor = [int]$WindowSize.Substring(0, 1)
+  $rows = if ($Layout -eq 'separate') { 192 } else { 384 }
+  $windowText = '{0}x{1}' -f ($aspectWidths[$Aspect] * $factor), ($rows * $factor)
+}
+if ($windowText) {
+  $parts = $windowText -split 'x'
+  $windowWidth = [int]$parts[0]
+  $windowHeight = [int]$parts[1]
+  if ($windowWidth -lt 160 -or $windowHeight -lt 120 -or $windowWidth -gt 7680 -or
+      $windowHeight -gt 4320) {
+    Fail '-Window must be between 160x120 and 7680x4320.'
+  }
+}
 $titlesFile = Join-Path $root 're/config/titles.tsv'
 if (-not (Test-Path -LiteralPath $titlesFile)) { Fail "missing $titlesFile" }
 $titleIds = @{}
@@ -110,6 +137,12 @@ if (-not $nativePresent -and $PSBoundParameters.ContainsKey('Aspect') -and $Aspe
 }
 if (-not $rendererOn -and $renderScaleSet) {
   Write-Host "play: -RenderScale applies to -Renderer; ignored while the renderer is off" -ForegroundColor Yellow
+}
+if (-not $nativePresent -and ($WindowSize -ne 'native' -or $Window)) {
+  Write-Host "play: -WindowSize/-Window apply to -Native; ignored on the SDL path" -ForegroundColor Yellow
+}
+if (-not $nativePresent -and $PSBoundParameters.ContainsKey('Scaling')) {
+  Write-Host "play: -Scaling applies to -Native; ignored on the SDL path" -ForegroundColor Yellow
 }
 
 # --- runner -----------------------------------------------------------------
@@ -228,7 +261,9 @@ if (-not $env:NDS_GPU2D_THREADED) { $env:NDS_GPU2D_THREADED = '0' }
 if ($nativePresent) {
   $env:PKMNG5PC_PRESENT = 'native'
   $env:PKMNG5PC_GPU = $Gpu
+  $env:PKMNG5PC_PRESENT_SCALING = $Scaling
   $env:PKMNG5PC_WIDESCREEN_SUPPORTED = 'top'
+  if ($windowText) { $env:PKMNG5PC_WINDOW_SIZE = $windowText }
   if ($Aspect -ne '4:3') {
     $env:NDS_ADAPTIVE_WIDESCREEN = 'top'
     $env:NDS_WIDESCREEN_WIDTH = "$($aspectWidths[$Aspect])"
@@ -247,6 +282,10 @@ if ($nativePresent) {
   Write-Host "present: native (render/ - Vulkan, $Layout, gpu=$Gpu)"
 } else {
   Write-Host "present: runner SDL blit ($Layout)"
+}
+if ($nativePresent) {
+  $windowLabel = if ($windowText) { $windowText } else { 'runner default' }
+  Write-Host "output: aspect $Aspect, window $windowLabel, $Scaling scaling"
 }
 if ($rendererOn) {
   $scaleText = if ($renderScaleSet) { ", scale $($RenderScale)x" } else { '' }

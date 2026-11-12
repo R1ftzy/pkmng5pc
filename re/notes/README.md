@@ -17,6 +17,7 @@ Files to maintain (create as work begins):
 - `battle.md` — battle flow and formulas
 - `save.md` — save block layout and checksums
 - `3d-ge.md` — NSBMD/NSBTX and GE behavior
+- `wide-output.md` — wide top-band output: captures, true-widening measurement
 - `sdat-audio.md` — SDAT/SSEQ/SBNK/SWAR/SWAV/STRM
 
 Use `TEMPLATE.md` as the starting point for a new note.
