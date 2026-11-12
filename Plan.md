@@ -618,6 +618,24 @@ Newest first. Keep entries short; details and evidence live in `re/notes/`.
   next task; no speculative rendering change was made. Largest remaining CPU
   graphics cost is the 2D scanline compositor — the "2D sink" slice.
 
+- **2026-11-12 (wide bands now render a real wider FOV, and the edge culling is
+  fixed at the geometry engine)** — the user's "objects disappear past 4:3" was
+  the guest's own culling: Gen 5 draws props through
+  `G3D_SYSTEM_DrawObjectCulling` → the DS hardware `BOX_TEST`, which clips the
+  box against the GE's `ClipMatrix` (projection × position). Evidence came from
+  the Black/White decompilation (`Project-Holon/aletheia`:
+  `g3d_system.c` box test, `g3d_camera.c` aspect field, `ov021/field_camera.c`
+  FOV) plus the live projection matrix captured from the running game with
+  `PKMNG5PC_DS3D_DUMP_PROJMATRIX` (`mtx[0]/mtx[5] = 8461/11280 = 3/4`). Fix:
+  tracked patch `0007-wide-guest-projection` scales the projection's X row by
+  `256/RenderWidth` on projection load/multiply while `GuestWideProjection` is
+  on, and the present hook sets that flag only for bands wider than 256. The
+  wide band is now a genuine wider FOV at native pixel scale (no stretch) and
+  the box-test volume widens with it, so objects the band can see are
+  submitted. Verified in gameplay at 21:9 (448 px, sink, 2x): bridge, NPC and
+  truck at correct scale across the band; a 4:3 A/A control on the same build
+  is pixel-identical. AGENTS.md's patch list updated to seven.
+
 - **2026-11-12 (16:9 composites, 5x stops lying, and the melonDS look gets a
   switch)** — three reports, three causes. "5x goes back to 1x": the compute
   lane's parser caps at 4, so the TUI silently kept showing 5x while the

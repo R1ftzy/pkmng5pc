@@ -1045,6 +1045,7 @@ struct VulkanComputeRenderer::Impl {
     uint64_t dump_every = 30;
     uint64_t frame_counter = 0;
     bool dump_uploads = false;
+    bool dump_projmatrix = false;
     void dump_upload(
         uint32_t id, uint32_t width, uint32_t height, uint32_t layer, const void* data);
     void dump_frame_tables(uint32_t num_variants, uint32_t num_polygons, bool wbuffer);
@@ -1122,6 +1123,7 @@ bool VulkanComputeRenderer::Impl::initialize(SDL_Window* window, const Config& c
     if (const char* value = std::getenv("PKMNG5PC_DS3D_DUMP_EVERY")) {
         dump_every = std::strtoull(value, nullptr, 10);
     }
+    dump_projmatrix = std::getenv("PKMNG5PC_DS3D_DUMP_PROJMATRIX") != nullptr;
     dump_uploads = std::getenv("PKMNG5PC_DS3D_DUMP_UPLOADS") != nullptr;
 
     // Raster scale (ADR 0008, slice V1). Fixed for the life of the renderer;
@@ -2560,6 +2562,22 @@ void VulkanComputeRenderer::Impl::render_frame(melonDS::GPU& gpu)
 {
     cpu_lines = false;
     ++frame_counter;
+
+    if (dump_projmatrix) {
+        // RE aid: report the projection matrix the guest actually loads
+        // (1.19.12 fixed point) whenever it changes, so the camera code's
+        // constants can be located in the banked ARM9.
+        static melonDS::s32 last_proj[16] {};
+        const melonDS::s32* proj = gpu.GPU3D.ProjMatrix;
+        if (std::memcmp(proj, last_proj, sizeof(last_proj)) != 0) {
+            std::memcpy(last_proj, proj, sizeof(last_proj));
+            std::fprintf(stderr, "[projmatrix]");
+            for (int i = 0; i < 16; ++i) {
+                std::fprintf(stderr, " %d", proj[i]);
+            }
+            std::fprintf(stderr, "\n");
+        }
+    }
 
     SinkFrameState state;
     state.initialized = initialized;

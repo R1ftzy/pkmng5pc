@@ -81,35 +81,38 @@
 
 ## Next step: the guest wide-frustum patch (edge objects)
 
-Objects disappearing at the band edges are geometry the game's own CPU frustum
-culling never submitted — no host-side widening can resurrect it. The runner
-ships the mechanism (`runner/src/title_patches.cpp`): per-frame RAM patches with
-neighbour verification, then `nds_gpu3d_set_guest_wide_projection(true)` so the
-shared GE maps the guest's 0..256 viewport across the full band and skips the
-SubmitVertex clip-X translate. Metroid Prime Hunters widens three aspect words
-in `Camera_SetupProjection`/`Rooms_TraverseAndDraw` this way; SM64DS
-renormalizes two frustum planes and the aspect field.
+**Solved at the GE level (2026-11-12).** The object pop-in was the guest's own
+culling: Gen 5 draws props through `G3D_SYSTEM_DrawObjectCulling`, which runs
+the DS hardware **BOX_TEST** command (`G3D_SYSTEM_BoxTest`). The box test
+transforms the box by the geometry engine's `ClipMatrix` (projection ×
+position) and clips it against that volume, so the guest culls against the
+4:3 projection it built. Widening the projection inside the device model
+therefore widens rendering *and* the box test together — no guest patch, no
+RE of the culling code, works for every title.
 
-What is missing for Gen 5 is the RE: locate Black's projection/culling sites in
-the banked ARM9 (`banks/black/*_[0-9][0-9].c`, the game's own code), find the
-4:3 aspect literals and their neighbour words, add a
-`nds_title_patches_set_black_wide(...)` gated on this title's bank group plus
-`NDS_ADAPTIVE_GUEST_CULLING`, and verify the band fills in without perturbing
-guest-visible state. Only then should the TUI expose it.
+The projection is built by NitroSystem's `MTX_PerspectiveW` from
+`G3dProjection.aspectOrLeft` (`G3D_SYSTEM_SetProjection`), with the vertical
+FOV from `G3dCamera`'s fovy sin/cos (`FIELD_CAMERA_SetFov`). Evidence: the
+Black/White decompilation `Project-Holon/aletheia`
+(`src/game/arm9/g3d_system.c`, `src/game/arm9/g3d_camera.c`,
+`src/game/ov021/field_camera.c`), and the live matrix captured from the
+running game through `PKMNG5PC_DS3D_DUMP_PROJMATRIX` — `mtx[0]/mtx[5] =
+8461/11280 = 3/4`, the DS aspect.
 
-Recon (2026-11-12): constant-lottery greps over the Black banks come up empty —
-no `0x1555`/5461 (Fix12 4:3), no `1.3333` float literal, in either the main ARM9
-module (~150 MB across `irbo_arm9_main_*.c`) or the twelve banked overlays. Two
-reasons: the overworld projection is computed at runtime from camera state
-rather than stored as an aspect literal, and the 3D-heavy engine code lives
-largely in the ~225 overlays of which only twelve are banked. The procedure that
-will find it: the 262 s gameplay coverage manifest
-(`banks/coverage-ingest-black`) already records which dispatch rows executed
-during the save-loaded overworld run; the projection build runs every frame, so
-shortlisting the functions in those rows that also touch the GX matrix/FIFO
-register window (0x04000440..0x040005CB) narrows the sites to a handful, then a
-REA pass reads the surrounding matrix construction for the aspect term. That is
-a dedicated REA session, not a grep.
+Implementation: tracked patch `0007-wide-guest-projection.patch` scales the
+projection's X row (`ProjMatrix[0,4,8,12]`) by `256/RenderWidth` on every
+projection load/multiply when `GuestWideProjection` is on; our present hook
+sets that flag per frame when the band is wider than 256. Under it the guest
+viewport maps across the band, so the wide shot is a genuine wider FOV at
+native pixel scale (no stretch), and objects the band can see are submitted.
+Verified in gameplay at 21:9 (448 px, sink, 2x): the scene fills the band
+with the bridge, NPC and truck at correct scale; a 4:3 A/A control on the
+same build is pixel-identical (mean diff 0.000), so the 4:3 path is unchanged.
+
+Historical note (superseded): the earlier plan was a per-title RAM patch on
+`title_patches.cpp`, following the MPH/SM64DS precedents. The GE-level fix
+replaces that for this class of culling because the DS box test *is* the
+culling path.
 
 ## Cross-ROM comparison
 

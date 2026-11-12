@@ -216,7 +216,7 @@ Configure applies the tracked patches in `patches/ndsrecomp/` to the submodule
 (idempotently) when `PKMNG5PC_NATIVE_RENDERER=ON`, or when
 `PKMNG5PC_BUILD_RUNNER=ON` and `PKMNG5PC_NATIVE_PRESENT=ON` (its default), so
 the superproject reports it as *modified content* by design:
-six today — `0001-native-present-hook` (the guarded present hook behind
+seven today — `0001-native-present-hook` (the guarded present hook behind
 `tools/play -Native`, `docs/adr/0006-ndsrecomp-native-present-hook.md`),
 `0002-libslirp-msvc-clang` (POSIX fd/socket calls in the vendored libslirp,
 which only compile by accident on toolchains whose headers declare them),
@@ -228,10 +228,16 @@ probe in `gpu2d.cpp`, and the wide-width parser/env, which is gated on
 sink installs through `SetCurrentRenderer`),
 `0005-melonds-net-win32` (switches the vendored melonDS Wi-Fi guards from the
 MinGW-only `__WIN32__` to `_WIN32` and uses libslirp's `slirp_ssize_t`; both
-changes are correct on MinGW and POSIX), and
+changes are correct on MinGW and POSIX),
 `0006-audio-time-stretch` (WSOLA time-scale modification between the SPU and
 the SDL queue, so a host below 60 fps keeps continuous audio at the correct
-pitch; it has no guard macro and builds standalone). Revert with
+pitch; it has no guard macro and builds standalone), and
+`0007-wide-guest-projection` (scales the projection matrix's X row by
+`256/RenderWidth` on projection load/multiply while `GuestWideProjection` is
+on, so the wide band renders a genuinely wider FOV *and* the hardware
+`BOX_TEST` volume widens with it — the guest's own object culling stops
+rejecting what the band can see; the present hook sets the flag only for
+bands wider than 256, so 4:3 is unchanged). Revert with
 `git -C third_party/ndsrecomp checkout .` and re-configure. The patched
 files still build standalone (0001, 0003 and 0004 compile out without their
 respective build macros; 0002 and 0005 are portability fixes and 0006 is

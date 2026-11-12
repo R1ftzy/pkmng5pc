@@ -1,0 +1,56 @@
+diff --git a/runner/vendor/melonds/GPU3D.cpp b/runner/vendor/melonds/GPU3D.cpp
+index 49192bc..69bcb92 100644
+--- a/runner/vendor/melonds/GPU3D.cpp
++++ b/runner/vendor/melonds/GPU3D.cpp
+@@ -618,6 +618,19 @@ void MatrixLoad4x4(s32* m, s32* s)
+     memcpy(m, s, 16*4);
+ }
+ 
++// ndsrecomp: widen the geometry engine's horizontal clip volume to the band
++// the frontend presents. Scaling the projection's X row by 256/RenderWidth is
++// the matrix-space form of the per-vertex clip-X rescale, but it also widens
++// the BOX_TEST clip volume, so the guest's own object culling stops rejecting
++// things the wide band can see. Callers gate this on GuestWideProjection,
++// which also maps the guest viewport across the band (no double widening).
++void WidenProjectionX(s32* m, u32 render_width)
++{
++    if (render_width <= 256) return;
++    for (int i = 0; i < 16; i += 4)
++        m[i] = (s32)(((s64)m[i] * 256) / render_width);
++}
++
+ void MatrixLoad4x3(s32* m, s32* s)
+ {
+     m[0] = s[0];  m[1] = s[1];  m[2] = s[2];    m[3] = 0;
+@@ -2213,6 +2226,7 @@ void GPU3D::ExecuteCommand() noexcept
+                     if (MatrixMode == 0)
+                     {
+                         MatrixLoad4x4(ProjMatrix, (s32*)ExecParams);
++                        if (GuestWideProjection) WidenProjectionX(ProjMatrix, RenderWidth);
+                         ClipMatrixDirty = true;
+                         AddCycles(18);
+                     }
+@@ -2235,6 +2249,7 @@ void GPU3D::ExecuteCommand() noexcept
+                     if (MatrixMode == 0)
+                     {
+                         MatrixLoad4x3(ProjMatrix, (s32*)ExecParams);
++                        if (GuestWideProjection) WidenProjectionX(ProjMatrix, RenderWidth);
+                         ClipMatrixDirty = true;
+                         AddCycles(18);
+                     }
+@@ -2257,6 +2272,7 @@ void GPU3D::ExecuteCommand() noexcept
+                     if (MatrixMode == 0)
+                     {
+                         MatrixMult4x4(ProjMatrix, (s32*)ExecParams);
++                        if (GuestWideProjection) WidenProjectionX(ProjMatrix, RenderWidth);
+                         ClipMatrixDirty = true;
+                         AddCycles(35 - 16);
+                     }
+@@ -2282,6 +2298,7 @@ void GPU3D::ExecuteCommand() noexcept
+                     if (MatrixMode == 0)
+                     {
+                         MatrixMult4x3(ProjMatrix, (s32*)ExecParams);
++                        if (GuestWideProjection) WidenProjectionX(ProjMatrix, RenderWidth);
+                         ClipMatrixDirty = true;
+                         AddCycles(35 - 12);
+                     }

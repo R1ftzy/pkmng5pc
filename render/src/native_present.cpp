@@ -5,6 +5,7 @@
 #include "pkmn/render/native_present.h"
 
 #include "gpu2d.h"
+#include "gpu3d.h"
 #include "pkmn/render/backend.h"
 extern "C" int pkmng5pc_ds_render_hires_color(
     void** view, unsigned* width, unsigned* height, unsigned* scale);
@@ -225,6 +226,13 @@ extern "C" int pkmng5pc_native_present_frame(
         = static_cast<uint32_t>(top_width > 0 ? top_width : pkmn::render::kScreenWidth);
     presented_bottom_width
         = static_cast<uint32_t>(bottom_width > 0 ? bottom_width : pkmn::render::kScreenWidth);
+
+    // Wide band: let the geometry engine widen its projection to the band
+    // (patch 0007) and map the guest viewport across it, so the 3D scene fills
+    // the band at native pixel scale and the guest's own box-test culling
+    // stops rejecting objects the band can see. 4:3 keeps the faithful path.
+    const bool wide_band = presented_top_width > pkmn::render::kScreenWidth;
+    nds_gpu3d_set_guest_wide_projection(wide_band);
 
     if (separate_layout && outputs[1].presenter) {
         sync_output_size(0);

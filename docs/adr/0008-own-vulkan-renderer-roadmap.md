@@ -153,6 +153,18 @@ Gate: HD composite output matches the GL lane's HD output on the same frames
 (swap screenshots through both lanes at identical settings); digests at the
 native surface unchanged.
 
+### Wide bands: the projection widens with the band
+
+Tracked patch `0007-wide-guest-projection` scales the geometry engine's
+projection X row by `256/RenderWidth` whenever `GuestWideProjection` is on
+(projection load/multiply commands). Under it the guest viewport maps across
+the band, so the wide shot is a genuine wider field of view at native pixel
+scale, and — because the DS `BOX_TEST` clips against the same `ClipMatrix` —
+the guest's own object culling widens with it. The present hook enables the
+flag only for bands wider than 256, so 4:3 keeps the faithful path. Verified
+in gameplay at 21:9 with a pixel-identical 4:3 A/A control; evidence and the
+decompilation references are in `re/notes/wide-output.md`.
+
 ### Slice V3 — bloom (and the texture-upscale port)
 
 **2026-11-12:** xBR texture upscaling is **in the Vulkan sink** as an
