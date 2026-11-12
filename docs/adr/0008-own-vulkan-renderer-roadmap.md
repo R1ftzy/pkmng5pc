@@ -36,9 +36,15 @@ multiplies positions by the factor
 
 ## Decision
 
-### Slice V1 — scale-aware Vulkan sink (faithful readback, visible SSAA)
+### Slice V1 — scale-aware Vulkan sink (SHIPPED 2026-11-12)
 
 The sink gains a raster scale (integer 1..8) fixed at renderer init.
+**Status: implemented and verified** — spec-constant shaders, runtime surface
+geometry, upstream's hires-coordinate span scaling, box-filter SSAA readback at
+scale>1, 4:3 gate lifted (any even 256..448 px whose product with the scale is a
+64-multiple; 16:9's 342 stays faithful-only), scale via `PKMNG5PC_RENDER_SCALE`
+forwarded from `-RenderScale`. Verified: scale-1 verify 0-diff (colors),
+scale 2 skip note, band 448 at 2x = 896x768 raster through Native present.
 
 - **Baked per-scale shader variants, not runtime compilation.** Vulkan has no
   runtime GLSL compiler here and the project ships no runtime glslang; the

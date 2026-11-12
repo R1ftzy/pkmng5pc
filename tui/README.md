@@ -146,12 +146,12 @@ The SHA-1 is computed in a background thread and passed to Configure as
   Play falls back to native present (or SDL) instead of refusing to launch;
   enable **Build native renderer (alpha)** on the Build page and reconfigure to
   get such a build.
-- 3D internal resolution (`1x`..`4x`) and aspect ratio (`4:3`, `5:3`, `16:9`,
+- 3D internal resolution (`1x`..`8x`) and aspect ratio (`4:3`, `5:3`, `16:9`,
   `2:1`, `21:9` — source widths 256/320/342/384/448). Aspect applies whenever
-  native present is on, including without the native renderer. Slice 1 of the
-  native renderer supports `4:3` at `1x` only; other values stay selectable and
-  Play launches the CPU compositor with a note instead of stopping, so the
-  output options stay usable.
+  native present is on, including without the native renderer. The Vulkan sink
+  rasterizes any 64-multiple band at the chosen density (supersampled readback:
+  scale 2-8 anti-aliases the 3D scene); 16:9 (342 px) is the one faithful-only
+  width, and Play launches the CPU compositor with a note instead of stopping.
 - 3D renderer: `Faithful` (the CPU rasterizer every digest is locked to) or
   `Compute` — the vendored melonDS OpenGL 4.3 compute renderer. Compute
   rasterizes the 3D scene at the internal-resolution multiplier and, above 1x,

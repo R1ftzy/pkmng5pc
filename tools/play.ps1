@@ -313,6 +313,8 @@ if ($computeHd) {
 if ($rendererOn) {
   $env:PKMNG5PC_RENDERER = $Renderer
   if ($titleId) { $env:PKMNG5PC_TITLE_ID = $titleId }
+  # The Vulkan sink reads its raster scale from this (render/src/ds).
+  if ($renderScaleSet) { $env:PKMNG5PC_RENDER_SCALE = "$RenderScale" }
 }
 if ($renderScaleSet) { $env:NDS_INTERNAL_RESOLUTION = "$RenderScale" }
 

@@ -505,10 +505,11 @@ class App:
         compatibility = self.s.compatibility_mode
         current = self.s.render_native and not compatibility
         hint = (
-            "Installs the Vulkan compute 3D sink (alpha, on by default). "
-            "Slice 1 renders 4:3 at 1x only; any other aspect or scale falls "
-            "back to the CPU compositor at launch, with a note. The 2D "
-            "rasterizer still uses the soft path. Requires native presentation."
+            "Installs the Vulkan compute 3D sink (alpha, on by default): our own "
+            "GPU rasterizer. Rasterizes any even 256..448 px band at the "
+            "internal-resolution scale (supersampled readback), and presents "
+            "through Native present. The 2D rasterizer still uses the soft "
+            "path. Requires native presentation."
         )
         if compatibility:
             hint = f"Disabled by Compatibility mode. {hint}"
@@ -567,11 +568,11 @@ class App:
             kind="choice",
             value=f"{current}x",
             hint=(
-                "Internal 3D resolution multiplier. The compute renderer rasterizes "
-                "the 3D scene at this density and, above 1x, presents it hi-res "
-                "through its own OpenGL window. The faithful soft renderer and the "
-                "Vulkan sink render 1x only; choosing 2x-4x with the sink launches "
-                "the CPU compositor instead (with a note)."
+                "Internal 3D resolution multiplier. The compute renderer "
+                "rasterizes the 3D scene at this density and, above 1x, presents "
+                "it hi-res through its own OpenGL window. The Vulkan sink "
+                "rasterizes at this density and presents it supersampled through "
+                "the faithful path. The faithful soft renderer stays 1x."
             ),
             enabled=not self.s.compatibility_mode,
             on_activate=lambda: adjust(1),
@@ -2098,20 +2099,16 @@ class App:
                 )
             )
         elif self.s.render_native and self.s.renderer_3d != "compute":
-            limits: list[str] = []
-            if self.s.render_aspect != "4:3":
-                limits.append(f"aspect {self.s.render_aspect}")
-            if self.s.render_scale != 1:
-                limits.append(f"scale {self.s.render_scale}x")
-            if limits:
+            if self.s.render_aspect == "16:9":
                 items.append(
                     Item(
                         "render-slice1-note",
                         "",
                         kind="notice",
                         value=term.yellow(
-                            "The native 3D sink is 4:3 at 1x; Play launches the CPU "
-                            f"compositor instead while {', '.join(limits)} is selected."
+                            "The Vulkan sink rasterizes 64-multiple band widths "
+                            "only; aspect 16:9 (342 px) launches the CPU compositor "
+                            "instead. 5:3, 2:1 and 21:9 stay in the sink."
                         ),
                     )
                 )

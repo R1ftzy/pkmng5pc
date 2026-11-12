@@ -347,14 +347,18 @@ elif [ -z "${NDS_3D_RENDERER:-}" ]; then
   NDS_3D_RENDERER=soft
   export NDS_3D_RENDERER
 fi
-if [ "$renderer_on" -eq 1 ]; then
+if ($renderer_on -eq 1) {
   PKMNG5PC_RENDERER=$renderer
   export PKMNG5PC_RENDERER
   if [ -n "$title_id" ]; then
     PKMNG5PC_TITLE_ID=$title_id
     export PKMNG5PC_TITLE_ID
   fi
-fi
+  if [ "$render_scale_set" -eq 1 ]; then
+    PKMNG5PC_RENDER_SCALE=$render_scale
+    export PKMNG5PC_RENDER_SCALE
+  fi
+}
 if [ "$render_scale_set" -eq 1 ]; then
   NDS_INTERNAL_RESOLUTION=$render_scale
   export NDS_INTERNAL_RESOLUTION

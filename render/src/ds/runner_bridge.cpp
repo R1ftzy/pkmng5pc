@@ -102,11 +102,12 @@ extern "C" int pkmng5pc_ds_render_init(void* top_window, void* bottom_window, in
         std::fprintf(stderr, "[native-render] the GPU3D device is unavailable\n");
         return 0;
     }
-    if (gpu3d->GetRenderWidth() != 256u) {
+    const uint32_t render_width = gpu3d->GetRenderWidth();
+    if (render_width < 256u || render_width > 448u || (render_width & 1u) != 0u) {
         std::fprintf(stderr,
-            "[native-render] the 3D sink currently supports 4:3 (256 px) "
-            "only; requested width is %u\n",
-            gpu3d->GetRenderWidth());
+            "[native-render] render width %u is out of range (expected an even "
+            "256..448)\n",
+            static_cast<unsigned>(render_width));
         return 0;
     }
 
@@ -122,7 +123,8 @@ extern "C" int pkmng5pc_ds_render_init(void* top_window, void* bottom_window, in
     melonDS::Renderer3D* const raw = renderer.get();
     gpu3d->SetCurrentRenderer(std::move(renderer));
     installed_sink = raw;
-    std::fprintf(stderr, "[native-render] 3D sink active (Vulkan compute, 256x192)\n");
+    std::fprintf(stderr, "[native-render] 3D sink active (Vulkan compute, band %u px)\n",
+        static_cast<unsigned>(render_width));
     return 1;
 }
 

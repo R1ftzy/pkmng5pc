@@ -336,16 +336,11 @@ def play_command(repo: Repo, settings: Settings, require_artifacts: bool = True)
         render_native, render_reason = repo.native_renderer_state(settings.preset)
         if not render_native:
             sink_fallback_note = f"Native renderer unavailable: {render_reason}"
-        elif render_aspect != "4:3" or render_scale != 1:
-            limits = []
-            if render_aspect != "4:3":
-                limits.append(f"aspect {render_aspect}")
-            if render_scale != 1:
-                limits.append(f"scale {render_scale}x")
+        elif render_aspect == "16:9":
             render_native = False
             sink_fallback_note = (
-                f"Native 3D sink is 4:3 at 1x; {', '.join(limits)} uses the CPU "
-                "compositor instead"
+                "Native 3D sink rasterizes 64-multiple band widths only; aspect "
+                "16:9 (342 px) uses the CPU compositor instead"
             )
     if render_native and settings.render_verify:
         render_env["PKMNG5PC_DS3D_VERIFY"] = "1"

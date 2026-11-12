@@ -20,6 +20,7 @@
 
 #include "gpu2d.h"
 #include "pkmn/render/ds_frame_policy.h"
+#include "src/gpu3d.h"
 #include "vulkan_context.h"
 #include "vulkan_functions.h"
 
@@ -55,22 +56,24 @@ namespace {
 
     using namespace pkmn::render::vk;
 
+    // Native DS band geometry. The raster scale (V1 of ADR 0008) multiplies
+    // these at init: screen_width = render_width * scale, screen_height =
+    // 192 * scale. The compute shaders read the same values as specialization
+    // constants, specialized per pipeline at creation.
     constexpr uint32_t kWidth = 256;
     constexpr uint32_t kHeight = 192;
     constexpr uint32_t kTileSize = 8;
-    constexpr uint32_t kTilesPerLine = kWidth / kTileSize;
-    constexpr uint32_t kTileLines = kHeight / kTileSize;
-    constexpr uint32_t kMaxWorkTiles = kTilesPerLine * kTileLines * 16;
     constexpr uint32_t kMaxVariants = 256;
     constexpr uint32_t kMaxPolygons = 2048;
-    constexpr uint32_t kMaxYSpanSetups = 6144 * 2;
-    constexpr uint32_t kMaxYSpanIndices = 64 * 2048;
+    constexpr uint32_t kBaseYSpanSetups = 6144 * 2;
+    constexpr uint32_t kBaseYSpanIndices = 64 * 2048;
     constexpr uint32_t kCoarseTileCountX = 8;
     constexpr uint32_t kCoarseTileCountY = 4;
     constexpr uint32_t kCoarseTileW = kCoarseTileCountX * kTileSize;
     constexpr uint32_t kCoarseTileH = kCoarseTileCountY * kTileSize;
     constexpr uint32_t kBinStride = 2048 / 32;
     constexpr uint32_t kCoarseBinStride = kBinStride / 32;
+    constexpr uint32_t kMaxScale = 8;
 
     constexpr unsigned kPipelineInterpSpansZ = shader_index(ShaderId::ds_interp_spans_z);
     constexpr unsigned kPipelineInterpSpansW = shader_index(ShaderId::ds_interp_spans_w);
@@ -81,6 +84,7 @@ namespace {
     constexpr unsigned kPipelineClearWorkCount = shader_index(ShaderId::ds_clear_workcount);
     constexpr unsigned kPipelineCalcOffsets = shader_index(ShaderId::ds_calc_offsets);
     constexpr unsigned kPipelineSortWork = shader_index(ShaderId::ds_sort_work);
+    constexpr unsigned kPipelineDownsample = shader_index(ShaderId::ds_downsample);
 
     ShaderId raster_shader(bool textured, uint32_t blend, bool wbuffer, bool highlight)
     {
@@ -145,14 +149,29 @@ namespace {
     }
 
     constexpr VkDeviceSize kMetaBufferSize = 592;
-    constexpr VkDeviceSize kBinBufferSize = 5136
-        + (kWidth / kTileSize) * (kHeight / kTileSize) * kCoarseBinStride * 4
-        + (kWidth / kTileSize) * (kHeight / kTileSize) * kBinStride * 4
-        + (kWidth / kTileSize) * (kHeight / kTileSize) * kBinStride * 4;
-    constexpr VkDeviceSize kWorkDescBufferSize = kMaxWorkTiles * 2 * 4 * 2;
-    constexpr VkDeviceSize kResultBufferSize = 4 * 3 * 2 * kWidth * kHeight;
-    constexpr VkDeviceSize kTileBufferSize = 4 * kTileSize * kTileSize * kMaxWorkTiles;
-    constexpr VkDeviceSize kReadbackSize = kWidth * kHeight * 4;
+
+    // Per-init buffer sizes, derived from the raster scale and band width.
+    // The base tile/bin counts come from the scale-1 native surface; the
+    // members multiply them out in set_dimensions().
+    constexpr VkDeviceSize kBinBaseSize = 5136;
+    constexpr VkDeviceSize kMetaOrReadbackAlign = 4;
+
+    struct ScreenDims {
+        uint32_t scale = 1;
+        uint32_t render_width = kWidth;
+        uint32_t screen_width = kWidth;
+        uint32_t screen_height = kHeight;
+        uint32_t tiles_per_line = kWidth / kTileSize;
+        uint32_t tile_lines = kHeight / kTileSize;
+        uint32_t max_work_tiles = (kWidth / kTileSize) * (kHeight / kTileSize) * 16;
+        uint32_t max_y_span_setups = kBaseYSpanSetups;
+        uint32_t max_y_span_indices = kBaseYSpanIndices;
+        VkDeviceSize bin_buffer_size = 0;
+        VkDeviceSize workdesc_buffer_size = 0;
+        VkDeviceSize result_buffer_size = 0;
+        VkDeviceSize tile_buffer_size = 0;
+        VkDeviceSize readback_size = kWidth * kHeight * 4;
+    };
 
     struct SpanSetupY {
         int32_t Z0, Z1, W0, W1;
@@ -771,6 +790,7 @@ struct VulkanComputeRenderer::Impl {
     Image final_fb;
     Image lowres_fb;
     Image attr_fb;
+    Image downsampled_fb;
 
     std::vector<SpanSetupY> yspans;
     std::vector<SetupIndices> setup_indices;
@@ -778,6 +798,11 @@ struct VulkanComputeRenderer::Impl {
     std::array<Variant, kMaxVariants> variants_ {};
     uint32_t yspan_count = 0;
     uint32_t setup_index_count = 0;
+
+    // Raster scale and the derived surface geometry (ADR 0008, slice V1).
+    // Fixed at init: the shaders specialize to the same values per pipeline.
+    ScreenDims dims;
+    bool scale_logged = false;
 
     VkSampler samplers[9] {};
     uint32_t dummy_texture = 0;
@@ -899,14 +924,65 @@ bool VulkanComputeRenderer::Impl::initialize(SDL_Window* window, const Config& c
         dump_every = std::strtoull(value, nullptr, 10);
     }
     dump_uploads = std::getenv("PKMNG5PC_DS3D_DUMP_UPLOADS") != nullptr;
+
+    // Raster scale (ADR 0008, slice V1). Fixed for the life of the renderer;
+    // the compute pipelines specialize to the same values.
+    dims.scale = 1;
+    if (const char* value = std::getenv("PKMNG5PC_RENDER_SCALE")) {
+        char* end = nullptr;
+        const long parsed = std::strtol(value, &end, 10);
+        if (!end || *end != '\0' || parsed < 1 || parsed > static_cast<long>(kMaxScale)) {
+            std::fprintf(stderr,
+                "[native-render] invalid PKMNG5PC_RENDER_SCALE '%s' (expected 1..%u)\n", value,
+                static_cast<unsigned>(kMaxScale));
+            return false;
+        }
+        dims.scale = static_cast<uint32_t>(parsed);
+    }
+    dims.render_width = kWidth;
+    if (melonDS::GPU3D* gpu3d = nds_gpu3d_device()) {
+        dims.render_width = gpu3d->GetRenderWidth();
+    }
+    if (dims.render_width < kWidth || dims.render_width > 448 || (dims.render_width & 1) != 0) {
+        std::fprintf(stderr,
+            "[native-render] render width %u is out of range (expected an even 256..448)\n",
+            static_cast<unsigned>(dims.render_width));
+        return false;
+    }
+    dims.screen_width = dims.render_width * dims.scale;
+    dims.screen_height = kHeight * dims.scale;
+    dims.tiles_per_line = dims.screen_width / kTileSize;
+    dims.tile_lines = dims.screen_height / kTileSize;
+    dims.max_work_tiles = dims.tiles_per_line * dims.tile_lines * 16;
+    dims.max_y_span_setups = kBaseYSpanSetups * dims.scale;
+    dims.max_y_span_indices = kBaseYSpanIndices * dims.scale;
+    dims.bin_buffer_size = kBinBaseSize
+        + static_cast<VkDeviceSize>(dims.tiles_per_line) * dims.tile_lines * kCoarseBinStride * 4
+        + static_cast<VkDeviceSize>(dims.tiles_per_line) * dims.tile_lines * kBinStride * 4 * 2;
+    dims.workdesc_buffer_size = static_cast<VkDeviceSize>(dims.max_work_tiles) * 2 * 4 * 2;
+    dims.result_buffer_size
+        = static_cast<VkDeviceSize>(4) * 3 * 2 * dims.screen_width * dims.screen_height;
+    dims.tile_buffer_size
+        = static_cast<VkDeviceSize>(4) * kTileSize * kTileSize * dims.max_work_tiles;
+    dims.readback_size = static_cast<VkDeviceSize>(dims.render_width) * kHeight * 4;
+    // The compute shaders dispatch whole coarse tiles, so the hi-res surface
+    // must tile exactly; 342 (16:9) stays a faithful-path width.
+    if ((dims.screen_width % kCoarseTileW) != 0 || (dims.screen_height % kCoarseTileH) != 0) {
+        std::fprintf(stderr,
+            "[native-render] render width %u at %ux scale is unsupported; the hi-res "
+            "surface must be a %u-px multiple (use the faithful renderer for this width)\n",
+            static_cast<unsigned>(dims.render_width), static_cast<unsigned>(dims.scale),
+            static_cast<unsigned>(kCoarseTileW));
+        return false;
+    }
     texcache = std::make_unique<melonDS::Texcache<VulkanTextureLoader, uint32_t>>(
         VulkanTextureLoader { texture_store,
             [this](uint32_t id, uint32_t width, uint32_t height, uint32_t layer, const void* data) {
                 dump_upload(id, width, height, layer, data);
             } });
 
-    yspans.resize(kMaxYSpanSetups);
-    setup_indices.resize(kMaxYSpanIndices);
+    yspans.resize(dims.max_y_span_setups);
+    setup_indices.resize(dims.max_y_span_indices);
     render_polygons.resize(kMaxPolygons);
 
     if (!create_samplers() || !create_buffers() || !create_images() || !create_dummy_texture()
@@ -927,6 +1003,9 @@ bool VulkanComputeRenderer::Impl::initialize(SDL_Window* window, const Config& c
             image_barrier(command, attr_fb.image, VK_IMAGE_LAYOUT_UNDEFINED,
                 VK_IMAGE_LAYOUT_GENERAL, 0, VK_ACCESS_SHADER_WRITE_BIT,
                 VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 1);
+            image_barrier(command, downsampled_fb.image, VK_IMAGE_LAYOUT_UNDEFINED,
+                VK_IMAGE_LAYOUT_GENERAL, 0, VK_ACCESS_SHADER_WRITE_BIT,
+                VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 1);
             images_ok = true;
         })) {
         return false;
@@ -937,6 +1016,7 @@ bool VulkanComputeRenderer::Impl::initialize(SDL_Window* window, const Config& c
     final_fb.layout = VK_IMAGE_LAYOUT_GENERAL;
     lowres_fb.layout = VK_IMAGE_LAYOUT_GENERAL;
     attr_fb.layout = VK_IMAGE_LAYOUT_GENERAL;
+    downsampled_fb.layout = VK_IMAGE_LAYOUT_GENERAL;
 
     soft = std::make_unique<melonDS::SoftRenderer>();
     verify = std::getenv("PKMNG5PC_DS3D_VERIFY") != nullptr;
@@ -1024,6 +1104,7 @@ void VulkanComputeRenderer::Impl::shutdown()
     destroy_image(*context, final_fb);
     destroy_image(*context, lowres_fb);
     destroy_image(*context, attr_fb);
+    destroy_image(*context, downsampled_fb);
     destroy_buffer(*context, yspan_buffer);
     destroy_buffer(*context, xspan_buffer);
     destroy_buffer(*context, polygon_buffer);
@@ -1072,24 +1153,26 @@ bool VulkanComputeRenderer::Impl::create_samplers()
 bool VulkanComputeRenderer::Impl::create_buffers()
 {
     const VkBufferUsageFlags ssbo = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
-    if (!create_host_buffer(*context, sizeof(SpanSetupY) * kMaxYSpanSetups, ssbo, yspan_buffer)
-        || !create_host_buffer(*context, sizeof(SpanSetupX) * kMaxYSpanIndices, ssbo, xspan_buffer)
-        || !create_host_buffer(*context, sizeof(RenderPolygon) * kMaxPolygons, ssbo, polygon_buffer)
-        || !create_host_buffer(*context, kResultBufferSize, ssbo, result_buffer)
+    if (!create_host_buffer(
+            *context, sizeof(SpanSetupY) * dims.max_y_span_setups, ssbo, yspan_buffer)
         || !create_host_buffer(
-            *context, kBinBufferSize, ssbo | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, bin_buffer)
-        || !create_host_buffer(*context, kWorkDescBufferSize, ssbo, workdesc_buffer)
-        || !create_host_buffer(*context, kTileBufferSize, ssbo, color_tile_buffer)
-        || !create_host_buffer(*context, kTileBufferSize, ssbo, depth_tile_buffer)
-        || !create_host_buffer(*context, kTileBufferSize, ssbo, attr_tile_buffer)
+            *context, sizeof(SpanSetupX) * dims.max_y_span_indices, ssbo, xspan_buffer)
+        || !create_host_buffer(*context, sizeof(RenderPolygon) * kMaxPolygons, ssbo, polygon_buffer)
+        || !create_host_buffer(*context, dims.result_buffer_size, ssbo, result_buffer)
+        || !create_host_buffer(
+            *context, dims.bin_buffer_size, ssbo | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, bin_buffer)
+        || !create_host_buffer(*context, dims.workdesc_buffer_size, ssbo, workdesc_buffer)
+        || !create_host_buffer(*context, dims.tile_buffer_size, ssbo, color_tile_buffer)
+        || !create_host_buffer(*context, dims.tile_buffer_size, ssbo, depth_tile_buffer)
+        || !create_host_buffer(*context, dims.tile_buffer_size, ssbo, attr_tile_buffer)
         || !create_host_buffer(
             *context, kMetaBufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, meta_buffer)
         || !create_host_buffer(
-            *context, sizeof(SetupIndices) * kMaxYSpanIndices, ssbo, setup_index_buffer)
+            *context, sizeof(SetupIndices) * dims.max_y_span_indices, ssbo, setup_index_buffer)
         || !create_host_buffer(
-            *context, kReadbackSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT, color_readback)
+            *context, dims.readback_size, VK_BUFFER_USAGE_TRANSFER_DST_BIT, color_readback)
         || !create_host_buffer(
-            *context, kReadbackSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT, attr_readback)) {
+            *context, dims.readback_size, VK_BUFFER_USAGE_TRANSFER_DST_BIT, attr_readback)) {
         return false;
     }
     return true;
@@ -1097,15 +1180,23 @@ bool VulkanComputeRenderer::Impl::create_buffers()
 
 bool VulkanComputeRenderer::Impl::create_images()
 {
-    if (!create_device_image(*context, kWidth, kHeight, 1, VK_FORMAT_R8G8B8A8_UNORM,
-            VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, VK_IMAGE_VIEW_TYPE_2D,
-            final_fb)
-        || !create_device_image(*context, kWidth, kHeight, 1, VK_FORMAT_R8G8B8A8_UINT,
+    // FinalFB carries the hi-res color surface (the HD-composite source, ADR
+    // 0008 slice V2); LowResFB and AttrFB are the faithful 1x planes the
+    // FinalPass writes at block boundaries, whatever the scale. At scale > 1
+    // the downsample pass averages FinalFB into downsampled_fb, the
+    // supersampled readback color.
+    if (!create_device_image(*context, dims.screen_width, dims.screen_height, 1,
+            VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+            VK_IMAGE_VIEW_TYPE_2D, final_fb)
+        || !create_device_image(*context, dims.render_width, kHeight, 1, VK_FORMAT_R8G8B8A8_UINT,
             VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, VK_IMAGE_VIEW_TYPE_2D,
             lowres_fb)
-        || !create_device_image(*context, kWidth, kHeight, 1, VK_FORMAT_R32_UINT,
+        || !create_device_image(*context, dims.render_width, kHeight, 1, VK_FORMAT_R32_UINT,
             VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, VK_IMAGE_VIEW_TYPE_2D,
-            attr_fb)) {
+            attr_fb)
+        || !create_device_image(*context, dims.render_width, kHeight, 1, VK_FORMAT_R8G8B8A8_UINT,
+            VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, VK_IMAGE_VIEW_TYPE_2D,
+            downsampled_fb)) {
         return false;
     }
     return true;
@@ -1152,7 +1243,7 @@ bool VulkanComputeRenderer::Impl::create_descriptor_layouts()
         }
     }
     {
-        std::array<VkDescriptorSetLayoutBinding, 3> bindings {};
+        std::array<VkDescriptorSetLayoutBinding, 4> bindings {};
         for (uint32_t i = 0; i < bindings.size(); ++i) {
             bindings[i].binding = i;
             bindings[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
@@ -1190,7 +1281,7 @@ bool VulkanComputeRenderer::Impl::create_descriptor_pools()
         VkDescriptorPoolSize sizes[4] {};
         sizes[0] = { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1 };
         sizes[1] = { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 10 };
-        sizes[2] = { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 3 };
+        sizes[2] = { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 4 };
         sizes[3] = { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1 };
         VkDescriptorPoolCreateInfo info { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
         info.maxSets = 3;
@@ -1255,10 +1346,10 @@ bool VulkanComputeRenderer::Impl::create_common_descriptors()
     }
     vkUpdateDescriptorSets(context->device(), 11, writes, 0, nullptr);
 
-    const Image* images[3] = { &final_fb, &lowres_fb, &attr_fb };
-    VkDescriptorImageInfo image_info[3] {};
-    VkWriteDescriptorSet image_writes[3] {};
-    for (uint32_t i = 0; i < 3; ++i) {
+    const Image* images[4] = { &final_fb, &lowres_fb, &attr_fb, &downsampled_fb };
+    VkDescriptorImageInfo image_info[4] {};
+    VkWriteDescriptorSet image_writes[4] {};
+    for (uint32_t i = 0; i < 4; ++i) {
         image_info[i].imageView = images[i]->view;
         image_info[i].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
         image_writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -1268,7 +1359,7 @@ bool VulkanComputeRenderer::Impl::create_common_descriptors()
         image_writes[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
         image_writes[i].pImageInfo = &image_info[i];
     }
-    vkUpdateDescriptorSets(context->device(), 3, image_writes, 0, nullptr);
+    vkUpdateDescriptorSets(context->device(), 4, image_writes, 0, nullptr);
 
     Texture* dummy = texture_store->get(dummy_texture);
     if (!dummy) {
@@ -1290,6 +1381,23 @@ bool VulkanComputeRenderer::Impl::create_common_descriptors()
 
 bool VulkanComputeRenderer::Impl::create_pipelines()
 {
+    // Specialize ScreenWidth/ScreenHeight/RenderScale/MaxWorkTiles (spec
+    // constants in the generated GLSL) to this renderer's geometry. The
+    // entries must stay in constant_id order (0..3), ints.
+    const uint32_t spec_values[4]
+        = { dims.screen_width, dims.screen_height, dims.scale, dims.max_work_tiles };
+    VkSpecializationMapEntry spec_entries[4] {};
+    for (uint32_t i = 0; i < 4; ++i) {
+        spec_entries[i].constantID = i;
+        spec_entries[i].offset = i * sizeof(uint32_t);
+        spec_entries[i].size = sizeof(uint32_t);
+    }
+    VkSpecializationInfo spec_info {};
+    spec_info.mapEntryCount = 4;
+    spec_info.pMapEntries = spec_entries;
+    spec_info.dataSize = sizeof(spec_values);
+    spec_info.pData = spec_values;
+
     for (uint32_t i = 0; i < kNumShaders; ++i) {
         VkShaderModuleCreateInfo module_info { VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO };
         module_info.codeSize = kShaderBlobs[i].size;
@@ -1305,6 +1413,7 @@ bool VulkanComputeRenderer::Impl::create_pipelines()
         stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
         stage.module = module;
         stage.pName = "main";
+        stage.pSpecializationInfo = &spec_info;
 
         VkComputePipelineCreateInfo info { VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO };
         info.stage = stage;
@@ -1375,8 +1484,8 @@ void VulkanComputeRenderer::Impl::fail(const char* what)
             what);
         logged_failure = true;
     }
-    std::memset(color_readback.mapped, 0, static_cast<std::size_t>(kReadbackSize));
-    std::memset(attr_readback.mapped, 0, static_cast<std::size_t>(kReadbackSize));
+    std::memset(color_readback.mapped, 0, static_cast<std::size_t>(dims.readback_size));
+    std::memset(attr_readback.mapped, 0, static_cast<std::size_t>(dims.readback_size));
 }
 
 void VulkanComputeRenderer::Impl::reset(melonDS::GPU& gpu)
@@ -1394,8 +1503,8 @@ void VulkanComputeRenderer::Impl::reset(melonDS::GPU& gpu)
     }
     cpu_lines = failed;
     have_frame = false;
-    std::memset(color_readback.mapped, 0, static_cast<std::size_t>(kReadbackSize));
-    std::memset(attr_readback.mapped, 0, static_cast<std::size_t>(kReadbackSize));
+    std::memset(color_readback.mapped, 0, static_cast<std::size_t>(dims.readback_size));
+    std::memset(attr_readback.mapped, 0, static_cast<std::size_t>(dims.readback_size));
 }
 
 void VulkanComputeRenderer::Impl::dump_upload(
@@ -1466,6 +1575,19 @@ void VulkanComputeRenderer::Impl::verify_frame(melonDS::GPU& gpu)
     if (gpu.GPU3D.RenderNumPolygons > 0) {
         ++verify_polygon_frames;
     }
+    if (dims.scale > 1) {
+        // The hi-res raster supersamples: its downsampled planes differ from
+        // the soft renderer at polygon edges by design, so the byte-lock
+        // comparison is only meaningful at scale 1.
+        if (!scale_logged) {
+            std::fprintf(stderr,
+                "[native-render] verify compare skipped at %ux scale (supersampling "
+                "differs from soft at edges by design)\n",
+                static_cast<unsigned>(dims.scale));
+            scale_logged = true;
+        }
+        return;
+    }
 
     uint32_t max_diff = 0;
     uint64_t attr_bad = 0;
@@ -1477,14 +1599,16 @@ void VulkanComputeRenderer::Impl::verify_frame(melonDS::GPU& gpu)
     uint32_t detail_soft_attr = 0;
 
     for (int y = 0; y < static_cast<int>(kHeight); ++y) {
-        const uint32_t* vk_color = static_cast<const uint32_t*>(color_readback.mapped) + y * kWidth;
-        const uint32_t* vk_attr = static_cast<const uint32_t*>(attr_readback.mapped) + y * kWidth;
+        const uint32_t* vk_color = static_cast<const uint32_t*>(color_readback.mapped)
+            + static_cast<std::size_t>(y) * dims.render_width;
+        const uint32_t* vk_attr = static_cast<const uint32_t*>(attr_readback.mapped)
+            + static_cast<std::size_t>(y) * dims.render_width;
         const uint32_t* soft_color = soft->GetLine(y);
         const uint32_t* soft_attr = soft->GetAttrLine(y);
         if (!soft_color || !soft_attr) {
             continue;
         }
-        for (int x = 0; x < static_cast<int>(kWidth); ++x) {
+        for (int x = 0; x < static_cast<int>(dims.render_width); ++x) {
             const uint32_t vk = vk_color[x] & 0x1F3F3F3Fu;
             const uint32_t soft = soft_color[x] & 0x1F3F3F3Fu;
             const uint32_t dr = static_cast<uint32_t>(std::abs(
@@ -1535,7 +1659,7 @@ void VulkanComputeRenderer::Impl::verify_frame(melonDS::GPU& gpu)
                 std::snprintf(path, sizeof(path), "%s-%llu-%s.bin", dump,
                     static_cast<unsigned long long>(verify_frames), suffix);
                 if (FILE* file = std::fopen(path, "wb")) {
-                    std::fwrite(data, 1, static_cast<std::size_t>(kReadbackSize), file);
+                    std::fwrite(data, 1, static_cast<std::size_t>(dims.readback_size), file);
                     std::fclose(file);
                 }
             };
@@ -1898,17 +2022,29 @@ bool VulkanComputeRenderer::Impl::build_spans(
         }
 
         int32_t scaled_positions[10][2] {};
-        int32_t ytop = static_cast<int32_t>(kHeight);
+        int32_t ytop = static_cast<int32_t>(dims.screen_height);
         int32_t ybot = 0;
         for (uint32_t v = 0; v < polygon->NumVertices; ++v) {
-            scaled_positions[v][0] = polygon->Vertices[v]->FinalPosition[0];
-            scaled_positions[v][1] = polygon->Vertices[v]->FinalPosition[1];
+            if (dims.scale > 1) {
+                // Upstream's high-resolution path (GPU3D_Compute.cpp: the
+                // 4-bit fractional positions keep the scaled interpolation
+                // exact; the GE device model computes them for every vertex).
+                scaled_positions[v][0]
+                    = (polygon->Vertices[v]->HiresPosition[0] * static_cast<int32_t>(dims.scale))
+                    >> 4;
+                scaled_positions[v][1]
+                    = (polygon->Vertices[v]->HiresPosition[1] * static_cast<int32_t>(dims.scale))
+                    >> 4;
+            } else {
+                scaled_positions[v][0] = polygon->Vertices[v]->FinalPosition[0];
+                scaled_positions[v][1] = polygon->Vertices[v]->FinalPosition[1];
+            }
             ytop = std::min(scaled_positions[v][1], ytop);
             ybot = std::max(scaled_positions[v][1], ybot);
         }
         render_polygons[i].YTop = ytop;
         render_polygons[i].YBot = ybot;
-        render_polygons[i].XMin = static_cast<int32_t>(kWidth);
+        render_polygons[i].XMin = static_cast<int32_t>(dims.screen_width);
         render_polygons[i].XMax = 0;
 
         if (ybot == ytop) {
@@ -1931,7 +2067,8 @@ bool VulkanComputeRenderer::Impl::build_spans(
                 cur_vr = j;
             }
 
-            if (num_y_spans + 2 > kMaxYSpanSetups || num_setup_indices >= kMaxYSpanIndices) {
+            if (num_y_spans + 2 > dims.max_y_span_setups
+                || num_setup_indices >= dims.max_y_span_indices) {
                 fail("y-span capacity");
                 return false;
             }
@@ -1944,7 +2081,8 @@ bool VulkanComputeRenderer::Impl::build_spans(
 
             setup_indices[num_setup_indices++] = { i, span_l, span_r, static_cast<uint32_t>(ytop) };
         } else {
-            if (num_y_spans + 2 > kMaxYSpanSetups || num_setup_indices >= kMaxYSpanIndices) {
+            if (num_y_spans + 2 > dims.max_y_span_setups
+                || num_setup_indices >= dims.max_y_span_indices) {
                 fail("y-span capacity");
                 return false;
             }
@@ -1971,7 +2109,7 @@ bool VulkanComputeRenderer::Impl::build_spans(
                             }
                         }
                     }
-                    if (num_y_spans >= kMaxYSpanSetups) {
+                    if (num_y_spans >= dims.max_y_span_setups) {
                         fail("y-span capacity");
                         return false;
                     }
@@ -1994,7 +2132,7 @@ bool VulkanComputeRenderer::Impl::build_spans(
                             }
                         }
                     }
-                    if (num_y_spans >= kMaxYSpanSetups) {
+                    if (num_y_spans >= dims.max_y_span_setups) {
                         fail("y-span capacity");
                         return false;
                     }
@@ -2002,7 +2140,7 @@ bool VulkanComputeRenderer::Impl::build_spans(
                     setup_y_span(&render_polygons[i], &yspans[num_y_spans++], polygon, cur_vr,
                         next_vr, 1, scaled_positions);
                 }
-                if (num_setup_indices >= kMaxYSpanIndices) {
+                if (num_setup_indices >= dims.max_y_span_indices) {
                     fail("setup-index capacity");
                     return false;
                 }
@@ -2091,7 +2229,7 @@ bool VulkanComputeRenderer::Impl::record_frame(uint32_t num_variants, const Vari
 
     vkCmdBindPipeline(
         frame_command, VK_PIPELINE_BIND_POINT_COMPUTE, pipelines[kPipelineClearCoarse]);
-    vkCmdDispatch(frame_command, (kTilesPerLine * kTileLines + 31) / 32, 1, 1);
+    vkCmdDispatch(frame_command, (dims.tiles_per_line * dims.tile_lines + 31) / 32, 1, 1);
     memory_barrier(frame_command);
 
     const bool wbuffer_frame = wbuffer;
@@ -2110,7 +2248,8 @@ bool VulkanComputeRenderer::Impl::record_frame(uint32_t num_variants, const Vari
         if (bin_groups > 0) {
             vkCmdBindPipeline(
                 frame_command, VK_PIPELINE_BIND_POINT_COMPUTE, pipelines[kPipelineBinCombined]);
-            vkCmdDispatch(frame_command, bin_groups, kWidth / kCoarseTileW, kHeight / kCoarseTileH);
+            vkCmdDispatch(frame_command, bin_groups, dims.screen_width / kCoarseTileW,
+                dims.screen_height / kCoarseTileH);
             memory_barrier(frame_command);
         }
 
@@ -2151,7 +2290,7 @@ bool VulkanComputeRenderer::Impl::record_frame(uint32_t num_variants, const Vari
 
     vkCmdBindPipeline(frame_command, VK_PIPELINE_BIND_POINT_COMPUTE,
         pipelines[wbuffer_frame ? kPipelineDepthBlendW : kPipelineDepthBlendZ]);
-    vkCmdDispatch(frame_command, kTilesPerLine, kTileLines, 1);
+    vkCmdDispatch(frame_command, dims.tiles_per_line, dims.tile_lines, 1);
     memory_barrier(frame_command);
 
     uint32_t final_flags = 0;
@@ -2166,7 +2305,16 @@ bool VulkanComputeRenderer::Impl::record_frame(uint32_t num_variants, const Vari
     }
     vkCmdBindPipeline(frame_command, VK_PIPELINE_BIND_POINT_COMPUTE,
         pipelines[shader_index(final_pass_shader(final_flags))]);
-    vkCmdDispatch(frame_command, kWidth / 32, kHeight, 1);
+    vkCmdDispatch(frame_command, dims.screen_width / 32, dims.screen_height, 1);
+
+    if (dims.scale > 1) {
+        // Supersampled readback (ADR 0008, slice V1): box-filter the hi-res
+        // surface into the 1x color plane. Attr stays point-sampled faithful.
+        memory_barrier(frame_command);
+        vkCmdBindPipeline(
+            frame_command, VK_PIPELINE_BIND_POINT_COMPUTE, pipelines[kPipelineDownsample]);
+        vkCmdDispatch(frame_command, (dims.render_width + 7) / 8, (kHeight + 7) / 8, 1);
+    }
 
     VkMemoryBarrier image_done { VK_STRUCTURE_TYPE_MEMORY_BARRIER };
     image_done.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
@@ -2183,18 +2331,27 @@ bool VulkanComputeRenderer::Impl::record_frame(uint32_t num_variants, const Vari
         VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
         VK_PIPELINE_STAGE_TRANSFER_BIT, 1);
 
+    // LowResFB and AttrFB are the faithful 1x planes at every scale: FinalPass
+    // stores them at block boundaries only, so the readback copy is unchanged.
+    const Image& color_source = dims.scale > 1 ? downsampled_fb : lowres_fb;
+    if (dims.scale > 1) {
+        image_barrier(frame_command, downsampled_fb.image, VK_IMAGE_LAYOUT_GENERAL,
+            VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_ACCESS_SHADER_WRITE_BIT,
+            VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+            VK_PIPELINE_STAGE_TRANSFER_BIT, 1);
+    }
     VkBufferImageCopy color_copy {};
     color_copy.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     color_copy.imageSubresource.layerCount = 1;
-    color_copy.imageExtent = { kWidth, kHeight, 1 };
-    vkCmdCopyImageToBuffer(frame_command, lowres_fb.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+    color_copy.imageExtent = { dims.render_width, kHeight, 1 };
+    vkCmdCopyImageToBuffer(frame_command, color_source.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
         color_readback.buffer, 1, &color_copy);
 
     VkBufferImageCopy attr_copy = color_copy;
     vkCmdCopyImageToBuffer(frame_command, attr_fb.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
         attr_readback.buffer, 1, &attr_copy);
 
-    image_barrier(frame_command, lowres_fb.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+    image_barrier(frame_command, color_source.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
         VK_IMAGE_LAYOUT_GENERAL, VK_ACCESS_TRANSFER_READ_BIT,
         VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 1);
@@ -2204,6 +2361,9 @@ bool VulkanComputeRenderer::Impl::record_frame(uint32_t num_variants, const Vari
         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 1);
     lowres_fb.layout = VK_IMAGE_LAYOUT_GENERAL;
     attr_fb.layout = VK_IMAGE_LAYOUT_GENERAL;
+    if (dims.scale > 1) {
+        downsampled_fb.layout = VK_IMAGE_LAYOUT_GENERAL;
+    }
 
     if (vkEndCommandBuffer(frame_command) != VK_SUCCESS) {
         fail("command buffer end");
@@ -2354,7 +2514,7 @@ melonDS::u32* VulkanComputeRenderer::GetLine(int line)
         return nullptr;
     }
     return static_cast<melonDS::u32*>(impl_->color_readback.mapped)
-        + static_cast<std::size_t>(line) * kWidth;
+        + static_cast<std::size_t>(line) * impl_->dims.render_width;
 }
 
 const melonDS::u32* VulkanComputeRenderer::GetAttrLine(int line)
@@ -2369,7 +2529,7 @@ const melonDS::u32* VulkanComputeRenderer::GetAttrLine(int line)
         return nullptr;
     }
     return static_cast<const melonDS::u32*>(impl_->attr_readback.mapped)
-        + static_cast<std::size_t>(line) * kWidth;
+        + static_cast<std::size_t>(line) * impl_->dims.render_width;
 }
 
 void VulkanComputeRenderer::SetRenderWidth(melonDS::u32 width)
@@ -2377,7 +2537,10 @@ void VulkanComputeRenderer::SetRenderWidth(melonDS::u32 width)
     if (impl_->soft) {
         impl_->soft->SetRenderWidth(width);
     }
-    if (width != kWidth) {
+    // The band width is fixed before init (the frontend calls
+    // nds_gpu3d_set_output_width first) and sizes every buffer and pipeline;
+    // a different width falls back to the CPU renderer.
+    if (width != impl_->dims.render_width) {
         impl_->fail("SetRenderWidth");
     }
 }

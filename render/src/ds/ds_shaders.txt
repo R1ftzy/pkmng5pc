@@ -36,3 +36,4 @@ ds_final_aa|FinalPass|FinalPass,AntiAliasing
 ds_final_aa_edge|FinalPass|FinalPass,AntiAliasing,EdgeMarking
 ds_final_aa_fog|FinalPass|FinalPass,AntiAliasing,Fog
 ds_final_aa_edge_fog|FinalPass|FinalPass,AntiAliasing,EdgeMarking,Fog
+ds_downsample|DsDownsample|

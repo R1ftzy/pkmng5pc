@@ -268,21 +268,24 @@ class NativeRenderCommandTests(unittest.TestCase):
         command, _ = self.make_command(render_native=True, play_native=False)
         self.assertIn("-Native" if os.name == "nt" else "--native", command.argv)
 
-    def test_non_4_by_3_falls_back_to_the_cpu_compositor(self) -> None:
+    def test_sink_rasterizes_wide_bands(self) -> None:
         command, _ = self.make_command(render_native=True, render_aspect="21:9")
-        self.assertNotIn("-Renderer", command.argv)
-        self.assertNotIn("--renderer", command.argv)
-        self.assertIn("-Native" if os.name == "nt" else "--native", command.argv)
+        self.assertIn("-Renderer" if os.name == "nt" else "--renderer", command.argv)
         aspect_flag = "-Aspect" if os.name == "nt" else "--aspect"
         self.assertEqual(command.argv[command.argv.index(aspect_flag) + 1], "21:9")
-        self.assertIn("CPU compositor", command.note)
 
-    def test_non_1x_falls_back_to_the_cpu_compositor(self) -> None:
-        command, _ = self.make_command(render_native=True, render_scale=3)
+    def test_sink_rasterizes_above_1x(self) -> None:
+        command, _ = self.make_command(render_native=True, render_scale=4)
+        self.assertIn("-Renderer" if os.name == "nt" else "--renderer", command.argv)
+        scale_flag = "-RenderScale" if os.name == "nt" else "--render-scale"
+        self.assertEqual(command.argv[command.argv.index(scale_flag) + 1], "4")
+
+    def test_sink_16_by_9_falls_back_to_the_cpu_compositor(self) -> None:
+        command, _ = self.make_command(render_native=True, render_aspect="16:9")
         self.assertNotIn("-Renderer", command.argv)
         self.assertNotIn("--renderer", command.argv)
-        self.assertIn("1x", command.note)
-        self.assertIn("CPU compositor", command.note)
+        self.assertIn("64-multiple", command.note)
+        self.assertIn("-Native" if os.name == "nt" else "--native", command.argv)
 
     def test_compute_lane_passes_its_flags(self) -> None:
         command, _ = self.make_command(

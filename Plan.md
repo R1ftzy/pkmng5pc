@@ -602,6 +602,24 @@ Do not vendor or copy their content; cite and reimplement.
 
 Newest first. Keep entries short; details and evidence live in `re/notes/`.
 
+- **2026-11-12 (slice V1 ships: the Vulkan sink rasterizes wide bands at up to
+  8x — the renderer is ours)** — ADR 0008's first slice is implemented: the
+  Vulkan sink's shaders specialize `ScreenWidth/ScreenHeight/RenderScale/
+  MaxWorkTiles` per pipeline (one SPIR-V set, no runtime compiler), the surface
+  geometry is runtime (band width from `GPU3D::GetRenderWidth()` times the
+  scale, 1..8), the CPU span setup scales coordinates exactly like upstream's
+  `ComputeRenderer::SetupSpan` (hires 4-bit positions above 1x), and the readback
+  box-filters the hi-res surface into the faithful 1x plane — visible
+  supersampling through the existing present path, bit-identical at scale 1.
+  The 4:3-only gate is lifted: any even 256..448 px band whose product with the
+  scale is a 64-multiple rasterizes in the sink (band 448 at 2x = 896x768
+  verified through Native present); 16:9 (342 px) stays faithful-only. The
+  verify harness reports color 0-diff at scale 1 and skips at scale>1 by
+  design. Known issue recorded: the faithful attr plane mismatches the soft
+  renderer on every pixel even before this change (pre-existing; colors exact)
+  — `runner/src/gpu2d.cpp`'s attr consumer needs its own investigation before
+  slice V2's composite relies on it.
+
 - **2026-11-12 (own-renderer roadmap: the Vulkan port is staged, and the
   edge-object fix has a method)** — the user set the target: port the compute
   renderer's features into the project's own Vulkan sink (keep the GL lane),
