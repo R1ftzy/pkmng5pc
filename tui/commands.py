@@ -296,20 +296,20 @@ def play_command(repo: Repo, settings: Settings, require_artifacts: bool = True)
     extra = _extra_tokens(settings.extra_args)
 
     render_native = False
-    render_aspect = "4:3"
+    render_aspect = (
+        settings.render_aspect if settings.render_aspect in RENDER_ASPECT_WIDTHS else "4:3"
+    )
     render_scale = 1
     render_env: dict[str, str] = {}
-    if settings.render_native:
+    compatibility = bool(settings.compatibility_mode)
+    render_requested = settings.render_native and not compatibility
+    render_note = ""
+    if render_requested:
         render_native, render_reason = repo.native_renderer_state(settings.preset)
         if not render_native:
-            raise LaunchError(
-                f"Native renderer is enabled but unavailable: {render_reason}. "
-                "Turn it off on the Play page or rebuild."
-            )
+            render_requested = False
+            render_note = f"Native renderer unavailable: {render_reason}"
     if render_native:
-        render_aspect = (
-            settings.render_aspect if settings.render_aspect in RENDER_ASPECT_WIDTHS else "4:3"
-        )
         render_scale = (
             settings.render_scale
             if not isinstance(settings.render_scale, bool)
@@ -318,15 +318,17 @@ def play_command(repo: Repo, settings: Settings, require_artifacts: bool = True)
         )
         if render_aspect != "4:3":
             raise LaunchError(
-                "Native renderer Slice 1 supports 4:3 only; choose 4:3 or turn it off."
+                "Native renderer Slice 1 supports 4:3 only; choose 4:3, turn the "
+                "renderer off, or enable Compatibility mode."
             )
         if render_scale != 1:
             raise LaunchError(
-                "Native renderer Slice 1 supports 1x only; choose 1x or turn it off."
+                "Native renderer Slice 1 supports 1x only; choose 1x, turn the "
+                "renderer off, or enable Compatibility mode."
             )
         if settings.render_verify:
             render_env["PKMNG5PC_DS3D_VERIFY"] = "1"
-    native_present = settings.play_native or render_native
+    native_present = (settings.play_native or render_native) and not compatibility
 
     save_path = ""
     if settings.save_mode == "custom":
@@ -360,13 +362,12 @@ def play_command(repo: Repo, settings: Settings, require_artifacts: bool = True)
         if native_present:
             argv.append("-Native")
             argv.extend(["-Gpu", settings.play_gpu or "auto"])
+            argv.extend(["-Aspect", render_aspect])
         if render_native:
             argv.extend(
                 [
                     "-Renderer",
                     "native",
-                    "-Aspect",
-                    render_aspect,
                     "-RenderScale",
                     str(render_scale),
                 ]
@@ -402,13 +403,12 @@ def play_command(repo: Repo, settings: Settings, require_artifacts: bool = True)
         if native_present:
             argv.append("--native")
             argv.extend(["--gpu", settings.play_gpu or "auto"])
+            argv.extend(["--aspect", render_aspect])
         if render_native:
             argv.extend(
                 [
                     "--renderer",
                     "native",
-                    "--aspect",
-                    render_aspect,
                     "--render-scale",
                     str(render_scale),
                 ]
@@ -431,6 +431,11 @@ def play_command(repo: Repo, settings: Settings, require_artifacts: bool = True)
             argv.append("--")
             argv.extend(extra)
     note = f"Runner from {runner_preset or settings.preset}; close the game window to return here."
+    if render_note:
+        fallback = "native present only" if native_present else "the SDL path"
+        note = f"{render_note}; using {fallback}. " + note
+    if compatibility:
+        note = "Compatibility mode: SDL presentation, no GPU path. " + note
     return Command(
         "Play",
         argv,

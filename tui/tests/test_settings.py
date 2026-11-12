@@ -26,7 +26,9 @@ class SettingsLoadTests(unittest.TestCase):
         self.assertEqual(settings.save_mode, "default")
         self.assertEqual(settings.frames, 0)
         self.assertEqual(settings.shards, 8)
-        self.assertFalse(settings.render_native)
+        self.assertTrue(settings.play_native)
+        self.assertTrue(settings.render_native)
+        self.assertFalse(settings.compatibility_mode)
         self.assertEqual(settings.render_scale, 1)
         self.assertEqual(settings.render_aspect, "4:3")
         self.assertFalse(settings.render_verify)
@@ -51,6 +53,7 @@ class SettingsLoadTests(unittest.TestCase):
             "frames": -4,
             "shards": 1,
             "render_native": "on",
+            "compatibility_mode": "on",
             "render_scale": 9,
             "render_aspect": "32:9",
             "render_verify": "yes",
@@ -68,7 +71,8 @@ class SettingsLoadTests(unittest.TestCase):
         self.assertEqual(settings.save_mode, "default")
         self.assertEqual(settings.frames, 0)
         self.assertEqual(settings.shards, 2)
-        self.assertFalse(settings.render_native)
+        self.assertTrue(settings.render_native)
+        self.assertFalse(settings.compatibility_mode)
         self.assertEqual(settings.render_scale, 1)
         self.assertEqual(settings.render_aspect, "4:3")
         self.assertFalse(settings.render_verify)
@@ -101,7 +105,7 @@ class SettingsLoadTests(unittest.TestCase):
             settings = Settings.load(path, PRESETS)
 
         self.assertTrue(settings.play_native)
-        self.assertFalse(settings.render_native)
+        self.assertTrue(settings.render_native)
         self.assertEqual(settings.render_scale, 1)
         self.assertEqual(settings.render_aspect, "4:3")
         self.assertFalse(settings.render_verify)
@@ -125,6 +129,11 @@ class SettingsLoadTests(unittest.TestCase):
         settings.normalize(PRESETS)
         self.assertTrue(settings.play_native)
 
+    def test_compatibility_mode_does_not_force_native_presentation(self) -> None:
+        settings = Settings(render_native=True, play_native=False, compatibility_mode=True)
+        settings.normalize(PRESETS)
+        self.assertFalse(settings.play_native)
+
 
 class SettingsRoundTripTests(unittest.TestCase):
     def test_save_and_load_preserve_every_field(self) -> None:
@@ -147,6 +156,7 @@ class SettingsRoundTripTests(unittest.TestCase):
             render_native=True,
             render_scale=3,
             render_aspect="21:9",
+            compatibility_mode=True,
             render_verify=True,
             save_mode="custom",
             save_path="saves/run.sav",

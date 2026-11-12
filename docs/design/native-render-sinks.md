@@ -2,8 +2,9 @@
 
 **Status:** design for `docs/adr/0007-native-ds-render-sinks.md` (accepted
 2026-10-21 as an early M8 spike). Slice 0 infrastructure and the Slice 1 3D sink
-are implemented; the 2D sink is not. Default off; this is not M6 or M8
-completion.
+are implemented; the 2D sink is not. **Amended 2026-11-12:** built and enabled
+by default, with **Compatibility mode** as the run-time off switch. This is not
+M6 or M8 completion.
 
 ## 1. Scope
 
@@ -116,9 +117,10 @@ Build targets:
   presenter and `VulkanPresenter`.
 - `pkmn_render_ds` links `pkmn_render`, the runner headers it needs, and the
   generated shader sources. It is linked into `nds_runner` by
-  `cmake/Runner.cmake` when `PKMNG5PC_NATIVE_RENDERER=ON` (default OFF; the
-  runtime toggle also remains off). With the option OFF, the target, glslang and
-  the patch's sink calls are absent; the runner is the pre-spike binary.
+  `cmake/Runner.cmake` when `PKMNG5PC_NATIVE_RENDERER=ON` (default ON since
+  2026-11-12; the launcher asks for `native` too, and Compatibility mode asks
+  for `off`). With the option OFF, the target, glslang and the patch's sink
+  calls are absent; the runner is the pre-spike binary.
 - `shader_sources` is an object library generated at build time. No SPIR-V or
   generated C++ is committed.
 
@@ -335,16 +337,20 @@ width and can opt out. The stats report the effective width and the reason.
 
 `tools/play.ps1`/`tools/play.sh` gain `-Renderer <off|native|3d|2d|both>` and
 `-Aspect <4:3|16:9|21:9>` for CLI parity; `native` is the master toggle and
-`3d`/`2d`/`both` are the debug switches. The TUI may pass the flags or the env
-directly. If the binary was built without `pkmn_render_ds`, the TUI checks the
-build cache (`PKMNG5PC_NATIVE_RENDERER=ON` and `PKMNG5PC_NATIVE_PRESENT=ON`) and
-disables turning it on; if the saved setting is still on, Play refuses to launch
-with a rebuild-or-turn-off message instead of silently omitting it. A hand-set
-env makes any runner built with the native-present hook exit with a
-rebuild-or-unset message. It never relaunches silently without the toggle.
+`3d`/`2d`/`both` are the debug switches. Aspect is passed with `-Native`, so the
+wide CPU compositor works without the sink; render scale is sink-only. If the
+binary was built without `pkmn_render_ds`, the TUI checks the build cache
+(`PKMNG5PC_NATIVE_RENDERER=ON` and `PKMNG5PC_NATIVE_PRESENT=ON`). While the
+setting is on, the row reads `unavailable` and turning it on shows the rebuild
+option; Play falls back to native present (or SDL) with a note instead of
+refusing to launch. A hand-set env makes any runner built with the native-present
+hook exit with a rebuild-or-unset message. It never relaunches silently without
+the toggle.
 
-The Play-page toggle is the master switch. `PKMNG5PC_RENDERER` is `off` by
-default, `native` for the master, and `3d`/`2d`/`both` only for debugging;
+The Play-page toggle is the master switch, on by default;
+**Compatibility mode** is the off switch and drops the whole GPU path, not just
+the sink. `PKMNG5PC_RENDERER` is `native` for the master, `off` under
+Compatibility mode, and `3d`/`2d`/`both` only for debugging;
 `PKMNG5PC_DS3D_VERIFY=1` is advanced/debug only. None of the debug switches
 are exposed as normal Play-page controls.
 
@@ -403,11 +409,12 @@ recorded.
 
 ### Slice 5 - alpha toggle, verification, reporting
 
-- One master toggle in the TUI, default off; advanced flags; verify mode;
-  startup failure text; fallback counters and first-occurrence report.
-- **Gate:** default-off run is unchanged; enabling implies native presentation;
-  wrong pixels are never silently presented; docs and `Plan.md` updated; the
-  alpha is clearly not M6/M8 completion.
+- One master toggle in the TUI (Compatibility mode is the off switch since
+  2026-11-12); advanced flags; verify mode; startup failure text; fallback
+  counters and first-occurrence report.
+- **Gate:** the Compatibility-mode run is unchanged; enabling implies native
+  presentation; wrong pixels are never silently presented; docs and `Plan.md`
+  updated; the alpha is clearly not M6/M8 completion.
 
 ### Optional later
 

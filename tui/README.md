@@ -132,20 +132,27 @@ The SHA-1 is computed in a background thread and passed to Configure as
 ### Play (4)
 
 - Screen layout: `stacked` (one window) or `separate` (two windows).
-- Native present through `render/` (Vulkan); it uses the selected layout.
-- Native renderer (alpha), default off: installs the Vulkan compute **3D** sink
-  on the host GPU and forces native present on. The 2D rasterizer still uses
-  the soft path. This is distinct from the native-present toggle and is
-  disabled when the selected preset's CMake cache does not have
-  `PKMNG5PC_NATIVE_RENDERER=ON` and `PKMNG5PC_NATIVE_PRESENT=ON`; enable
-  **Build native renderer (alpha)** on the Build page and reconfigure to get
-  such a build. The row says which option to rebuild with. If a saved setting
-  still requests it, Play refuses to launch rather than silently running
-  without it.
+- Native present through `render/` (Vulkan); it is on by default and uses the
+  selected layout.
+- **Compatibility mode**: turns the whole GPU path off — no native present and
+  no native 3D sink — and presents through the runner's SDL blit at 4:3. Use it
+  when a driver or the GPU path misbehaves; aspect and 3D scale are unavailable
+  while it is on.
+- Native renderer (alpha), on by default: installs the Vulkan compute **3D** sink
+  on the host GPU and forces native present on. The 2D rasterizer still uses the
+  soft path. This is distinct from the native-present toggle. If the selected
+  preset's CMake cache does not have `PKMNG5PC_NATIVE_RENDERER=ON` and
+  `PKMNG5PC_NATIVE_PRESENT=ON`, the row says which option to rebuild with and
+  Play falls back to native present (or SDL) instead of refusing to launch;
+  enable **Build native renderer (alpha)** on the Build page and reconfigure to
+  get such a build.
 - 3D internal resolution (`1x`..`4x`) and aspect ratio (`4:3`, `16:9`, `21:9`,
-  with nominal source widths 256/342/448). Slice 1 supports `4:3` at `1x` only;
-  the other values stay selectable, and the Play page warns that Play will stop
-  before launch while they are chosen.
+  with nominal source widths 256/342/448). Aspect applies whenever native
+  present is on, including without the native renderer. Slice 1 of the native
+  renderer supports `4:3` at `1x` only; the other values stay selectable, and
+  the Play page warns that Play will stop before launch while they are chosen
+  with the renderer on. Wide output widens the top-screen band; the 3D scene can
+  stretch until a title-specific wide-frustum patch lands.
 - Frame limit (`0` runs until the window is closed).
 - Save mode: default beside the ROM, a custom file, or off (blank cart).
 - Diagnostics: stats, coverage manifest and a performance bundle. Coverage is
@@ -283,10 +290,12 @@ Mouse support is built in:
 2. **Build**: keep Build host tools on and run Configure & build to produce
    `pkmn_bankgen`.
 3. **Setup**: Bootstrap recompiler once, then Generate title banks.
-4. **Build**: enable Build runner (and Native present if wanted), then
-   Configure & build again. Native renderer builds by default; turn
-   **Build native renderer (alpha)** off if Vulkan shaders are unavailable.
-5. **Play**: choose presentation, save and diagnostics, then Play.
+4. **Build**: enable Build runner, then Configure & build again. Native present
+   and the native renderer build by default; turn **Build native renderer
+   (alpha)** off if Vulkan shaders are unavailable.
+5. **Play**: choose presentation, save and diagnostics, then Play. GPU
+   presentation and the native renderer are on by default; enable **Compatibility
+   mode** if the GPU path misbehaves.
 
 Faster path: choose the ROM, then press **Quickstart** on Home. It adds only the
 missing setup steps and finishes with Play, after showing the full final review.

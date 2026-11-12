@@ -221,7 +221,8 @@ six today — `0001-native-present-hook` (the guarded present hook behind
 `0002-libslirp-msvc-clang` (POSIX fd/socket calls in the vendored libslirp,
 which only compile by accident on toolchains whose headers declare them),
 `0003-native-render-sink` (the guarded native DS render sink hook, the capture
-probe in `gpu2d.cpp`, and the even-width `256..448` parser,
+probe in `gpu2d.cpp`, and the wide-width parser/env, which is gated on
+`PKMNG5PC_NATIVE_PRESENT` so the CPU adaptive compositor works without the sink;
 `docs/adr/0007-native-ds-render-sinks.md`; it applies **on top of `0001`**),
 `0004-gpu3d-device-accessor` (exposes the caller's `melonDS::GPU3D` so the 3D
 sink installs through `SetCurrentRenderer`),
@@ -238,10 +239,14 @@ unconditional, and all are correct on POSIX too), so
 `bootstrap_ndsrecomp.*` needs no change.
 
 The native DS render sinks are an alpha build option:
-`PKMNG5PC_NATIVE_RENDERER` (default OFF) requires `PKMNG5PC_NATIVE_PRESENT=ON`,
-`PKMNG5PC_BUILD_RENDER=ON`, and Vulkan. Runtime `PKMNG5PC_RENDERER` stays off
-by default; `native`/`3d` installs the Vulkan compute 3D sink at 256x192
-(Slice 1), and the remaining sink selections fail loudly until they land.
+`PKMNG5PC_NATIVE_RENDERER` (default ON) requires `PKMNG5PC_NATIVE_PRESENT=ON`,
+`PKMNG5PC_BUILD_RENDER=ON`, and Vulkan. The launcher enables native presentation
+and the sink for Play by default; **Compatibility mode** on the Play page turns
+the whole GPU path off for machines where it misbehaves and falls back to the
+runner's SDL blit at 4:3. `PKMNG5PC_RENDERER=native`/`3d` installs the Vulkan
+compute 3D sink at 256x192 (Slice 1); the remaining sink selections fail loudly
+until they land. A build without the sink still uses the wide CPU compositor
+through native present.
 
 - **Unit tests:** format parsers, compression codecs, save checksums.
 - **Golden data:** small, synthetic fixtures only — **never** commit real ROM

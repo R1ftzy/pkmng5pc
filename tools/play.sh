@@ -128,8 +128,8 @@ if [ "$render_scale_set" -eq 1 ]; then
   fi
 fi
 if [ "$renderer_on" -eq 1 ]; then native=1; fi
-if [ "$renderer_on" -eq 0 ] && [ "$aspect_set" -eq 1 ] && [ "$aspect" != "4:3" ]; then
-  echo "play: --aspect applies to --renderer; ignored while the renderer is off" >&2
+if [ "$native" -eq 0 ] && [ "$aspect_set" -eq 1 ] && [ "$aspect" != "4:3" ]; then
+  echo "play: --aspect applies to --native; ignored on the SDL path" >&2
 fi
 if [ "$renderer_on" -eq 0 ] && [ "$render_scale_set" -eq 1 ]; then
   echo "play: --render-scale applies to --renderer; ignored while the renderer is off" >&2
@@ -236,18 +236,17 @@ if [ -z "${NDS_GPU2D_THREADED:-}" ]; then NDS_GPU2D_THREADED=0; export NDS_GPU2D
 if [ "$native" -eq 1 ]; then
   PKMNG5PC_PRESENT=native
   PKMNG5PC_GPU=$gpu
-  export PKMNG5PC_PRESENT PKMNG5PC_GPU
-fi
-if [ "$renderer_on" -eq 1 ]; then
-  PKMNG5PC_RENDERER=$renderer
   PKMNG5PC_WIDESCREEN_SUPPORTED=top
-  export PKMNG5PC_RENDERER PKMNG5PC_WIDESCREEN_SUPPORTED
-  # Slice 1 renders 4:3 at 256: request no adaptive widening at native width.
+  export PKMNG5PC_PRESENT PKMNG5PC_GPU PKMNG5PC_WIDESCREEN_SUPPORTED
   if [ "$aspect" != "4:3" ]; then
     NDS_ADAPTIVE_WIDESCREEN=top
     NDS_WIDESCREEN_WIDTH=$aspect_width
     export NDS_ADAPTIVE_WIDESCREEN NDS_WIDESCREEN_WIDTH
   fi
+fi
+if [ "$renderer_on" -eq 1 ]; then
+  PKMNG5PC_RENDERER=$renderer
+  export PKMNG5PC_RENDERER
   if [ -n "$title_id" ]; then
     PKMNG5PC_TITLE_ID=$title_id
     export PKMNG5PC_TITLE_ID
@@ -274,8 +273,10 @@ if [ "$renderer_on" -eq 1 ]; then
   debug_text=
   case $renderer in 3d|2d|both) debug_text=" (debug)" ;; esac
   echo "render: $renderer$debug_text (aspect $aspect, source width $aspect_width$scale_text$title_text)"
+elif [ "$native" -eq 1 ]; then
+  echo "render: native present, CPU compositor (aspect $aspect, source width $aspect_width)"
 else
-  echo "render: off (host CPU; aspect and width unused)"
+  echo "render: off (SDL blit; aspect and width unused)"
 fi
 if [ -n "$save_path" ]; then
   if [ -e "$save_path" ]; then echo "save:   $save_path"

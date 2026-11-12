@@ -105,8 +105,8 @@ Get-Content -LiteralPath $titlesFile |
     $fields = $_ -split "`t"
     if ($fields.Count -ge 2 -and $fields[0] -ne 'code') { $titleIds[$fields[0]] = $fields[1] }
   }
-if (-not $rendererOn -and $PSBoundParameters.ContainsKey('Aspect') -and $Aspect -ne '4:3') {
-  Write-Host "play: -Aspect applies to -Renderer; ignored while the renderer is off" -ForegroundColor Yellow
+if (-not $nativePresent -and $PSBoundParameters.ContainsKey('Aspect') -and $Aspect -ne '4:3') {
+  Write-Host "play: -Aspect applies to -Native; ignored on the SDL path" -ForegroundColor Yellow
 }
 if (-not $rendererOn -and $renderScaleSet) {
   Write-Host "play: -RenderScale applies to -Renderer; ignored while the renderer is off" -ForegroundColor Yellow
@@ -228,15 +228,14 @@ if (-not $env:NDS_GPU2D_THREADED) { $env:NDS_GPU2D_THREADED = '0' }
 if ($nativePresent) {
   $env:PKMNG5PC_PRESENT = 'native'
   $env:PKMNG5PC_GPU = $Gpu
-}
-if ($rendererOn) {
-  $env:PKMNG5PC_RENDERER = $Renderer
   $env:PKMNG5PC_WIDESCREEN_SUPPORTED = 'top'
-  # Slice 1 renders 4:3 at 256: request no adaptive widening at native width.
   if ($Aspect -ne '4:3') {
     $env:NDS_ADAPTIVE_WIDESCREEN = 'top'
     $env:NDS_WIDESCREEN_WIDTH = "$($aspectWidths[$Aspect])"
   }
+}
+if ($rendererOn) {
+  $env:PKMNG5PC_RENDERER = $Renderer
   if ($titleId) { $env:PKMNG5PC_TITLE_ID = $titleId }
   if ($renderScaleSet) { $env:NDS_INTERNAL_RESOLUTION = "$RenderScale" }
 }
@@ -254,8 +253,10 @@ if ($rendererOn) {
   $titleText = if ($titleId) { ", title $titleId" } else { '' }
   $debugText = if ($Renderer -in @('3d', '2d', 'both')) { ' (debug)' } else { '' }
   Write-Host "render: $Renderer$debugText (aspect $Aspect, source width $($aspectWidths[$Aspect])$scaleText$titleText)"
+} elseif ($nativePresent) {
+  Write-Host "render: native present, CPU compositor (aspect $Aspect, source width $($aspectWidths[$Aspect]))"
 } else {
-  Write-Host "render: off (host CPU; aspect and width unused)"
+  Write-Host "render: off (SDL blit; aspect and width unused)"
 }
 if ($savePath) {
   $fresh = if (Test-Path -LiteralPath $savePath) { '' } else { ' (new: written when the game saves)' }

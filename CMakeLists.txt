@@ -23,7 +23,7 @@ option(PKMNG5PC_BUILD_RUNNER
 option(PKMNG5PC_BUILD_RENDER
     "Build the render seam and its GPU backends" ON)
 option(PKMNG5PC_NATIVE_RENDERER
-    "Build the native DS 3D/2D render sinks (alpha, runtime off by default)" OFF)
+    "Build the native DS 3D/2D render sinks (alpha; Compatibility mode turns them off at run time)" ON)
 option(PKMNG5PC_NATIVE_PRESENT
     "Let the runner present through render/ (adds the frontend hook patch)" ON)
 

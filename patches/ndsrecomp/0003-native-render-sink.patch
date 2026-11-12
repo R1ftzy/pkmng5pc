@@ -1,6 +1,8 @@
 # 0003 installs the native DS render sink on top of 0001's guarded present
 # hook. Apply 0001 first; cmake/Runner.cmake applies patches in filename
-# order. The patch compiles out without PKMNG5PC_NATIVE_RENDERER.
+# order. The sink parts compile out without PKMNG5PC_NATIVE_RENDERER; the
+# wide-width env/parser extension is gated on PKMNG5PC_NATIVE_PRESENT so the
+# CPU adaptive compositor works in a native-present build without the sink.
 diff --git a/runner/src/frontend.cpp b/runner/src/frontend.cpp
 index 311226e..bfde9f9 100644
 --- a/runner/src/frontend.cpp
@@ -124,7 +126,7 @@ index 39d81a4..2f703ec 100644
 -    if (!end || *end != '\0' ||
 -        (parsed != 256 && parsed != 320 &&
 -         parsed != 384 && parsed != 448)) {
-+#if defined(PKMNG5PC_NATIVE_RENDERER)
++#if defined(PKMNG5PC_NATIVE_PRESENT)
 +    const bool valid_width =
 +        parsed >= 256 && parsed <= 448 && (parsed % 2) == 0;
 +#else
@@ -139,7 +141,7 @@ index 39d81a4..2f703ec 100644
              uint16_t width = 0;
              if (!nds_parse_widescreen_width(std::to_string(*value), &width)) {
                  if (error) {
-+#if defined(PKMNG5PC_NATIVE_RENDERER)
++#if defined(PKMNG5PC_NATIVE_PRESENT)
 +                    *error =
 +                        "display.adaptive_width must be an even width "
 +                        "between 256 and 448";
@@ -195,7 +197,7 @@ index f7d290f..6aa3071 100644
              return 2;
          }
      }
-+#if defined(PKMNG5PC_NATIVE_RENDERER)
++#if defined(PKMNG5PC_NATIVE_PRESENT)
 +    if (const char* value = std::getenv("PKMNG5PC_WIDESCREEN_SUPPORTED")) {
 +        uint8_t supported = 0;
 +        if (!nds_parse_adaptive_screens(value, &supported)) {
@@ -214,7 +216,7 @@ index f7d290f..6aa3071 100644
      if (const char* value = std::getenv("NDS_WIDESCREEN_WIDTH")) {
          uint16_t width = 0;
          if (!nds_parse_widescreen_width(value, &width)) {
-+#if defined(PKMNG5PC_NATIVE_RENDERER)
++#if defined(PKMNG5PC_NATIVE_PRESENT)
 +            std::fprintf(stderr,
 +                         "invalid NDS_WIDESCREEN_WIDTH "
 +                         "(expected an even width between 256 and 448)\n");

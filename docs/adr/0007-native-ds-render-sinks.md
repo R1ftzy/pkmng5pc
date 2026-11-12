@@ -1,9 +1,11 @@
 # Native DS render sinks: Vulkan 3D first, then 2D
 
 **Status:** accepted (2026-10-21) as an owner-approved early M8 spike. Default
-off. This does not mark M6 or M8 complete, and it does not authorize M8's
-post-FX, frame-decoupling or interpolation work. The detailed design and slice
-plan live in `docs/design/native-render-sinks.md`.
+off. **Amended 2026-11-12:** the sinks are now built and enabled by default;
+**Compatibility mode** turns the whole GPU path off at run time. See
+*Amendment* below. This does not mark M6 or M8 complete, and it does not
+authorize M8's post-FX, frame-decoupling or interpolation work. The detailed
+design and slice plan live in `docs/design/native-render-sinks.md`.
 
 The default path still rasterizes and composites the DS GPU on the CPU and uses
 the host GPU only for presentation (`GLOSSARY.md`: *DS pipeline*). The 3D soft
@@ -72,8 +74,8 @@ rasterization endpoints only.
    build time by a pinned `glslang` FetchContent dependency, then embedded into
    the binary as generated C++ arrays. No runtime shader compiler, no committed
    SPIR-V, and a BSD-3 `NOTICE` entry when the dependency lands. The build
-   option defaults OFF; enabling it is explicit, and a configure failure is
-   loud. The default (renderer-off) build must remain usable.
+   option defaults OFF (§Amendment flips it to ON); a configure failure is
+   loud, and a renderer-off build stays usable through Compatibility mode.
 8. **2D sink phase 2a.** Keep the CPU tile/OBJ decode, extend it to the widened
    range (`x_native = x - extra`), and move the per-pixel layer selection,
    priority/order, window masks, blending and 3D insertion to the GPU. Full GPU
@@ -89,7 +91,8 @@ rasterization endpoints only.
     until the 448 cap is raised. The selected ratio sets the source width; the
     presenter letterboxes or pillarboxes to the window. The per-title policy
     decides which screens receive the width.
-11. **One alpha master toggle, default off.** It implies native presentation.
+11. **One alpha master toggle, default off** (§Amendment: now on by default,
+    with Compatibility mode as the off switch). It implies native presentation.
     Advanced per-sink switches (`PKMNG5PC_RENDERER=3d|2d|both`) exist only for
     debugging. Startup failure is fatal with a clear message; a per-frame sink
     failure falls back to the CPU path for that frame and is reported once and
@@ -129,9 +132,9 @@ alpha must not be described as such.
   `GPU3D::SetCurrentRenderer`. `ScrolledLine` and `ScrolledAttrLine` are
   `[448]`, and the 2D adaptive buffers cap at `kMaxAdaptiveWidth = 448`.
 - `nds_gpu3d_set_output_width` already accepts any even width from 256 to 448.
-  `nds_parse_widescreen_width` and `display.adaptive_width` are the gate: they
-  accept only 256/320/384/448 today. The patch must widen them to the even
-  256..448 range so 16:9's 342 is legal.
+  `nds_parse_widescreen_width` and `display.adaptive_width` once accepted only
+  256/320/384/448; patch `0003` now accepts any even 256..448, so 16:9's 342 is
+  legal.
 - Gen 5 has no `adaptive_supported` capability set (only the SM64DS path sets
   it), so the patch adds a `PKMNG5PC_WIDESCREEN_SUPPORTED` override before
   `main.cpp`'s fail-closed check; the TUI sets it to `top` for the alpha. The
@@ -146,6 +149,33 @@ alpha must not be described as such.
 - The TUI's native-toggle wording must distinguish *native presentation*
   (`render/`, Vulkan blit) from *native rendering* (the sinks). They are
   different features and the alpha adds the second.
+
+## Amendment 2026-11-12: on by default, Compatibility mode as the off switch
+
+The alpha is now the default Play path. `PKMNG5PC_NATIVE_RENDERER` defaults ON,
+and the launcher defaults `play_native` and `render_native` to on. Item 11's
+master toggle is inverted into an escape hatch:
+
+- **Compatibility mode** (`Settings.compatibility_mode`) turns the whole GPU
+  path off: no native present, no 3D sink, no aspect or 3D scale. Play then uses
+  the runner's existing SDL blit at 4:3. It is the supported answer for a
+  driver or machine where the GPU path misbehaves, and it keeps decision 7's
+  renderer-off build usable.
+- A saved native-renderer setting whose build lacks the sink falls back to
+  native present, or to SDL, with a note instead of refusing to launch. The
+  Play page shows `unavailable` and names the CMake option to rebuild with.
+- Aspect ratio now belongs to native presentation, not to the sink: the wide
+  CPU compositor widens the top band without `PKMNG5PC_RENDERER`. The wide
+  width parser and `PKMNG5PC_WIDESCREEN_SUPPORTED` are therefore gated on
+  `PKMNG5PC_NATIVE_PRESENT` in patch `0003`. 3D scale stays sink-only.
+- Verified end to end through the presented-frame digest ring: a 342-wide run
+  presents 342x192 on top and 256x192 below on 413/413 frames, a 256 run stays
+  256/256 on 410/410, and a Compatibility-mode run stays 256/256 on 405/405
+  while ignoring the wide environment.
+- **Not yet item 9.** The wide path widens the 2D band; the 3D layer still
+  stretches from the DS's 0..256 viewport because no title patch widens the
+  guest frustum. Wide output is therefore an output-path result, not true scene
+  widening, and the design's per-title policy and safe area remain outstanding.
 
 ## Considered and rejected
 

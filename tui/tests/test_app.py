@@ -732,14 +732,14 @@ class PlayViewNativeRendererTests(unittest.TestCase):
             item = items["render-native"]
             assert item.on_activate is not None
             item.on_activate()
-            self.assertFalse(app.s.render_native)
+            self.assertTrue(app.s.render_native)
             self.assertEqual(app.toast[1], "warning")
 
     def test_available_build_toggles_the_master_and_forces_native_present(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             write_renderer_cache(root)
-            app, _ = make_app(root, Settings(preset="test-debug"))
+            app, _ = make_app(root, Settings(preset="test-debug", render_native=False))
 
             view = app.play_view(120)
             item = {entry.key: entry for entry in view.items}["render-native"]
@@ -774,13 +774,31 @@ class PlayViewNativeRendererTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             write_renderer_cache(root, native_present="OFF")
-            app, _ = make_app(root, Settings(preset="test-debug"))
+            app, _ = make_app(
+                root, Settings(preset="test-debug", render_native=False)
+            )
             view = app.play_view(120)
             items = {item.key: item for item in view.items}
 
             self.assertFalse(items["render-native"].enabled)
             self.assertEqual(items["render-native"].value, "unavailable")
             self.assertIn("PKMNG5PC_NATIVE_PRESENT", items["render-native"].hint)
+
+    def test_compatibility_mode_disables_the_gpu_stack(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            app, _ = make_app(
+                Path(temp), Settings(preset="test-debug", compatibility_mode=True)
+            )
+            view = app.play_view(120)
+            items = {item.key: item for item in view.items}
+
+            self.assertEqual(items["play-native"].value, "OFF (compat)")
+            self.assertFalse(items["play-native"].enabled)
+            self.assertFalse(items["play-gpu"].enabled)
+            self.assertFalse(items["render-aspect"].enabled)
+            self.assertEqual(items["render-native"].value, "OFF (compat)")
+            self.assertFalse(items["render-native"].enabled)
+            self.assertIn("compatibility-note", items)
 
     def test_verify_stays_out_of_the_normal_play_page(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

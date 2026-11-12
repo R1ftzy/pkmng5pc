@@ -548,11 +548,12 @@ class Settings:
     extra_bank_dirs: str = ""
     extra_sha1s: str = ""
     play_layout: str = "stacked"
-    play_native: bool = False
+    play_native: bool = True
     play_gpu: str = "auto"
-    render_native: bool = False
+    render_native: bool = True
     render_scale: int = 1
     render_aspect: str = "4:3"
+    compatibility_mode: bool = False
     render_verify: bool = False
     save_mode: str = "default"
     save_path: str = ""
@@ -588,9 +589,11 @@ class Settings:
             default_value = getattr(defaults, field.name)
             try:
                 if isinstance(default_value, bool):
-                    if field.name in {"render_native", "render_verify"} and not isinstance(
-                        value, bool
-                    ):
+                    if field.name in {
+                        "render_native",
+                        "render_verify",
+                        "compatibility_mode",
+                    } and not isinstance(value, bool):
                         continue
                     value = bool(value)
                 elif isinstance(default_value, int):
@@ -620,7 +623,7 @@ class Settings:
             self.render_scale = 1
         if self.render_aspect not in PLAY_ASPECTS:
             self.render_aspect = "4:3"
-        if self.render_native:
+        if self.render_native and not self.compatibility_mode:
             self.play_native = True
         self.frames = max(0, min(int(self.frames), 10_000_000))
         self.shards = max(2, min(int(self.shards), 64))

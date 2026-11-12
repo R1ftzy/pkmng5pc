@@ -439,7 +439,8 @@ in-game load accepts the exported file. **Enhancements may begin after this.**
       an explicit policy for the 2D layers (BG/OBJ/fonts) versus the upscaled 3D
       layer; a new ADR is owed. *(Early spike approved 2026-10-21: host-GPU
       2D/3D sinks, `docs/adr/0007-native-ds-render-sinks.md` and
-      `docs/design/native-render-sinks.md`. Alpha, default off; no M6/M8
+      `docs/design/native-render-sinks.md`. Alpha, on by default since
+      2026-11-12 with Compatibility mode as the off switch; no M6/M8
       completion claim.)*
 - [ ] **Post-FX:** bloom on the composited frame (low risk).
 - [ ] **Post-FX:** shadow maps for GE scenes. Risky — the DS exposes no
@@ -601,6 +602,18 @@ Do not vendor or copy their content; cite and reimplement.
 
 Newest first. Keep entries short; details and evidence live in `re/notes/`.
 
+- **2026-11-12 (the GPU path is the default, Compatibility mode is the escape
+  hatch, and the wide output path is proven)** — `PKMNG5PC_NATIVE_RENDERER` and
+  the launcher's native-present/native-renderer defaults are now on, and a new
+  **Compatibility mode** drops the whole GPU stack to the runner's SDL blit at
+  4:3. Aspect now travels with native present, so the wide CPU compositor works
+  without the alpha sink; patch `0003`'s wide-width parser is gated on
+  `PKMNG5PC_NATIVE_PRESENT`. An interactive presented-frame digest-ring probe
+  records 342x192 top / 256x192 bottom on every frame at 16:9, 256x256 at 4:3,
+  and 256x256 under Compatibility mode even with the wide environment set.
+  True scene widening is still blocked on a title-side wide-frustum patch and a
+  safe-area policy.
+
 - **2026-11-11 (measured in play: the interpreter is 0.02 % of guest cycles on
   Black, and the overlays a save loads are banked)** — the first gameplay-window
   measurement this project has, and the bank work it drove. A save-loaded run
@@ -647,7 +660,10 @@ Newest first. Keep entries short; details and evidence live in `re/notes/`.
   sink-install hook, widen the 256/320/384/448 parser to any even 256..448, and
   expose the active `GPU3D` device to the sink. Widescreen is scene
   widening with a 4:3 safe area; TUI ratios are 4:3=256, 16:9=342, 21:9=448, and
-  32:9=682 is deferred. Verification keeps the CPU reference:
+  32:9=682 is deferred. Only the output path (widening the top band, with the
+  3D layer still stretched) is verified so far; the title-side wide-frustum
+  patch and safe-area policy are outstanding. Verification keeps the CPU
+  reference:
   guest RAM/save/guest-frame digest identical, 3D at most 1 LSB at native, 2D
   bit-exact where the path is bit-exact. Slice 0 scaffolding is in place: shared
   `VulkanContext`, pinned

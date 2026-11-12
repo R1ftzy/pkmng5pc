@@ -235,7 +235,10 @@ class NativeRenderCommandTests(unittest.TestCase):
 
     def test_renderer_off_sets_no_environment(self) -> None:
         command, _ = self.make_command(
-            render_native=False, render_scale=4, render_aspect="21:9"
+            render_native=False,
+            play_native=False,
+            render_scale=4,
+            render_aspect="21:9",
         )
         self.assertEqual(command.env, {})
         self.assertNotIn("-Native", command.argv)
@@ -279,17 +282,38 @@ class NativeRenderCommandTests(unittest.TestCase):
         command, _ = self.make_command(render_native=True, render_verify=True)
         self.assertEqual(command.env["PKMNG5PC_DS3D_VERIFY"], "1")
 
-    def test_missing_native_build_refuses_to_launch(self) -> None:
-        with self.assertRaises(LaunchError) as raised:
-            self.make_command(native_renderer=None, render_native=True)
-        self.assertIn("unavailable", str(raised.exception))
-        self.assertIn("PKMNG5PC_NATIVE_RENDERER", str(raised.exception))
+    def test_missing_native_build_falls_back_to_native_present(self) -> None:
+        command, _ = self.make_command(native_renderer=None, render_native=True)
+        self.assertEqual(command.env, {})
+        self.assertNotIn("-Renderer", command.argv)
+        self.assertNotIn("--renderer", command.argv)
+        self.assertIn("-Native" if os.name == "nt" else "--native", command.argv)
+        self.assertIn("unavailable", command.note.lower())
 
-    def test_native_build_off_refuses_to_launch(self) -> None:
-        with self.assertRaises(LaunchError) as raised:
-            self.make_command(native_renderer="OFF", render_native=True)
-        self.assertIn("unavailable", str(raised.exception))
-        self.assertIn("PKMNG5PC_NATIVE_RENDERER=OFF", str(raised.exception))
+    def test_native_build_off_falls_back_to_native_present(self) -> None:
+        command, _ = self.make_command(native_renderer="OFF", render_native=True)
+        self.assertNotIn("-Renderer", command.argv)
+        self.assertNotIn("--renderer", command.argv)
+        self.assertIn("-Native" if os.name == "nt" else "--native", command.argv)
+        self.assertIn("PKMNG5PC_NATIVE_RENDERER=OFF", command.note)
+
+    def test_compatibility_mode_disables_the_gpu_stack(self) -> None:
+        command, _ = self.make_command(render_native=True, compatibility_mode=True)
+        self.assertEqual(command.env, {})
+        for flag in ("-Native", "--native", "-Renderer", "--renderer"):
+            self.assertNotIn(flag, command.argv)
+        self.assertIn("Compatibility mode", command.note)
+
+    def test_aspect_is_passed_with_native_present_alone(self) -> None:
+        command, _ = self.make_command(
+            render_native=False, play_native=True, render_aspect="16:9"
+        )
+        if os.name == "nt":
+            self.assertEqual(command.argv[command.argv.index("-Aspect") + 1], "16:9")
+            self.assertNotIn("-Renderer", command.argv)
+        else:
+            self.assertEqual(command.argv[command.argv.index("--aspect") + 1], "16:9")
+            self.assertNotIn("--renderer", command.argv)
 
     def test_build_state_reports_missing_and_disabled(self) -> None:
         temp = tempfile.TemporaryDirectory()

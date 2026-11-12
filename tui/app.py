@@ -431,6 +431,7 @@ class App:
         options: list[tuple[str, str]],
         hint: str,
         on_change: Callable[[], None] | None = None,
+        enabled: bool = True,
     ) -> Item:
         values = [value for value, _ in options]
         labels = dict(options)
@@ -452,6 +453,7 @@ class App:
             kind="choice",
             value=labels.get(current, current),
             hint=hint,
+            enabled=enabled,
             on_activate=lambda: adjust(1),
             on_adjust=adjust,
         )
@@ -463,6 +465,7 @@ class App:
         attribute: str,
         hint: str,
         enabled: bool = True,
+        value_text: str | None = None,
     ) -> Item:
         value = bool(getattr(self.s, attribute))
 
@@ -480,7 +483,7 @@ class App:
             key,
             label,
             kind="toggle",
-            value="ON" if value else "OFF",
+            value=value_text if value_text is not None else ("ON" if value else "OFF"),
             hint=hint,
             enabled=enabled,
             on_activate=activate,
@@ -489,14 +492,16 @@ class App:
 
     def native_renderer_item(self, cache: dict[str, str]) -> Item:
         available, reason = self.repo.native_renderer_state(self.s.preset, cache)
-        current = self.s.render_native
+        compatibility = self.s.compatibility_mode
+        current = self.s.render_native and not compatibility
         hint = (
-            "Installs the Vulkan compute 3D sink (alpha, default off). "
-            "Slice 1 renders 4:3 at 1x only; other aspect ratios and scales are "
-            "selectable but Play refuses them until the later slices. The 2D "
-            "rasterizer still uses the soft path. Requires native presentation, "
-            "so it turns Native present on. Distinct from the Native present toggle."
+            "Installs the Vulkan compute 3D sink (alpha, on by default). "
+            "Slice 1 renders 4:3 at 1x only; choose another aspect or scale and "
+            "Play asks you to turn it off first. The 2D rasterizer still uses the "
+            "soft path. Requires native presentation."
         )
+        if compatibility:
+            hint = f"Disabled by Compatibility mode. {hint}"
         if not available:
             hint = f"{hint} Unavailable: {reason}."
 
@@ -508,29 +513,32 @@ class App:
 
         def adjust(delta: int) -> None:
             if not available:
-                if current:
-                    set_value(False)
-                else:
-                    self.set_toast(reason, "warning")
+                self.set_toast(reason, "warning")
                 return
             set_value(delta > 0)
 
         def activate() -> None:
             if not available:
-                if current:
-                    set_value(False)
-                else:
-                    self.set_toast(reason, "warning")
+                self.set_toast(reason, "warning")
                 return
             set_value(not current)
+
+        if compatibility:
+            value = "OFF (compat)"
+        elif not available:
+            value = "unavailable"
+        elif current:
+            value = "ON"
+        else:
+            value = "OFF"
 
         return Item(
             "render-native",
             "Native renderer (alpha)",
             kind="toggle",
-            value="ON" if current else "OFF" if available else "unavailable",
+            value=value,
             hint=hint,
-            enabled=available or current,
+            enabled=not compatibility and available,
             on_activate=activate,
             on_adjust=adjust,
         )
@@ -550,7 +558,8 @@ class App:
             value=f"{current}x",
             hint=(
                 "Internal 3D resolution multiplier. Applies only while the native "
-                "renderer is on. Slice 1 supports 1x only; 2x-4x fail loudly."
+                "renderer is on. Slice 1 supports 1x only; 2x-4x are refused until "
+                "a later slice."
             ),
             on_activate=lambda: adjust(1),
             on_adjust=adjust,
@@ -889,8 +898,11 @@ class App:
         ]
 
         play_rows = [
-            f"Layout: {self.s.play_layout}  ·  native present: {on_off(self.s.play_native)}",
-            f"GPU: {selected_gpu_text(self.s.play_gpu, self.gpu_specs())}  ·  applies to native present",
+            f"Layout: {self.s.play_layout}  ·  compatibility: {on_off(self.s.compatibility_mode)}",
+            (
+                f"Native present: {on_off(self.s.play_native and not self.s.compatibility_mode)}"
+                f"  ·  GPU: {selected_gpu_text(self.s.play_gpu, self.gpu_specs())}"
+            ),
             f"Frame limit: {self.s.frames if self.s.frames else '0 (until closed)'}",
             f"Save mode: {self.s.save_mode}  ·  resolved save: {save_label(self.s, self.repo, info)}",
             f"Stats: {on_off(self.s.stats)}  ·  coverage: {on_off(self.s.coverage)}  ·  diagnostics: {on_off(self.s.diagnostics)}",
@@ -1896,7 +1908,9 @@ class App:
         banks = self.repo.resolve(self.s.banks_dir)
         native_cached = cache_bool(cache, "PKMNG5PC_NATIVE_PRESENT")
         render_available, render_reason = self.repo.native_renderer_state(self.s.preset, cache)
-        force_native = self.s.render_native and render_available
+        force_native = (
+            self.s.render_native and render_available and not self.s.compatibility_mode
+        )
         gpus = self.gpu_specs()
         gpu = self.selected_gpu()
         gpu_text = selected_gpu_text(self.s.play_gpu, gpus)
@@ -1919,15 +1933,25 @@ class App:
                 "Stacked is one window; separate opens one window per screen.",
             ),
             self._toggle(
+                "compatibility",
+                "Compatibility mode",
+                "compatibility_mode",
+                "Disables Native present and the native 3D sink and presents through "
+                "the runner's SDL blit at 4:3. Use it when the GPU path misbehaves.",
+            ),
+            self._toggle(
                 "play-native",
                 "Native present",
                 "play_native",
                 (
-                    "Forced on by Native renderer (alpha); the Vulkan presenter is required."
+                    "Disabled by Compatibility mode."
+                    if self.s.compatibility_mode
+                    else "Forced on by Native renderer (alpha); the Vulkan presenter is required."
                     if force_native
                     else "Present through render/ (Vulkan). Uses the GPU choice below."
                 ),
-                enabled=not force_native,
+                enabled=not self.s.compatibility_mode and not force_native,
+                value_text="OFF (compat)" if self.s.compatibility_mode else None,
             ),
             self._choice(
                 "play-gpu",
@@ -1936,6 +1960,7 @@ class App:
                 self.gpu_options(),
                 "Vulkan adapter for Native present and the native 3D sink. "
                 "The runner's SDL path ignores this.",
+                enabled=not self.s.compatibility_mode,
             ),
             Item(
                 "gpu-selected",
@@ -1953,10 +1978,22 @@ class App:
                 "A positive value presents that many frames, prints stats and exits.",
                 validator=validate_frames,
             ),
-            Item("render-label", "NATIVE RENDERER (ALPHA)", kind="section"),
+            Item("render-label", "GPU RENDERING & OUTPUT (ALPHA)", kind="section"),
             self.native_renderer_item(cache),
         ]
-        if self.s.render_native:
+        if self.s.compatibility_mode:
+            items.append(
+                Item(
+                    "compatibility-note",
+                    "",
+                    kind="notice",
+                    value=term.dim(
+                        "Compatibility mode: SDL presentation at 4:3. "
+                        "Aspect ratio and 3D scale are unavailable."
+                    ),
+                )
+            )
+        elif self.s.render_native:
             limits: list[str] = []
             if self.s.render_aspect != "4:3":
                 limits.append(f"aspect {self.s.render_aspect}")
@@ -1970,11 +2007,12 @@ class App:
                         kind="notice",
                         value=term.yellow(
                             "Slice 1 supports 4:3 at 1x only; Play stops before launch "
-                            f"while {', '.join(limits)} is selected."
+                            f"while {', '.join(limits)} is selected. Turn the native "
+                            "renderer off to use that output."
                         ),
                     )
                 )
-        if not render_available:
+        if not render_available and not self.s.compatibility_mode:
             items.append(
                 Item(
                     "render-native-note",
@@ -1994,7 +2032,10 @@ class App:
                         (value, f"{value}  ·  {RENDER_ASPECT_WIDTHS[value]} px source")
                         for value in PLAY_ASPECTS
                     ],
-                    "Nominal source width is 256, 342 or 448; the runner may cap the effective width per title.",
+                    "Widens the top screen band (256, 342 or 448 px). Needs Native "
+                    "present; the 3D scene can stretch until a title widens the "
+                    "guest frustum.",
+                    enabled=not self.s.compatibility_mode,
                 ),
                 Item("save-section", "SAVE", kind="section"),
                 self._choice(
@@ -2076,19 +2117,26 @@ class App:
                 Item("run", "RUN", kind="section"),
             ]
         )
-        if not self.s.play_native and self.s.play_gpu != "auto":
+        if (
+            self.s.compatibility_mode or not self.s.play_native
+        ) and self.s.play_gpu != "auto":
             items.append(
                 Item(
                     "gpu-warning",
                     "",
                     kind="notice",
                     value=term.yellow(
-                        "GPU choice applies to Native present; the SDL path uses the system default adapter."
+                        "GPU choice applies to Native present; Compatibility mode and "
+                        "the SDL path use the system default adapter."
                     ),
                 )
             )
         native_warning = ""
-        if self.s.play_native and native_cached is False:
+        if (
+            self.s.play_native
+            and not self.s.compatibility_mode
+            and native_cached is False
+        ):
             native_warning = "  ·  cache has native present OFF"
         items.append(
             Item(
@@ -3125,7 +3173,11 @@ class App:
         while path.exists():
             path = folder / f"{stamp}-{slug}-{suffix}.log"
             suffix += 1
-        renderer = "native" if self.s.render_native else "off"
+        renderer = (
+            "native"
+            if self.s.render_native and not self.s.compatibility_mode
+            else "off"
+        )
         lines = [
             "pkmng5pc launcher job log",
             f"Saved: {time.strftime('%Y-%m-%d %H:%M:%S')}",
@@ -3134,12 +3186,13 @@ class App:
             f"Elapsed: {job.elapsed:.1f}s",
             f"Preset: {self.s.preset}",
             f"ROM: {self.s.rom_path or '(none)'}",
+            f"Compatibility mode: {'on' if self.s.compatibility_mode else 'off'}",
             (
                 f"Renderer: {renderer}  Aspect: {self.s.render_aspect}  "
                 f"Scale: {self.s.render_scale}x"
             ),
             (
-                f"Native present: {'on' if self.s.play_native else 'off'}  "
+                f"Native present: {'on' if self.s.play_native and not self.s.compatibility_mode else 'off'}  "
                 f"GPU: {self.s.play_gpu}  Layout: {self.s.play_layout}"
             ),
             (
