@@ -604,7 +604,7 @@ class App:
     def present_filter_item(self) -> Item:
         return self._choice(
             "present-filter",
-            "Present filter",
+            "Present filter (Nearest / Linear)",
             "present_filter",
             [
                 ("nearest", "Nearest  ·  crisp pixel edges"),
