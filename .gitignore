@@ -18,6 +18,7 @@ firmware.bin
 *.nss
 *.ml[0-9]
 *.dst
+savestates/
 
 # Generated title banks (derived from the user's ROM; regenerable, never commit)
 banks/

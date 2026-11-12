@@ -602,6 +602,22 @@ Do not vendor or copy their content; cite and reimplement.
 
 Newest first. Keep entries short; details and evidence live in `re/notes/`.
 
+- **2026-11-12 (gameplay-verified at 8x, the sink gets xBR, and savestate
+  slots land)** — verification is now gameplay-first: driven overworld runs
+  (save-loaded, plan-driven) at 1x/4x/8x on the sink lane, each checked by
+  capture and by the presented symmetry, not the title screen. The sink gains
+  its own xBR texture upscaler (upload-time compute pass, same xBR-lv2 rules as
+  the vendored GL lane; textures allocated at logical * factor; the raster's
+  normalized-UV sampling is unchanged): verified at 2x with 16.6% of pixels
+  changed on the same gameplay frame, 4x clean beside the 8x composite.
+  Savestate slots are wired through both play scripts (`--savestate-dir
+  savestates/`, git-ignored; F1..F12 load, Shift+F1..F12 save), so a run can
+  resume directly in the overworld instead of replaying the title. Edge-object
+  culling stays unpatched: the guest-side frustum RE (projection/aspect sites
+  in the banked ARM9, runtime-computed rather than literal) is the recorded
+  next task; no speculative rendering change was made. Largest remaining CPU
+  graphics cost is the 2D scanline compositor — the "2D sink" slice.
+
 - **2026-11-12 (16:9 composites, 5x stops lying, and the melonDS look gets a
   switch)** — three reports, three causes. "5x goes back to 1x": the compute
   lane's parser caps at 4, so the TUI silently kept showing 5x while the

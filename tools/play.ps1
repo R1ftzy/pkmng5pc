@@ -280,6 +280,12 @@ if ($Diagnostics) {
 $frontendConfig = Join-Path $root 're/config/frontend.toml'
 if (-not (Test-Path -LiteralPath $frontendConfig)) { Fail "missing $frontendConfig" }
 $runnerArgs += @('--config', $frontendConfig)
+# Savestate slots (F1..F12 load, Shift+F1..F12 save). States are per-ROM and
+# land in the git-ignored savestates/ folder, so a run can resume directly in
+# the overworld instead of replaying the title screen.
+$savestateDir = Join-Path $root 'savestates'
+if (-not (Test-Path -LiteralPath $savestateDir)) { New-Item -ItemType Directory -Path $savestateDir | Out-Null }
+$runnerArgs += @('--savestate-dir', $savestateDir)
 if ($savePath) { $runnerArgs += @('--save-path', $savePath) } else { $runnerArgs += '--no-save' }
 if ($Extra) { $runnerArgs += $Extra }
 
@@ -364,7 +370,7 @@ if ($savePath) {
 } else {
   Write-Host "save:   off (--no-save, blank 512 KiB cart, nothing written)"
 }
-Write-Host "keys:   arrows=D-pad  Z=A X=B  A=Y S=X  Q=L W=R  Enter=Start  Backspace=Select  Esc=quit"
+Write-Host "keys:   arrows=D-pad  Z=A X=B  A=Y S=X  Q=L W=R  Enter=Start  Backspace=Select  Esc=quit  F1..F12=load state  Shift+F1..F12=save state"
 
 Push-Location $root
 try {

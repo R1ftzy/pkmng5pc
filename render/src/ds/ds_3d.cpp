@@ -39,6 +39,11 @@ PKMN_DS_SHADER_LIST(DS_SHADER_DECL)
 
 #undef DS_SHADER_DECL
 
+// The xBR texture upscaler, embedded by pkmng5pc_add_shader (standalone, no
+// Common prelude).
+extern const unsigned char pkmng5pc_ds_upscale_spv[];
+extern const std::size_t pkmng5pc_ds_upscale_spv_size;
+
 struct ShaderBlob {
     const unsigned char* data;
     std::size_t size;
@@ -279,6 +284,8 @@ namespace {
     struct Texture {
         Image image;
         uint32_t layers = 0;
+        uint32_t logical_width = 0;
+        uint32_t logical_height = 0;
         bool batch_transitioned = false;
         bool has_data = false;
     };
@@ -585,6 +592,16 @@ namespace {
         bool init(VulkanContext& context)
         {
             context_ = &context;
+            // NDS_TEXTURE_UPSCALE is validated by the frontend (1, 2, 4). The
+            // vendored accessor only reports a factor once its GL upscaler
+            // initialised, so the sink lane reads the request itself.
+            factor_ = 1;
+            if (const char* value = std::getenv("NDS_TEXTURE_UPSCALE")) {
+                const int parsed = std::atoi(value);
+                if (parsed == 2 || parsed == 4) {
+                    factor_ = parsed;
+                }
+            }
             return true;
         }
 
@@ -594,8 +611,14 @@ namespace {
                 return 0;
             }
             auto texture = std::make_unique<Texture>();
-            if (!create_device_image(*context_, width, height, layers, VK_FORMAT_R8G8B8A8_UINT,
-                    VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+            texture->logical_width = width;
+            texture->logical_height = height;
+            const uint32_t allocation_width = width * static_cast<uint32_t>(factor_);
+            const uint32_t allocation_height = height * static_cast<uint32_t>(factor_);
+            if (!create_device_image(*context_, allocation_width, allocation_height, layers,
+                    VK_FORMAT_R8G8B8A8_UINT,
+                    VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT
+                        | VK_IMAGE_USAGE_STORAGE_BIT,
                     VK_IMAGE_VIEW_TYPE_2D_ARRAY, texture->image)) {
                 return 0;
             }
@@ -609,14 +632,15 @@ namespace {
             uint32_t id, uint32_t width, uint32_t height, uint32_t layer, const void* data)
         {
             Texture* texture = get(id);
-            if (!texture || !data || width != texture->image.width
-                || height != texture->image.height || layer >= texture->layers) {
+            if (!texture || !data || width != texture->logical_width
+                || height != texture->logical_height || layer >= texture->layers) {
                 return false;
             }
 
             Buffer staging;
             if (!create_host_buffer(*context_, static_cast<VkDeviceSize>(width) * height * 4,
-                    VK_BUFFER_USAGE_TRANSFER_SRC_BIT, staging)) {
+                    VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                    staging)) {
                 return false;
             }
             std::memcpy(staging.mapped, data, static_cast<std::size_t>(width) * height * 4);
@@ -631,6 +655,13 @@ namespace {
             if (pending_.empty()) {
                 return;
             }
+            const VkImageLayout upload_layout
+                = factor_ > 1 ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            const VkAccessFlags upload_access
+                = factor_ > 1 ? VK_ACCESS_SHADER_WRITE_BIT : VK_ACCESS_TRANSFER_WRITE_BIT;
+            const VkPipelineStageFlags upload_stage = factor_ > 1
+                ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT
+                : VK_PIPELINE_STAGE_TRANSFER_BIT;
             for (const PendingUpload& upload : pending_) {
                 Texture* texture = get(upload.id);
                 if (!texture) {
@@ -640,15 +671,19 @@ namespace {
                     const VkImageLayout old_layout = texture->image.layout;
                     const VkAccessFlags old_access
                         = old_layout == VK_IMAGE_LAYOUT_UNDEFINED ? 0 : VK_ACCESS_SHADER_READ_BIT;
-                    image_barrier(command, texture->image.image, old_layout,
-                        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, old_access,
-                        VK_ACCESS_TRANSFER_WRITE_BIT,
+                    image_barrier(command, texture->image.image, old_layout, upload_layout,
+                        old_access, upload_access,
                         old_layout == VK_IMAGE_LAYOUT_UNDEFINED
                             ? VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT
                             : VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                        VK_PIPELINE_STAGE_TRANSFER_BIT, texture->layers);
+                        upload_stage, texture->layers);
                     texture->batch_transitioned = true;
                     batch_ids_.push_back(upload.id);
+                }
+
+                if (factor_ > 1) {
+                    record_upscale(command, *texture, upload);
+                    continue;
                 }
 
                 VkBufferImageCopy copy {};
@@ -660,15 +695,20 @@ namespace {
                 vkCmdCopyBufferToImage(command, upload.staging.buffer, texture->image.image,
                     VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
             }
+            const VkPipelineStageFlags done_stage = factor_ > 1
+                ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT
+                : VK_PIPELINE_STAGE_TRANSFER_BIT;
+            const VkAccessFlags done_access
+                = factor_ > 1 ? VK_ACCESS_SHADER_WRITE_BIT : VK_ACCESS_TRANSFER_WRITE_BIT;
             for (uint32_t id : batch_ids_) {
                 Texture* texture = get(id);
                 if (!texture) {
                     continue;
                 }
-                image_barrier(command, texture->image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_ACCESS_TRANSFER_WRITE_BIT,
-                    VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, texture->layers);
+                image_barrier(command, texture->image.image, upload_layout,
+                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, done_access,
+                    VK_ACCESS_SHADER_READ_BIT, done_stage, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                    texture->layers);
             }
         }
 
@@ -699,6 +739,160 @@ namespace {
             batch_ids_.clear();
         }
 
+        // Upload-time xBR (ADR 0008): filter the decoded 1x texels into the
+        // destination array layer, allocated at logical size * factor. The
+        // raster samples with normalized UVs, so the upscaled content needs no
+        // shader change.
+        bool ensure_upscale_pipeline()
+        {
+            if (up_pipeline_ != VK_NULL_HANDLE) {
+                return true;
+            }
+            VkDescriptorSetLayoutBinding bindings[2] {};
+            bindings[0].binding = 0;
+            bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            bindings[0].descriptorCount = 1;
+            bindings[0].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+            bindings[1].binding = 1;
+            bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+            bindings[1].descriptorCount = 1;
+            bindings[1].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+            VkDescriptorSetLayoutCreateInfo layout_info {
+                VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO
+            };
+            layout_info.bindingCount = 2;
+            layout_info.pBindings = bindings;
+            if (vkCreateDescriptorSetLayout(context_->device(), &layout_info, nullptr, &up_layout_)
+                != VK_SUCCESS) {
+                return false;
+            }
+
+            VkPushConstantRange push {};
+            push.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+            push.offset = 0;
+            push.size = 20;
+            VkPipelineLayoutCreateInfo pipeline_info {
+                VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO
+            };
+            pipeline_info.setLayoutCount = 1;
+            pipeline_info.pSetLayouts = &up_layout_;
+            pipeline_info.pushConstantRangeCount = 1;
+            pipeline_info.pPushConstantRanges = &push;
+            if (vkCreatePipelineLayout(
+                    context_->device(), &pipeline_info, nullptr, &up_pipeline_layout_)
+                != VK_SUCCESS) {
+                return false;
+            }
+
+            VkShaderModuleCreateInfo module_info { VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO };
+            module_info.codeSize = pkmng5pc_ds_upscale_spv_size;
+            module_info.pCode = reinterpret_cast<const uint32_t*>(pkmng5pc_ds_upscale_spv);
+            VkShaderModule module = VK_NULL_HANDLE;
+            if (vkCreateShaderModule(context_->device(), &module_info, nullptr, &module)
+                != VK_SUCCESS) {
+                return false;
+            }
+            VkPipelineShaderStageCreateInfo stage {
+                VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO
+            };
+            stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+            stage.module = module;
+            stage.pName = "main";
+            VkComputePipelineCreateInfo pipeline { VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO };
+            pipeline.stage = stage;
+            pipeline.layout = up_pipeline_layout_;
+            const VkResult result = vkCreateComputePipelines(
+                context_->device(), VK_NULL_HANDLE, 1, &pipeline, nullptr, &up_pipeline_);
+            vkDestroyShaderModule(context_->device(), module, nullptr);
+            if (result != VK_SUCCESS) {
+                return false;
+            }
+
+            VkDescriptorPoolSize sizes[2] {};
+            sizes[0] = { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1 };
+            sizes[1] = { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1 };
+            VkDescriptorPoolCreateInfo pool { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
+            pool.maxSets = 1;
+            pool.poolSizeCount = 2;
+            pool.pPoolSizes = sizes;
+            if (vkCreateDescriptorPool(context_->device(), &pool, nullptr, &up_pool_)
+                != VK_SUCCESS) {
+                return false;
+            }
+            VkDescriptorSetAllocateInfo alloc { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
+            alloc.descriptorPool = up_pool_;
+            alloc.descriptorSetCount = 1;
+            alloc.pSetLayouts = &up_layout_;
+            return vkAllocateDescriptorSets(context_->device(), &alloc, &up_set_) == VK_SUCCESS;
+        }
+
+        void record_upscale(
+            VkCommandBuffer command, const Texture& texture, const PendingUpload& upload)
+        {
+            if (!ensure_upscale_pipeline()) {
+                return;
+            }
+            VkMemoryBarrier host_barrier { VK_STRUCTURE_TYPE_MEMORY_BARRIER };
+            host_barrier.srcAccessMask = VK_ACCESS_HOST_WRITE_BIT;
+            host_barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+            vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_HOST_BIT,
+                VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &host_barrier, 0, nullptr, 0, nullptr);
+
+            VkDescriptorBufferInfo src_info { upload.staging.buffer, 0, VK_WHOLE_SIZE };
+            VkDescriptorImageInfo dst_info {};
+            dst_info.imageView = texture.image.view;
+            dst_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+            VkWriteDescriptorSet writes[2] {};
+            writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[0].dstSet = up_set_;
+            writes[0].dstBinding = 0;
+            writes[0].descriptorCount = 1;
+            writes[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            writes[0].pBufferInfo = &src_info;
+            writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[1].dstSet = up_set_;
+            writes[1].dstBinding = 1;
+            writes[1].descriptorCount = 1;
+            writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+            writes[1].pImageInfo = &dst_info;
+            vkUpdateDescriptorSets(context_->device(), 2, writes, 0, nullptr);
+
+            const int32_t push[5]
+                = { static_cast<int32_t>(upload.width), static_cast<int32_t>(upload.height),
+                      static_cast<int32_t>(upload.layer), factor_, 0 };
+            vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_COMPUTE, up_pipeline_);
+            vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_COMPUTE, up_pipeline_layout_, 0,
+                1, &up_set_, 0, nullptr);
+            vkCmdPushConstants(
+                command, up_pipeline_layout_, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push), push);
+            vkCmdDispatch(command, (upload.width * static_cast<uint32_t>(factor_) + 7) / 8,
+                (upload.height * static_cast<uint32_t>(factor_) + 7) / 8, 1);
+        }
+
+        void destroy_upscale()
+        {
+            if (!context_ || !context_->device()) {
+                return;
+            }
+            if (up_pool_ != VK_NULL_HANDLE) {
+                vkDestroyDescriptorPool(context_->device(), up_pool_, nullptr);
+                up_pool_ = VK_NULL_HANDLE;
+            }
+            up_set_ = VK_NULL_HANDLE;
+            if (up_layout_ != VK_NULL_HANDLE) {
+                vkDestroyDescriptorSetLayout(context_->device(), up_layout_, nullptr);
+                up_layout_ = VK_NULL_HANDLE;
+            }
+            if (up_pipeline_layout_ != VK_NULL_HANDLE) {
+                vkDestroyPipelineLayout(context_->device(), up_pipeline_layout_, nullptr);
+                up_pipeline_layout_ = VK_NULL_HANDLE;
+            }
+            if (up_pipeline_ != VK_NULL_HANDLE) {
+                vkDestroyPipeline(context_->device(), up_pipeline_, nullptr);
+                up_pipeline_ = VK_NULL_HANDLE;
+            }
+        }
+
         void destroy_texture(uint32_t id)
         {
             if (id == 0 || id > textures_.size() || !textures_[id - 1]) {
@@ -721,6 +915,7 @@ namespace {
             if (!context_) {
                 return;
             }
+            destroy_upscale();
             for (PendingUpload& upload : pending_) {
                 destroy_buffer(*context_, upload.staging);
             }
@@ -741,6 +936,12 @@ namespace {
         std::vector<PendingUpload> pending_;
         std::vector<uint32_t> batch_ids_;
         uint32_t next_id_ = 1;
+        int factor_ = 1;
+        VkDescriptorSetLayout up_layout_ = VK_NULL_HANDLE;
+        VkPipelineLayout up_pipeline_layout_ = VK_NULL_HANDLE;
+        VkPipeline up_pipeline_ = VK_NULL_HANDLE;
+        VkDescriptorPool up_pool_ = VK_NULL_HANDLE;
+        VkDescriptorSet up_set_ = VK_NULL_HANDLE;
     };
 
     struct VulkanTextureLoader {
@@ -978,6 +1179,12 @@ bool VulkanComputeRenderer::Impl::initialize(SDL_Window* window, const Config& c
     setup_indices.resize(dims.max_y_span_indices);
     render_polygons.resize(kMaxPolygons);
 
+    if (texture_store && std::getenv("NDS_TEXTURE_UPSCALE")) {
+        const int factor = std::atoi(std::getenv("NDS_TEXTURE_UPSCALE"));
+        if (factor == 2 || factor == 4) {
+            std::fprintf(stderr, "[native-render] texture upscaling %dx (xBR-lv2)\n", factor);
+        }
+    }
     if (!create_samplers() || !create_buffers() || !create_images() || !create_dummy_texture()
         || !create_descriptor_layouts() || !create_descriptor_pools()
         || !create_common_descriptors() || !create_pipelines() || !create_frame_resources()) {

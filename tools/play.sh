@@ -325,6 +325,10 @@ else set -- "$@" --diagnostics off; fi
 frontend_config="$root/re/config/frontend.toml"
 [ -f "$frontend_config" ] || fail "missing $frontend_config"
 set -- "$@" --config "$frontend_config"
+# Savestate slots (F1..F12 load, Shift+F1..F12 save). States are per-ROM and
+# land in the git-ignored savestates/ folder.
+mkdir -p "$root/savestates"
+set -- "$@" --savestate-dir "$root/savestates"
 if [ -n "$save_path" ]; then set -- "$@" --save-path "$save_path"
 else set -- "$@" --no-save; fi
 [ -n "$extra" ] && set -- "$@" $extra
@@ -427,7 +431,7 @@ if [ -n "$save_path" ]; then
 else
   echo "save:   off (--no-save, blank 512 KiB cart, nothing written)"
 fi
-echo "keys:   arrows=D-pad  Z=A X=B  A=Y S=X  Q=L W=R  Enter=Start  Backspace=Select  Esc=quit"
+echo "keys:   arrows=D-pad  Z=A X=B  A=Y S=X  Q=L W=R  Enter=Start  Backspace=Select  Esc=quit  F1..F12=load state  Shift+F1..F12=save state"
 
 cd "$root"
 exec "$@"

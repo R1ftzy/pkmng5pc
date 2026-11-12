@@ -155,15 +155,20 @@ native surface unchanged.
 
 ### Slice V3 — bloom (and the texture-upscale port)
 
-**2026-11-12 note:** xBR texture upscaling ships for the *compute lane* first
-(the runner's vendored `TextureUpscale.cpp`, wired through `-TextureUpscale`
-1/2/4 → `NDS_TEXTURE_UPSCALE`, the TUI row and both play scripts). It is what
-explains the melonDS-vs-ours billboard comparison: melonDS smooths the player
-quad's texture; our lanes uploaded native texels. Porting the same xBR-lv2
-shader (MIT, `TextureUpscale.cpp`) into the Vulkan sink as an upload-time
-compute pass — the sink's texture store already samples with normalized UVs,
-so the upscaled arrays need no shader change — is the sink-lane follow-up;
-bloom stays below it.
+**2026-11-12:** xBR texture upscaling is **in the Vulkan sink** as an
+upload-time compute pass (`render/src/ds/ds_upscale.comp`, standalone, same
+xBR-lv2 rules as the vendored GL lane): the store allocates every texture at
+`logical * factor`, filters the decoded texels into the layer with wrap=repeat,
+and the raster's normalized-UV sampling needs no change. Verified in gameplay
+(overworld, driven): `texture upscaling 2x`, 16.6% of pixels changed vs the
+native upload on the same frame, and 2x/4x run clean beside the 8x composite.
+The compute lane keeps its vendored GL upscaler; `-TextureUpscale` drives both.
+
+**Still on the CPU:** the 2D scanline compositor (`runner/src/gpu2d.cpp`) —
+the largest remaining graphics cost. The presentation-side canvas compose is
+already on the GPU whenever the HD composite is active. Moving the 2D engine
+to the GPU is the "2D sink" slice from ADR 0007, not bloom; bloom stays after
+it in priority.
 
 Compute post-pass on the hi-res 3D surface before the composite: bright-pass at
 a threshold, separable blur (two 1D dispatches), additive blend in the

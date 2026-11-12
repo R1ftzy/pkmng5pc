@@ -156,6 +156,15 @@ if(PKMNG5PC_NATIVE_RENDERER)
     target_sources(pkmn_render_ds PRIVATE ${PKMNG5PC_SHADER_SOURCES})
     target_sources(pkmn_render PRIVATE ${PKMNG5PC_PRESENTER_SHADER_SOURCES})
 
+    # The sink's xBR texture upscaler compiles standalone (no Common), like
+    # the presenter's HD composite.
+    set(PKMNG5PC_SHADER_SOURCES "")
+    pkmng5pc_add_shader(
+        SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/src/ds/ds_upscale.comp"
+        STAGE comp
+        SYMBOL "pkmng5pc_ds_upscale_spv")
+    target_sources(pkmn_render_ds PRIVATE ${PKMNG5PC_SHADER_SOURCES})
+
     add_library(pkmn::render_ds ALIAS pkmn_render_ds)
 endif()
 

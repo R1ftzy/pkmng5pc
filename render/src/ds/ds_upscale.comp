@@ -1,0 +1,160 @@
+#version 450
+// xBR-lv2 texture upscaling for the Vulkan DS sink (ADR 0008, slice V3
+// groundwork). Rule set adapted from Hyllian's xBR-lv2 (MIT); the vendored GL
+// lane uses the same algorithm (runner/src/melonds_compute/TextureUpscale.cpp),
+// so both lanes produce the same look. Premultiplied coverage handling keeps
+// cutout edges from darkening, as in the GL version.
+layout (local_size_x = 8, local_size_y = 8) in;
+
+// Decoded 1x texture: four bytes per texel (r, g, b at 0..63, alpha at 0..31).
+layout (set = 0, binding = 0) readonly buffer SrcPlane { uint SrcWords[]; };
+// Destination array layer, allocated at width * scale x height * scale.
+layout (set = 0, binding = 1, rgba8ui) writeonly uniform uimage2DArray DstTex;
+
+layout (push_constant) uniform Push {
+    ivec2 src_size;
+    int layer;
+    int scale;
+    int wrap_mode; // 0 = repeat, 1 = clamp
+} pc;
+
+const vec3 rgbw = vec3(14.352, 28.176, 5.472);
+const float XBR_EQ_THRESHOLD = 15.0;
+const float XBR_LV1_COEFFICIENT = 0.5;
+const float XBR_LV2_COEFFICIENT = 2.0;
+const float coef = 2.0;
+
+const vec4 Ao = vec4( 1.0, -1.0, -1.0, 1.0 );
+const vec4 Bo = vec4( 1.0,  1.0, -1.0,-1.0 );
+const vec4 Co = vec4( 1.5,  0.5, -0.5, 0.5 );
+const vec4 Ax = vec4( 1.0, -1.0, -1.0, 1.0 );
+const vec4 Bx = vec4( 0.5,  2.0, -0.5,-2.0 );
+const vec4 Cx = vec4( 1.0,  1.0, -0.5, 0.0 );
+const vec4 Ay = vec4( 1.0, -1.0, -1.0, 1.0 );
+const vec4 By = vec4( 2.0,  0.5, -2.0,-0.5 );
+const vec4 Cy = vec4( 2.0,  0.0, -1.0, 0.5 );
+const vec4 Ci = vec4(0.25, 0.25, 0.25, 0.25);
+
+ivec2 wrap_pixel(ivec2 p)
+{
+    if (pc.wrap_mode == 0) {
+        return ivec2(((p.x % pc.src_size.x) + pc.src_size.x) % pc.src_size.x,
+                     ((p.y % pc.src_size.y) + pc.src_size.y) % pc.src_size.y);
+    }
+    return clamp(p, ivec2(0), pc.src_size - ivec2(1));
+}
+
+// Returns premultiplied RGB in .rgb and coverage in .a, both 0..1.
+vec4 fetch(ivec2 base, int dx, int dy)
+{
+    const ivec2 p = wrap_pixel(base + ivec2(dx, dy));
+    const uint word = SrcWords[p.y * pc.src_size.x + p.x];
+    const uvec4 t = uvec4(word & 0xFFu, (word >> 8) & 0xFFu, (word >> 16) & 0xFFu,
+        (word >> 24) & 0xFFu);
+    const float a = float(t.a) / 31.0;
+    return vec4(vec3(t.rgb) / 63.0 * a, a);
+}
+
+vec4 df(vec4 A, vec4 B) { return abs(A - B); }
+vec4 eqv(vec4 A, vec4 B) { return step(df(A, B), vec4(XBR_EQ_THRESHOLD)); }
+vec4 neqv(vec4 A, vec4 B) { return vec4(1.0) - eqv(A, B); }
+vec4 diffv(vec4 A, vec4 B) { return vec4(notEqual(A, B)); }
+
+vec4 wd(vec4 a, vec4 b, vec4 c, vec4 d, vec4 e, vec4 f, vec4 g, vec4 h)
+{
+    return (df(a,b) + df(a,c) + df(d,e) + df(d,f) + 4.0*df(g,h));
+}
+
+float lum(vec4 c) { return dot(c.rgb, rgbw) + (1.0 - c.a) * 64.0; }
+
+void main()
+{
+    const ivec2 dst = ivec2(gl_GlobalInvocationID.xy);
+    const ivec2 out_size = pc.src_size * pc.scale;
+    if (dst.x >= out_size.x || dst.y >= out_size.y) {
+        return;
+    }
+
+    const ivec2 src = dst / pc.scale;
+    const vec2 fp = (vec2(dst - src * pc.scale) + vec2(0.5)) / float(pc.scale);
+
+    vec4 vA1 = fetch(src,-1,-2), vB1 = fetch(src, 0,-2), vC1 = fetch(src, 1,-2);
+    vec4 vA  = fetch(src,-1,-1), vB  = fetch(src, 0,-1), vC  = fetch(src, 1,-1);
+    vec4 vD  = fetch(src,-1, 0), vE  = fetch(src, 0, 0), vF  = fetch(src, 1, 0);
+    vec4 vG  = fetch(src,-1, 1), vH  = fetch(src, 0, 1), vI  = fetch(src, 1, 1);
+    vec4 vG5 = fetch(src,-1, 2), vH5 = fetch(src, 0, 2), vI5 = fetch(src, 1, 2);
+    vec4 vA0 = fetch(src,-2,-1), vD0 = fetch(src,-2, 0), vG0 = fetch(src,-2, 1);
+    vec4 vC4 = fetch(src, 2,-1), vF4 = fetch(src, 2, 0), vI4 = fetch(src, 2, 1);
+
+    vec4 b = vec4(lum(vB), lum(vD), lum(vH), lum(vF));
+    vec4 c = vec4(lum(vC), lum(vA), lum(vG), lum(vI));
+    vec4 d = b.yzwx;
+    vec4 e = vec4(lum(vE));
+    vec4 f = b.wxyz;
+    vec4 g = c.zwxy;
+    vec4 h = b.zwxy;
+    vec4 i = c.wxyz;
+
+    vec4 i4 = vec4(lum(vI4), lum(vC1), lum(vA0), lum(vG5));
+    vec4 i5 = vec4(lum(vI5), lum(vC4), lum(vA1), lum(vG0));
+    vec4 h5 = vec4(lum(vH5), lum(vF4), lum(vB1), lum(vD0));
+    vec4 f4 = h5.yzwx;
+
+    vec4 fx   = (Ao*fp.y + Bo*fp.x);
+    vec4 fx_l = (Ax*fp.y + Bx*fp.x);
+    vec4 fx_u = (Ay*fp.y + By*fp.x);
+
+    vec4 irlv0 = diffv(e,f) * diffv(e,h);
+    // CORNER_C
+    vec4 irlv1 = irlv0 * ( neqv(f,b) * neqv(f,c) + neqv(h,d) * neqv(h,g) +
+                 eqv(e,i) * (neqv(f,f4) * neqv(f,i4) + neqv(h,h5) * neqv(h,i5)) +
+                 eqv(e,g) + eqv(e,c) );
+    vec4 irlv2l = diffv(e,g) * diffv(d,g);
+    vec4 irlv2u = diffv(e,c) * diffv(b,c);
+
+    vec4 wd1 = wd( e, c,  g, i, h5, f4, h, f);
+    vec4 wd2 = wd( h, d, i5, f, i4,  b, e, i);
+
+    vec4 edri  = step(wd1, wd2) * irlv0;
+    vec4 edr   = step(wd1 + vec4(0.1), wd2) * irlv1;
+    vec4 edr_l = step( XBR_LV2_COEFFICIENT*df(f,g), df(h,c) ) * irlv2l * edr;
+    vec4 edr_u = step( XBR_LV2_COEFFICIENT*df(h,c), df(f,g) ) * irlv2u * edr;
+
+    vec4 px = step(df(e,f), df(e,h));
+
+    vec4 fx_l_max = max(fx_l, fx_u);
+    vec4 fx_u_max = max(fx_u, fx_l);
+    vec4 maximos = max(max(fx_l_max, fx_u_max), fx);
+
+    vec4 nc = edr * ( edr_l * step(Co, fx_l) +
+                      edr_u * step(Ci, fx_u) +
+                      (vec4(1.0) - edr_l) * (vec4(1.0) - edr_u) * step(Co, fx) );
+    nc = clamp(nc, vec4(0.0), vec4(1.0));
+
+    // Pick the winning direction: the four components are the four
+    // diagonals, and at most one blend applies to any output texel.
+    vec4 pxA = vec4(0.0);
+    float blend = 0.0;
+    vec4 src_pix[4];
+    src_pix[0] = (px.x > 0.5) ? vF : vH;
+    src_pix[1] = (px.y > 0.5) ? vB : vF;
+    src_pix[2] = (px.z > 0.5) ? vD : vB;
+    src_pix[3] = (px.w > 0.5) ? vH : vD;
+    for (int k = 0; k < 4; ++k) {
+        if (nc[k] > blend) { blend = nc[k]; pxA = src_pix[k]; }
+    }
+
+    vec4 out_pix = mix(vE, pxA, clamp(blend, 0.0, 1.0));
+
+    // Un-premultiply. Below the coverage floor the colour is meaningless, so
+    // emit a fully transparent texel rather than amplifying noise.
+    uvec4 result;
+    if (out_pix.a <= 0.0001) {
+        result = uvec4(0u, 0u, 0u, 0u);
+    } else {
+        vec3 rgb = clamp(out_pix.rgb / out_pix.a, 0.0, 1.0);
+        result = uvec4(uvec3(round(rgb * 63.0)),
+                       uint(round(clamp(out_pix.a, 0.0, 1.0) * 31.0)));
+    }
+    imageStore(DstTex, ivec3(dst, pc.layer), result);
+}
