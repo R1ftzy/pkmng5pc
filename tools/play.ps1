@@ -21,6 +21,8 @@
 #   pwsh tools/play.ps1 -Native -WindowSize 3x -Scaling fit
 #   pwsh tools/play.ps1 -Native -Window 1280x960   # explicit pixel size
 #   pwsh tools/play.ps1 -Renderer native      # 3D sink, slice 1 (4:3, 1x)
+#   pwsh tools/play.ps1 -Layout separate -Renderer3D compute -RenderScale 3
+#                                             # hi-res 3D (OpenGL 4.3), 1440p-class
 #   pwsh tools/play.ps1 -Frames 600 -Stats    # present 600 frames, print stats, exit
 #   pwsh tools/play.ps1 -Sav "banks/black.sav"  # keep a different save file
 #   pwsh tools/play.ps1 -NoSave               # blank 512 KiB cart, write nothing
@@ -41,11 +43,21 @@
 # Everything else -- guest execution, input, audio, saves, the presented-frame
 # digest -- is the same run either way.
 #
-# -Renderer native enables the alpha 3D sink and implies -Native; the runner
-# must be built with PKMNG5PC_NATIVE_RENDERER=ON. 3d, 2d and both are debug-only
-# renderer selections, not normal play. Slice 1 renders 4:3 at 256 px and 1x;
-# -Aspect 16:9/21:9 or -RenderScale above 1 therefore runs the CPU compositor
-# instead of the sink and prints a note, rather than refusing to launch.
+# -Renderer native enables the alpha Vulkan 3D sink and implies -Native; the
+# runner must be built with PKMNG5PC_NATIVE_RENDERER=ON. 3d, 2d and both are
+# debug-only renderer selections, not normal play. Slice 1 renders 4:3 at 256 px
+# and 1x; -Aspect 16:9/21:9 or -RenderScale above 1 therefore runs the CPU
+# compositor instead of the sink and prints a note, rather than refusing to
+# launch.
+#
+# -Renderer3D compute replaces the 3D rasterizer with the vendored melonDS
+# OpenGL 4.3 compute renderer: NDS_INTERNAL_RESOLUTION (1..4) then multiplies
+# the 3D sample density, and above 1x the top screen is presented through the
+# runner's own OpenGL window with the hi-res 3D composited into the 2D stack -
+# so use -Layout separate there and drop -Native. Its render width must be a
+# 64-multiple (256/320/384/448), so aspect 16:9 (342 px) stays on the faithful
+# renderer. -Renderer3D faithful (the default) pins the CPU rasterizer; without
+# it an ambient NDS_3D_RENDERER decides.
 #
 # -WindowSize sizes each game window once at launch from the aspect and layout
 # (2x of 16:9 stacked is 684x768); -Window takes explicit pixels instead. The
@@ -73,7 +85,8 @@ param(
   [switch]$Native,
   [string]$Gpu = '',
   [ValidateSet('off', 'native', '3d', '2d', 'both')][string]$Renderer = 'off',
-  [ValidateSet('4:3', '16:9', '21:9')][string]$Aspect = '4:3',
+  [ValidateSet('faithful', 'compute')][string]$Renderer3D = 'faithful',
+  [ValidateSet('4:3', '5:3', '16:9', '2:1', '21:9')][string]$Aspect = '4:3',
   [int]$RenderScale = 0,
   [ValidateSet('native', '1x', '2x', '3x', '4x')][string]$WindowSize = 'native',
   [ValidatePattern('^(\d+x\d+)?$')][string]$Window = '',
@@ -103,11 +116,28 @@ function Fail([string]$message) {
 
 $rendererOn = $Renderer -ne 'off'
 $nativePresent = $Native -or $rendererOn
+$computeHd = $Renderer3D -eq 'compute'
+if ($computeHd -and $rendererOn) {
+  Fail '-Renderer and -Renderer3D compute are exclusive: the Vulkan 3D sink and the OpenGL compute renderer both replace the 3D rasterizer.'
+}
 $renderScaleSet = $PSBoundParameters.ContainsKey('RenderScale')
 if ($renderScaleSet -and ($RenderScale -lt 1 -or $RenderScale -gt 4)) {
   Fail '-RenderScale must be 1, 2, 3 or 4.'
 }
-$aspectWidths = @{ '4:3' = 256; '16:9' = 342; '21:9' = 448 }
+if ($computeHd -and $renderScaleSet -and $RenderScale -gt 1 -and $Native) {
+  Fail '-Native and -Renderer3D compute cannot both present: the hi-res image is presented through the runner''s own OpenGL window. Drop -Native, or keep -Native and 1x.'
+}
+# The compute rasterizer bakes ScreenWidth into its shaders, so its render
+# width must stay a 64-multiple: 256, 320, 384 or 448. 342 (16:9) stays a
+# faithful-path width; fall back rather than dying at compute init.
+if ($computeHd -and $Aspect -eq '16:9') {
+  $Renderer3D = 'faithful'
+  $computeHd = $false
+  Write-Host 'play: the compute renderer supports 256/320/384/448 px widths only; aspect 16:9 uses the faithful renderer' -ForegroundColor Yellow
+}
+$aspectWidths = @{
+  '4:3' = 256; '5:3' = 320; '16:9' = 342; '2:1' = 384; '21:9' = 448
+}
 $windowText = $Window
 if (-not $windowText -and $WindowSize -ne 'native') {
   $factor = [int]$WindowSize.Substring(0, 1)
@@ -132,11 +162,11 @@ Get-Content -LiteralPath $titlesFile |
     $fields = $_ -split "`t"
     if ($fields.Count -ge 2 -and $fields[0] -ne 'code') { $titleIds[$fields[0]] = $fields[1] }
   }
-if (-not $nativePresent -and $PSBoundParameters.ContainsKey('Aspect') -and $Aspect -ne '4:3') {
-  Write-Host "play: -Aspect applies to -Native; ignored on the SDL path" -ForegroundColor Yellow
+if (-not $nativePresent -and -not $computeHd -and $PSBoundParameters.ContainsKey('Aspect') -and $Aspect -ne '4:3') {
+  Write-Host "play: -Aspect applies to -Native or -Renderer3D compute; ignored on the SDL path" -ForegroundColor Yellow
 }
-if (-not $rendererOn -and $renderScaleSet) {
-  Write-Host "play: -RenderScale applies to -Renderer; ignored while the renderer is off" -ForegroundColor Yellow
+if (-not $rendererOn -and -not $computeHd -and $renderScaleSet) {
+  Write-Host "play: -RenderScale applies to -Renderer or -Renderer3D compute; ignored on the faithful soft renderer" -ForegroundColor Yellow
 }
 if (-not $nativePresent -and ($WindowSize -ne 'native' -or $Window)) {
   Write-Host "play: -WindowSize/-Window apply to -Native; ignored on the SDL path" -ForegroundColor Yellow
@@ -262,23 +292,37 @@ if ($nativePresent) {
   $env:PKMNG5PC_PRESENT = 'native'
   $env:PKMNG5PC_GPU = $Gpu
   $env:PKMNG5PC_PRESENT_SCALING = $Scaling
-  $env:PKMNG5PC_WIDESCREEN_SUPPORTED = 'top'
   if ($windowText) { $env:PKMNG5PC_WINDOW_SIZE = $windowText }
+}
+# The wide top band works on the native-present path and on the compute
+# renderer; the plain SDL path has no wide consumer.
+if ($nativePresent -or $computeHd) {
+  $env:PKMNG5PC_WIDESCREEN_SUPPORTED = 'top'
   if ($Aspect -ne '4:3') {
     $env:NDS_ADAPTIVE_WIDESCREEN = 'top'
     $env:NDS_WIDESCREEN_WIDTH = "$($aspectWidths[$Aspect])"
   }
 }
+# Pin the 3D rasterizer: with the compute renderer built, the runner's auto
+# policy would silently prefer it. The caller's own NDS_3D_RENDERER wins.
+if ($computeHd) {
+  $env:NDS_3D_RENDERER = 'compute'
+} elseif (-not $env:NDS_3D_RENDERER) {
+  $env:NDS_3D_RENDERER = 'soft'
+}
 if ($rendererOn) {
   $env:PKMNG5PC_RENDERER = $Renderer
   if ($titleId) { $env:PKMNG5PC_TITLE_ID = $titleId }
-  if ($renderScaleSet) { $env:NDS_INTERNAL_RESOLUTION = "$RenderScale" }
 }
+if ($renderScaleSet) { $env:NDS_INTERNAL_RESOLUTION = "$RenderScale" }
 
 Write-Host "runner: $runner"
 Write-Host "rom:    $Rom"
 Write-Host "banks:  $banks"
-if ($nativePresent) {
+if ($computeHd) {
+  $scaleText = if ($renderScaleSet -and $RenderScale -gt 1) { ", internal $($RenderScale)x" } else { ', internal 1x' }
+  Write-Host "present: runner OpenGL direct (compute renderer$scaleText, $Layout)"
+} elseif ($nativePresent) {
   Write-Host "present: native (render/ - Vulkan, $Layout, gpu=$Gpu)"
 } else {
   Write-Host "present: runner SDL blit ($Layout)"
@@ -292,6 +336,8 @@ if ($rendererOn) {
   $titleText = if ($titleId) { ", title $titleId" } else { '' }
   $debugText = if ($Renderer -in @('3d', '2d', 'both')) { ' (debug)' } else { '' }
   Write-Host "render: $Renderer$debugText (aspect $Aspect, source width $($aspectWidths[$Aspect])$scaleText$titleText)"
+} elseif ($computeHd) {
+  Write-Host "render: OpenGL 4.3 compute (aspect $Aspect, source width $($aspectWidths[$Aspect]))"
 } elseif ($nativePresent) {
   Write-Host "render: native present, CPU compositor (aspect $Aspect, source width $($aspectWidths[$Aspect]))"
 } else {

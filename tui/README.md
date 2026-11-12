@@ -146,12 +146,20 @@ The SHA-1 is computed in a background thread and passed to Configure as
   Play falls back to native present (or SDL) instead of refusing to launch;
   enable **Build native renderer (alpha)** on the Build page and reconfigure to
   get such a build.
-- 3D internal resolution (`1x`..`4x`) and aspect ratio (`4:3`, `16:9`, `21:9`,
-  with nominal source widths 256/342/448). Aspect applies whenever native
-  present is on, including without the native renderer. Slice 1 of the native
-  renderer supports `4:3` at `1x` only; other values stay selectable and Play
-  launches the CPU compositor with a note instead of stopping, so the output
-  options stay usable.
+- 3D internal resolution (`1x`..`4x`) and aspect ratio (`4:3`, `5:3`, `16:9`,
+  `2:1`, `21:9` — source widths 256/320/342/384/448). Aspect applies whenever
+  native present is on, including without the native renderer. Slice 1 of the
+  native renderer supports `4:3` at `1x` only; other values stay selectable and
+  Play launches the CPU compositor with a note instead of stopping, so the
+  output options stay usable.
+- 3D renderer: `Faithful` (the CPU rasterizer every digest is locked to) or
+  `Compute` — the vendored melonDS OpenGL 4.3 compute renderer. Compute
+  rasterizes the 3D scene at the internal-resolution multiplier and, above 1x,
+  presents the hi-res 3D through its own OpenGL window in the separate layout
+  (Native present, GPU choice, window size and present scaling don't apply
+  there; Play switches the layout with a note). Its raster width must be a
+  64-multiple, so aspect 16:9 (342 px) falls back to the faithful renderer with
+  a notice; 5:3/2:1/21:9 stay compute. Needs a GPU with OpenGL 4.3.
 - Window size: runner default, `1x`..`4x` of the chosen aspect and layout (2x of
   16:9 stacked is 684x768; separate windows are one screen tall), or an explicit
   pixel size. The window is sized once at launch and stays freely resizable.
@@ -162,7 +170,10 @@ The SHA-1 is computed in a background thread and passed to Configure as
   the 342-wide frame's centre 256 columns match the 4:3 frame while a
   downscale-to-256 does not, and the player sprite keeps its size and centre.
   The extra band is scene content the guest already submits, so the 3D scene
-  does not stretch and guest frames are unchanged.
+  does not stretch and guest frames are unchanged. The guest still culls for a
+  4:3 viewport, so objects it never submitted stop at the band edges — the
+  per-title wide-frustum patch (`runner/src/title_patches.cpp`, which does this
+  for Metroid Prime Hunters and SM64DS) is the outstanding Gen 5 RE step.
 - Frame limit (`0` runs until the window is closed).
 - Save mode: default beside the ROM, a custom file, or off (blank cart).
 - Diagnostics: stats, coverage manifest and a performance bundle. Coverage is

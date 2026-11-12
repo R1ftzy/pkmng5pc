@@ -222,7 +222,7 @@ cmake --build --preset windows-relwithdebinfo
 
 Use the **`-relwithdebinfo`** preset for anything you intend to measure or profile; `windows-debug` is `-O0` and its timings mislead (the first recorded boot numbers were all Debug). Debug stays for the test suite.
 
-`PKMNG5PC_BUILD_RUNNER=ON` (a) checks that banks exist, (b) fetches and builds **SDL3 3.4.18** via FetchContent (static, tests/examples off), then (c) `add_subdirectory`s the runner with `NDS_BOOTSTRAP_FIRMWARE=ON`, `NDS_SDL_BACKEND=SDL3`, `NDS_ENABLE_COMPUTE_RENDERER=OFF`. The first configure clones and builds SDL3, so it takes several minutes.
+`PKMNG5PC_BUILD_RUNNER=ON` (a) checks that banks exist, (b) fetches and builds **SDL3 3.4.18** via FetchContent (static, tests/examples off), then (c) `add_subdirectory`s the runner with `NDS_BOOTSTRAP_FIRMWARE=ON`, `NDS_SDL_BACKEND=SDL3`, and `NDS_ENABLE_COMPUTE_RENDERER` following `PKMNG5PC_ENABLE_COMPUTE_RENDERER` (default **ON**: the vendored melonDS OpenGL 4.3 compute renderer, the hi-res 3D lane). The first configure clones and builds SDL3, so it takes several minutes.
 
 Two cache variables select which ROM the banks belong to:
 
@@ -273,7 +273,8 @@ sh tools/play.sh
 | `--window-size native\|1x..4x` | size each game window from the aspect and layout; `--window WxH` takes explicit pixels |
 | `--scaling integer\|fit` | whole-pixel blocks with letterboxing (default) or an aspect-preserving fill of the window |
 | `--renderer native` | enable the alpha 3D sink (4:3 at 1x); other aspects/scales fall back to the CPU compositor with a note |
-| `--render-scale 1..4` | internal 3D resolution for the sink (slice 1 uses 1x) |
+| `--renderer3d faithful\|compute` | faithful (default) pins the CPU rasterizer every digest is locked to; compute switches to the vendored OpenGL 4.3 compute renderer |
+| `--render-scale 1..4` | 3D sample-density multiplier for the compute renderer (`--renderer3d compute`; the faithful path and the sink render 1x) |
 | `--frames N` | present N frames, print fps and a frame hash, exit — a self-test |
 | `--stats` | print the performance summary on exit |
 | `--sav [<file>]` | keep the battery save at another path; the default is the ROM's own `<rom>.sav`. Aliases: `--save-path`, `--save`; `--no-save` (`-NoSave` in PowerShell) runs a blank cart and writes nothing |
@@ -316,6 +317,18 @@ digest. `--aspect` widens the top band: measured on a save-loaded overworld run,
 the 342-wide frame's centre 256 columns match the 4:3 frame and the 3D scene is
 not stretched, so the extra band is real scene content rather than a stretch
 (`re/notes/wide-output.md`).
+
+`--renderer3d compute` is the hi-res lane: the vendored melonDS OpenGL 4.3
+compute renderer rasterizes the 3D scene at `--render-scale` times native
+density (2x-4x) and, above 1x, presents the top screen through its own OpenGL
+window with the hi-res 3D composited into the 2D stack — real higher-resolution
+geometry, not an upscale. It needs a GPU with OpenGL 4.3, the separate layout,
+and no `--native` (the OpenGL window owns presentation there); its raster width
+must be a 64-multiple, so 4:3/5:3/2:1/21:9 (256/320/384/448 px) work while 16:9
+(342 px) stays on the faithful renderer. What it does not change: the guest
+still builds its frusta and culls for a 4:3 viewport, so objects the game never
+submitted still stop at the band edges — that is the per-title wide-frustum
+patch (`re/notes/wide-output.md`).
 Pointer and touch input work in both layouts: the compositor's placement rule
 is inverted to turn a window click into a stylus coordinate (the window id
 selects the screen in separate mode), and a click outside the bottom screen

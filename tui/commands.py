@@ -15,7 +15,9 @@ from pathlib import Path
 from typing import Any
 
 from tui.model import (
+    COMPUTE_ASPECTS,
     PRESENT_SCALINGS,
+    RENDERER_3D_MODES,
     RENDER_ASPECT_WIDTHS,
     RENDER_SCALES,
     Repo,
@@ -306,15 +308,34 @@ def play_command(repo: Repo, settings: Settings, require_artifacts: bool = True)
         if not isinstance(settings.render_scale, bool) and settings.render_scale in RENDER_SCALES
         else 1
     )
-    render_env: dict[str, str] = {}
     compatibility = bool(settings.compatibility_mode)
-    render_requested = settings.render_native and not compatibility
-    render_note = ""
+    renderer_3d = (
+        settings.renderer_3d
+        if settings.renderer_3d in RENDERER_3D_MODES and not compatibility
+        else "faithful"
+    )
+    compute = renderer_3d == "compute"
+    lane_notes: list[str] = []
+    if compute and render_aspect == "16:9":
+        # The compute raster bakes ScreenWidth into its shaders and dispatches
+        # whole tiles, so its width must be a 64-multiple; 342 stays faithful.
+        renderer_3d = "faithful"
+        compute = False
+        lane_notes.append(
+            "Aspect 16:9 (342 px) uses the faithful renderer; the compute raster "
+            "supports 256/320/384/448 px widths"
+        )
+    render_env: dict[str, str] = {}
+    # The compute renderer replaces the rasterizer, so the port's own Vulkan
+    # sink has nothing to do in that lane.
+    if compute and settings.render_native:
+        lane_notes.append("The compute renderer replaces the Vulkan 3D sink")
+    render_requested = settings.render_native and not compatibility and not compute
+    sink_fallback_note = ""
     if render_requested:
         render_native, render_reason = repo.native_renderer_state(settings.preset)
         if not render_native:
-            render_requested = False
-            render_note = f"Native renderer unavailable: {render_reason}"
+            sink_fallback_note = f"Native renderer unavailable: {render_reason}"
         elif render_aspect != "4:3" or render_scale != 1:
             limits = []
             if render_aspect != "4:3":
@@ -322,14 +343,27 @@ def play_command(repo: Repo, settings: Settings, require_artifacts: bool = True)
             if render_scale != 1:
                 limits.append(f"scale {render_scale}x")
             render_native = False
-            render_note = (
+            sink_fallback_note = (
                 f"Native 3D sink is 4:3 at 1x; {', '.join(limits)} uses the CPU "
                 "compositor instead"
             )
     if render_native and settings.render_verify:
         render_env["PKMNG5PC_DS3D_VERIFY"] = "1"
 
-    native_present = (settings.play_native or render_native) and not compatibility
+    # Above 1x the compute renderer's hi-res 3D is presented through the
+    # runner's own OpenGL window, which exists in the separate layout only.
+    hd_presented = compute and render_scale > 1
+    layout = settings.play_layout
+    if hd_presented and layout != "separate":
+        layout = "separate"
+        lane_notes.append(
+            f"HD presents through the runner's OpenGL window; layout switched to "
+            f"separate for this launch (was {settings.play_layout})"
+        )
+
+    native_present = (
+        (settings.play_native or render_native) and not compatibility and not hd_presented
+    )
     present_scaling = (
         settings.present_scaling if settings.present_scaling in PRESENT_SCALINGS else "integer"
     )
@@ -365,13 +399,19 @@ def play_command(repo: Repo, settings: Settings, require_artifacts: bool = True)
             "-Banks",
             str(banks),
         ]
+        if native_present or compute:
+            argv.append("-Aspect")
+            argv.extend([render_aspect])
         if native_present:
             argv.append("-Native")
             argv.extend(["-Gpu", settings.play_gpu or "auto"])
-            argv.extend(["-Aspect", render_aspect])
             argv.extend(["-Scaling", present_scaling])
             if window:
                 argv.extend(["-Window", window_text])
+        if compute:
+            argv.extend(["-Renderer3D", "compute"])
+            if render_scale != 1:
+                argv.extend(["-RenderScale", str(render_scale)])
         if render_native:
             argv.extend(
                 [
@@ -381,7 +421,7 @@ def play_command(repo: Repo, settings: Settings, require_artifacts: bool = True)
                     str(render_scale),
                 ]
             )
-        if settings.play_layout == "separate":
+        if layout == "separate":
             argv.extend(["-Layout", "separate"])
         if settings.frames > 0:
             argv.extend(["-Frames", str(settings.frames)])
@@ -409,13 +449,19 @@ def play_command(repo: Repo, settings: Settings, require_artifacts: bool = True)
             "--banks",
             str(banks),
         ]
+        if native_present or compute:
+            argv.append("--aspect")
+            argv.extend([render_aspect])
         if native_present:
             argv.append("--native")
             argv.extend(["--gpu", settings.play_gpu or "auto"])
-            argv.extend(["--aspect", render_aspect])
             argv.extend(["--scaling", present_scaling])
             if window:
                 argv.extend(["--window", window_text])
+        if compute:
+            argv.extend(["--renderer3d", "compute"])
+            if render_scale != 1:
+                argv.extend(["--render-scale", str(render_scale)])
         if render_native:
             argv.extend(
                 [
@@ -425,7 +471,7 @@ def play_command(repo: Repo, settings: Settings, require_artifacts: bool = True)
                     str(render_scale),
                 ]
             )
-        if settings.play_layout == "separate":
+        if layout == "separate":
             argv.extend(["--layout", "separate"])
         if settings.frames > 0:
             argv.extend(["--frames", str(settings.frames)])
@@ -443,14 +489,24 @@ def play_command(repo: Repo, settings: Settings, require_artifacts: bool = True)
             argv.append("--")
             argv.extend(extra)
     note = f"Runner from {runner_preset or settings.preset}; close the game window to return here."
-    if native_present:
+    if compute:
+        density = f"3D at {render_scale}x internal density" if render_scale > 1 else "3D at 1x"
+        lane = (
+            "presented through the runner's OpenGL window"
+            if hd_presented
+            else "presented through Native present"
+        )
+        note = f"Compute renderer (OpenGL 4.3): {density}, {lane}. " + note
+    elif native_present:
         note = (
             f"Output: {render_aspect}, window {window_text}, {present_scaling} scaling. "
             + note
         )
-    if render_note:
+    if lane_notes:
+        note = f"{'; '.join(lane_notes)}. " + note
+    if sink_fallback_note:
         fallback = "native present only" if native_present else "the SDL path"
-        note = f"{render_note}; using {fallback}. " + note
+        note = f"{sink_fallback_note}; using {fallback}. " + note
     if compatibility:
         note = "Compatibility mode: SDL presentation, no GPU path. " + note
     return Command(

@@ -30,13 +30,19 @@ TITLE_BY_CODE: dict[str, tuple[str, str]] = _load_titles(TITLES_PATH)
 ROM_EXTENSIONS = (".nds", ".srl")
 PLAY_LAYOUTS = ("stacked", "separate")
 SAVE_MODES = ("default", "custom", "off")
-PLAY_ASPECTS = ("4:3", "16:9", "21:9")
+PLAY_ASPECTS = ("4:3", "5:3", "16:9", "2:1", "21:9")
 RENDER_SCALES = (1, 2, 3, 4)
 RENDER_ASPECT_WIDTHS: dict[str, int] = {
     "4:3": 256,
+    "5:3": 320,
     "16:9": 342,
+    "2:1": 384,
     "21:9": 448,
 }
+# Aspects the OpenGL compute renderer can rasterize: its shaders bake the
+# width in and dispatch whole tiles, so the band must be a 64-multiple.
+COMPUTE_ASPECTS = ("4:3", "5:3", "2:1", "21:9")
+RENDERER_3D_MODES = ("faithful", "compute")
 WINDOW_SIZES = ("native", "1x", "2x", "3x", "4x", "custom")
 WINDOW_SCALE_FACTORS: dict[str, int] = {"1x": 1, "2x": 2, "3x": 3, "4x": 4}
 PRESENT_SCALINGS = ("integer", "fit")
@@ -560,6 +566,7 @@ class Settings:
     play_native: bool = True
     play_gpu: str = "auto"
     render_native: bool = True
+    renderer_3d: str = "faithful"
     render_scale: int = 1
     render_aspect: str = "4:3"
     window_size: str = "native"
@@ -636,6 +643,8 @@ class Settings:
             self.render_scale = 1
         if self.render_aspect not in PLAY_ASPECTS:
             self.render_aspect = "4:3"
+        if self.renderer_3d not in RENDERER_3D_MODES:
+            self.renderer_3d = "faithful"
         if self.window_size not in WINDOW_SIZES:
             self.window_size = "native"
         if self.present_scaling not in PRESENT_SCALINGS:

@@ -23,8 +23,10 @@ from tui.commands import (
 )
 from tui.fps import FRAME_BUDGET_MS, FramePhases, RunnerFpsProbe
 from tui.model import (
+    COMPUTE_ASPECTS,
     PLAY_ASPECTS,
     PLAY_LAYOUTS,
+    RENDERER_3D_MODES,
     RENDER_ASPECT_WIDTHS,
     RENDER_SCALES,
     SAVE_MODES,
@@ -565,13 +567,34 @@ class App:
             kind="choice",
             value=f"{current}x",
             hint=(
-                "Internal 3D resolution multiplier for the native sink. Slice 1 "
-                "renders 1x only, so 2x-4x launches the CPU compositor at 1x "
-                "instead of the sink (with a note)."
+                "Internal 3D resolution multiplier. The compute renderer rasterizes "
+                "the 3D scene at this density and, above 1x, presents it hi-res "
+                "through its own OpenGL window. The faithful soft renderer and the "
+                "Vulkan sink render 1x only; choosing 2x-4x with the sink launches "
+                "the CPU compositor instead (with a note)."
             ),
             enabled=not self.s.compatibility_mode,
             on_activate=lambda: adjust(1),
             on_adjust=adjust,
+        )
+
+    def renderer_3d_item(self) -> Item:
+        compute = self.s.renderer_3d == "compute"
+        return self._choice(
+            "renderer-3d",
+            "3D renderer",
+            "renderer_3d",
+            [
+                ("faithful", "Faithful  ·  CPU, byte-locked"),
+                ("compute", "Compute  ·  OpenGL 4.3, hi-res 3D"),
+            ],
+            "Compute replaces the 3D rasterizer with the vendored melonDS OpenGL "
+            "4.3 compute renderer: it needs a GPU with OpenGL 4.3, rasterizes the "
+            "band at 256/320/384/448 px (64-multiples), and above 1x internal "
+            "resolution presents the hi-res 3D through its own OpenGL window in "
+            "the separate layout, replacing the Vulkan sink lane. Faithful keeps "
+            "the CPU rasterizer every digest is locked to.",
+            enabled=not self.s.compatibility_mode,
         )
 
     def window_size_item(self) -> Item:
@@ -973,13 +996,23 @@ class App:
         ]
         if self.s.compatibility_mode:
             output_row = "Output: SDL 4:3 (compatibility); aspect, window size and scaling unused"
+        elif self.s.renderer_3d == "compute" and self.s.render_scale > 1:
+            output_row = (
+                f"Output: aspect {self.s.render_aspect}  ·  3D internal "
+                f"{self.s.render_scale}x  ·  runner OpenGL window (separate layout)"
+            )
         else:
             output_row = (
                 f"Output: aspect {self.s.render_aspect}  ·  window "
                 f"{play_window_text(self.s)}  ·  {self.s.present_scaling} scaling"
             )
         play_rows.insert(1, output_row)
-        if self.s.render_native:
+        if self.s.renderer_3d == "compute":
+            play_rows.insert(
+                1,
+                f"3D renderer: compute (OpenGL 4.3)  ·  internal {self.s.render_scale}x",
+            )
+        if self.s.render_native and self.s.renderer_3d != "compute":
             render_available, _ = self.repo.native_renderer_state(self.s.preset, cache)
             render_state = "ON" if render_available else "requested; build unavailable"
             play_rows.insert(
@@ -2064,7 +2097,7 @@ class App:
                     ),
                 )
             )
-        elif self.s.render_native:
+        elif self.s.render_native and self.s.renderer_3d != "compute":
             limits: list[str] = []
             if self.s.render_aspect != "4:3":
                 limits.append(f"aspect {self.s.render_aspect}")
@@ -2082,6 +2115,49 @@ class App:
                         ),
                     )
                 )
+        elif self.s.renderer_3d == "compute":
+            if self.s.render_aspect == "16:9":
+                items.append(
+                    Item(
+                        "compute-aspect-note",
+                        "",
+                        kind="notice",
+                        value=term.yellow(
+                            "The compute raster needs a 64-multiple width; aspect "
+                            "16:9 (342 px) falls back to the faithful renderer. "
+                            "5:3 (320), 2:1 (384) and 21:9 (448) stay compute."
+                        ),
+                    )
+                )
+            if self.s.render_scale > 1 and self.s.render_aspect in COMPUTE_ASPECTS:
+                items.append(
+                    Item(
+                        "compute-hd-note",
+                        "",
+                        kind="notice",
+                        value=term.cyan(
+                            "HD: the 3D scene rasterizes at "
+                            f"{RENDER_ASPECT_WIDTHS.get(self.s.render_aspect, 256) * self.s.render_scale}"
+                            "x"
+                            f"{192 * self.s.render_scale} and is presented through the "
+                            "runner's own OpenGL window in the separate layout. "
+                            "Native present, the GPU choice, window size and present "
+                            "scaling don't apply there."
+                        ),
+                    )
+                )
+            if self.s.render_native:
+                items.append(
+                    Item(
+                        "compute-sink-note",
+                        "",
+                        kind="notice",
+                        value=term.yellow(
+                            "The compute renderer replaces the Vulkan 3D sink; the "
+                            "Native renderer toggle is inert in this lane."
+                        ),
+                    )
+                )
         if not render_available and not self.s.compatibility_mode:
             items.append(
                 Item(
@@ -2094,6 +2170,7 @@ class App:
         items.extend(
             [
                 self.render_scale_item(),
+                self.renderer_3d_item(),
                 self._choice(
                     "render-aspect",
                     "Aspect ratio",
@@ -2102,10 +2179,10 @@ class App:
                         (value, f"{value}  ·  {RENDER_ASPECT_WIDTHS[value]} px source")
                         for value in PLAY_ASPECTS
                     ],
-                    "Widens the top screen band (256, 342 or 448 px) through Native "
-                    "present. Measured on the overworld: the extra band is real "
-                    "scene content, not a stretch. The native 3D sink is 4:3 only, "
-                    "so 16:9 and 21:9 use the CPU compositor.",
+                    "Widens the top screen band through Native present or the "
+                    "compute renderer. Measured on the overworld: the extra band "
+                    "is real scene content, not a stretch. 16:9 (342 px) is "
+                    "faithful-only - the compute raster needs a 64-multiple width.",
                     enabled=not self.s.compatibility_mode,
                 ),
                 self.window_size_item(),
@@ -3278,7 +3355,8 @@ class App:
             f"ROM: {self.s.rom_path or '(none)'}",
             f"Compatibility mode: {'on' if self.s.compatibility_mode else 'off'}",
             (
-                f"Renderer: {renderer}  Aspect: {self.s.render_aspect}  "
+                f"Renderer: {renderer}  Renderer3D: {self.s.renderer_3d}  "
+                f"Aspect: {self.s.render_aspect}  "
                 f"Scale: {self.s.render_scale}x  Window: {play_window_text(self.s)}  "
                 f"Scaling: {self.s.present_scaling}"
             ),

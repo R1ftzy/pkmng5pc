@@ -14,7 +14,10 @@
   `render/src/compose.cpp` (source of the rules being measured)
 - runner build `windows-relwithdebinfo` with `PKMNG5PC_NATIVE_PRESENT=ON`,
   `PKMNG5PC_BUILD_RUNNER=ON`, `PKMNG5PC_BUILD_RENDER=ON`,
-  `NDS_GPU2D_THREADED=0` (inline scanline path)
+  `NDS_GPU2D_THREADED=0` (inline scanline path), and `NDS_3D_RENDERER=soft`
+  (pin the faithful rasterizer: with the compute renderer built, the runner's
+  auto policy would otherwise prefer it — bit-identical at 1x, but pin it for
+  digest-critical runs)
 - Python 3.14.3, numpy 2.5.0, Pillow 12.2.0 for the image comparison
 - capture harness: `banks/wideprobe.py` (digest ring) and `banks/widecap.py`
   (frame writer), both git-ignored scratch
@@ -75,6 +78,24 @@
 - Whether a guest wide-frustum patch is ever needed. It is not needed for the
   overworld scene above; it would only matter if culling/streaming is shown to
   leave the band visibly empty.
+
+## Next step: the guest wide-frustum patch (edge objects)
+
+Objects disappearing at the band edges are geometry the game's own CPU frustum
+culling never submitted — no host-side widening can resurrect it. The runner
+ships the mechanism (`runner/src/title_patches.cpp`): per-frame RAM patches with
+neighbour verification, then `nds_gpu3d_set_guest_wide_projection(true)` so the
+shared GE maps the guest's 0..256 viewport across the full band and skips the
+SubmitVertex clip-X translate. Metroid Prime Hunters widens three aspect words
+in `Camera_SetupProjection`/`Rooms_TraverseAndDraw` this way; SM64DS
+renormalizes two frustum planes and the aspect field.
+
+What is missing for Gen 5 is the RE: locate Black's projection/culling sites in
+the banked ARM9 (`banks/black/*_[0-9][0-9].c`, the game's own code), find the
+4:3 aspect literals and their neighbour words, add a
+`nds_title_patches_set_black_wide(...)` gated on this title's bank group plus
+`NDS_ADAPTIVE_GUEST_CULLING`, and verify the band fills in without perturbing
+guest-visible state. Only then should the TUI expose it.
 
 ## Cross-ROM comparison
 

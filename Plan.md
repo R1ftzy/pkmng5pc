@@ -602,6 +602,27 @@ Do not vendor or copy their content; cite and reimplement.
 
 Newest first. Keep entries short; details and evidence live in `re/notes/`.
 
+- **2026-11-12 (hi-res 3D ships: the vendored OpenGL compute renderer is on,
+  and the wide-frustum patch has a home)** — the "clean 1440p" ask exposed that
+  `Runner.cmake` forced `NDS_ENABLE_COMPUTE_RENDERER=OFF`: the vendored melonDS
+  OpenGL 4.3 compute renderer — internal resolution 1..4, supersampling, MSAA,
+  texture upscaling, and the `NdsGpu2dHdFrame` HD compositor — was compiled out
+  of every build. It now follows `PKMNG5PC_ENABLE_COMPUTE_RENDERER` (default ON)
+  and builds clean under llvm-mingw. Play gains a **3D renderer** choice:
+  faithful (the byte-locked CPU rasterizer, still the default) or compute, which
+  rasterizes the 3D scene at up to 4x sample density and, above 1x, presents the
+  hi-res 3D through the runner's own OpenGL direct presenter in the separate
+  layout — real higher-resolution geometry, not an upscale of 256x192. Its
+  raster width must be a 64-multiple, so the aspect list grows to
+  4:3/5:3/16:9/2:1/21:9 (256/320/342/384/448) with 16:9 staying faithful-only.
+  Verified live: `renderer: OpenGL 4.3 compute`, `internal resolution 3x
+  (768x576 3D raster)`, presented-frame digest unchanged. The Vulkan HD port
+  (ADR 0007 decision 6) remains the plan; this ships the capability. Edge
+  objects: diagnosed as the guest's own 4:3 frustum culling, unfixable
+  host-side; the fix is the per-title guest patch on the existing
+  `title_patches.cpp` framework (MPH/SM64DS precedents), scoped in
+  `re/notes/wide-output.md` as the next RE step.
+
 - **2026-11-12 (wide output is measured true widening; the launcher gains
   window size and present scaling)** — a save-loaded overworld capture settles
   the question the GPU-default entry below left open. At 342 wide, the centre

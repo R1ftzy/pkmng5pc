@@ -56,9 +56,12 @@ endif()
 # firmware.bin to generate firmware banks from, and the boot path uses
 # `--boot direct --generated-firmware`, which synthesizes a firmware image at
 # run time instead.
+option(PKMNG5PC_ENABLE_COMPUTE_RENDERER
+    "Build the vendored melonDS OpenGL 4.3 compute renderer (hi-res 3D lane)"
+    ON)
 set(NDS_BOOTSTRAP_FIRMWARE ON CACHE BOOL "" FORCE)
 set(NDS_SDL_BACKEND "SDL3" CACHE STRING "" FORCE)
-set(NDS_ENABLE_COMPUTE_RENDERER OFF CACHE BOOL "" FORCE)
+set(NDS_ENABLE_COMPUTE_RENDERER ${PKMNG5PC_ENABLE_COMPUTE_RENDERER} CACHE BOOL "" FORCE)
 set(NDS_TITLE_BANK_DIR "${PKMNG5PC_BANKS_DIR}" CACHE PATH "" FORCE)
 set(NDS_TITLE_ROM_SHA1 "${PKMNG5PC_TITLE_ROM_SHA1}" CACHE STRING "" FORCE)
 

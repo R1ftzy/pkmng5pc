@@ -758,7 +758,7 @@ class PlayViewNativeRendererTests(unittest.TestCase):
             self.assertNotIn("render-native-note", items)
 
             items["render-scale"].on_adjust(1)
-            items["render-aspect"].on_adjust(1)
+            items["render-aspect"].on_adjust(2)
             self.assertEqual(app.s.render_scale, 2)
             self.assertEqual(app.s.render_aspect, "16:9")
             view = app.play_view(120)
@@ -769,6 +769,37 @@ class PlayViewNativeRendererTests(unittest.TestCase):
             items["render-native"].on_adjust(-1)
             self.assertFalse(app.s.render_native)
             self.assertTrue(app.s.play_native)
+
+    def test_renderer_3d_choice_and_hd_notice(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            app, _ = make_app(Path(temp), Settings(preset="test-debug"))
+
+            items = {item.key: item for item in app.play_view(120).items}
+            self.assertIn("Faithful", items["renderer-3d"].value)
+            self.assertTrue(items["renderer-3d"].enabled)
+
+            items["renderer-3d"].on_adjust(1)
+            self.assertEqual(app.s.renderer_3d, "compute")
+
+            app.s.render_scale = 3
+            items = {item.key: item for item in app.play_view(120).items}
+            self.assertIn("compute-hd-note", items)
+            self.assertIn("OpenGL window", items["compute-hd-note"].value)
+
+            app.s.render_aspect = "16:9"
+            items = {item.key: item for item in app.play_view(120).items}
+            self.assertIn("compute-aspect-note", items)
+            self.assertNotIn("compute-hd-note", items)
+
+    def test_compatibility_mode_disables_the_3d_renderer_choice(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            app, _ = make_app(
+                Path(temp),
+                Settings(preset="test-debug", renderer_3d="compute", compatibility_mode=True),
+            )
+            items = {item.key: item for item in app.play_view(120).items}
+            self.assertFalse(items["renderer-3d"].enabled)
+            self.assertNotIn("compute-hd-note", items)
 
     def test_window_and_scaling_rows_follow_the_output(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

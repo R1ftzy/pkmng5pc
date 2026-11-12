@@ -22,6 +22,8 @@
 #   sh tools/play.sh --native --window-size 3x --scaling fit
 #   sh tools/play.sh --native --window 1280x960   # explicit pixel size
 #   sh tools/play.sh --renderer native        # 3D sink, slice 1 (4:3, 1x)
+#   sh tools/play.sh --layout separate --renderer3d compute --render-scale 3
+#                                             # hi-res 3D (OpenGL 4.3), 1440p-class
 #   sh tools/play.sh --frames 600 --stats     # present 600 frames, print stats, exit
 #   sh tools/play.sh --sav banks/black.sav    # keep a different save file
 #   sh tools/play.sh --no-save                # blank 512 KiB cart, write nothing
@@ -42,12 +44,21 @@
 # Everything else -- guest execution, input, audio, saves, the presented-frame
 # digest -- is the same run either way.
 #
-# --renderer native enables the alpha 3D sink and implies --native; the runner
-# must be built with PKMNG5PC_NATIVE_RENDERER=ON. 3d, 2d and both are debug-only
-# renderer selections, not normal play. Slice 1 renders 4:3 at 256 px and 1x;
-# --aspect 16:9/21:9 or --render-scale above 1 therefore runs the CPU
+# --renderer native enables the alpha Vulkan 3D sink and implies --native; the
+# runner must be built with PKMNG5PC_NATIVE_RENDERER=ON. 3d, 2d and both are
+# debug-only renderer selections, not normal play. Slice 1 renders 4:3 at 256 px
+# and 1x; --aspect 16:9/21:9 or --render-scale above 1 therefore runs the CPU
 # compositor instead of the sink and prints a note, rather than refusing to
 # launch.
+#
+# --renderer3d compute replaces the 3D rasterizer with the vendored melonDS
+# OpenGL 4.3 compute renderer: NDS_INTERNAL_RESOLUTION (1..4) then multiplies
+# the 3D sample density, and above 1x the top screen is presented through the
+# runner's own OpenGL window with the hi-res 3D composited into the 2D stack -
+# so use --layout separate there and drop --native. Its render width must be a
+# 64-multiple (256/320/384/448), so aspect 16:9 (342 px) stays on the faithful
+# renderer. --renderer3d faithful (the default) pins the CPU rasterizer; without
+# it an ambient NDS_3D_RENDERER decides.
 #
 # --window-size sizes each game window once at launch from the aspect and
 # layout (2x of 16:9 stacked is 684x768); --window takes explicit pixels
@@ -78,6 +89,7 @@ layout=stacked
 native=0
 gpu=${PKMNG5PC_GPU:-auto}
 renderer=off
+renderer3d=faithful
 aspect=4:3
 render_scale=
 aspect_set=0
@@ -105,6 +117,7 @@ while [ $# -gt 0 ]; do
     --native)   native=1; shift ;;
     --gpu)      gpu=$2; shift 2 ;;
     --renderer) renderer=$2; shift 2 ;;
+    --renderer3d) renderer3d=$2; shift 2 ;;
     --aspect)   aspect=$2; aspect_set=1; shift 2 ;;
     --render-scale) render_scale=$2; render_scale_set=1; shift 2 ;;
     --window-size) window_size=$2; shift 2 ;;
@@ -133,9 +146,24 @@ case $renderer in
 esac
 case $aspect in
   4:3)  aspect_width=256 ;;
+  5:3)  aspect_width=320 ;;
   16:9) aspect_width=342 ;;
+  2:1)  aspect_width=384 ;;
   21:9) aspect_width=448 ;;
-  *) fail "--aspect must be 4:3, 16:9 or 21:9." ;;
+  *) fail "--aspect must be 4:3, 5:3, 16:9, 2:1 or 21:9." ;;
+esac
+case $renderer3d in
+  faithful) ;;
+  compute)
+    if [ "$renderer" != off ]; then
+      fail "--renderer and --renderer3d compute are exclusive: the Vulkan 3D sink and the OpenGL compute renderer both replace the 3D rasterizer."
+    fi
+    if [ "$aspect" = 16:9 ]; then
+      renderer3d=faithful
+      echo "play: the compute renderer supports 256/320/384/448 px widths only; aspect 16:9 uses the faithful renderer" >&2
+    fi
+    ;;
+  *) fail "--renderer3d must be faithful or compute." ;;
 esac
 if [ "$render_scale_set" -eq 1 ]; then
   case $render_scale in
@@ -174,11 +202,17 @@ case $scaling in
   *) fail "--scaling must be integer or fit." ;;
 esac
 if [ "$renderer_on" -eq 1 ]; then native=1; fi
-if [ "$native" -eq 0 ] && [ "$aspect_set" -eq 1 ] && [ "$aspect" != "4:3" ]; then
-  echo "play: --aspect applies to --native; ignored on the SDL path" >&2
+if [ "$compute_hd" = true ] && [ "$native" -eq 1 ] && [ "$render_scale_set" -eq 1 ] &&
+   [ "$render_scale" -gt 1 ]; then
+  fail "--native and --renderer3d compute cannot both present: the hi-res image goes to the runner's own OpenGL window. Drop --native, or keep --native and 1x."
 fi
 if [ "$renderer_on" -eq 0 ] && [ "$render_scale_set" -eq 1 ]; then
-  echo "play: --render-scale applies to --renderer; ignored while the renderer is off" >&2
+  echo "play: --render-scale applies to --renderer or --renderer3d compute; ignored on the faithful soft renderer" >&2
+fi
+compute_hd=false
+[ "$renderer3d" = compute ] && compute_hd=true
+if [ "$renderer_on" -eq 0 ] && [ "$compute_hd" = false ] && [ "$aspect_set" -eq 1 ] && [ "$aspect" != "4:3" ]; then
+  echo "play: --aspect applies to --native or --renderer3d compute; ignored on the SDL path" >&2
 fi
 if [ "$native" -eq 0 ] && { [ "$window_set" -eq 1 ] || [ "$window_size" != native ]; }; then
   echo "play: --window-size/--window apply to --native; ignored on the SDL path" >&2
@@ -289,17 +323,29 @@ if [ "$native" -eq 1 ]; then
   PKMNG5PC_PRESENT=native
   PKMNG5PC_GPU=$gpu
   PKMNG5PC_PRESENT_SCALING=$scaling
-  PKMNG5PC_WIDESCREEN_SUPPORTED=top
-  export PKMNG5PC_PRESENT PKMNG5PC_GPU PKMNG5PC_PRESENT_SCALING PKMNG5PC_WIDESCREEN_SUPPORTED
+  export PKMNG5PC_PRESENT PKMNG5PC_GPU PKMNG5PC_PRESENT_SCALING
   if [ -n "$window_text" ]; then
     PKMNG5PC_WINDOW_SIZE=$window_text
     export PKMNG5PC_WINDOW_SIZE
   fi
+fi
+if [ "$native" -eq 1 ] || [ "$compute_hd" = true ]; then
+  PKMNG5PC_WIDESCREEN_SUPPORTED=top
+  export PKMNG5PC_WIDESCREEN_SUPPORTED
   if [ "$aspect" != "4:3" ]; then
     NDS_ADAPTIVE_WIDESCREEN=top
     NDS_WIDESCREEN_WIDTH=$aspect_width
     export NDS_ADAPTIVE_WIDESCREEN NDS_WIDESCREEN_WIDTH
   fi
+fi
+# Pin the 3D rasterizer: with the compute renderer built, the runner's auto
+# policy would silently prefer it. The caller's own NDS_3D_RENDERER wins.
+if [ "$compute_hd" = true ]; then
+  NDS_3D_RENDERER=compute
+  export NDS_3D_RENDERER
+elif [ -z "${NDS_3D_RENDERER:-}" ]; then
+  NDS_3D_RENDERER=soft
+  export NDS_3D_RENDERER
 fi
 if [ "$renderer_on" -eq 1 ]; then
   PKMNG5PC_RENDERER=$renderer
@@ -308,10 +354,10 @@ if [ "$renderer_on" -eq 1 ]; then
     PKMNG5PC_TITLE_ID=$title_id
     export PKMNG5PC_TITLE_ID
   fi
-  if [ "$render_scale_set" -eq 1 ]; then
-    NDS_INTERNAL_RESOLUTION=$render_scale
-    export NDS_INTERNAL_RESOLUTION
-  fi
+fi
+if [ "$render_scale_set" -eq 1 ]; then
+  NDS_INTERNAL_RESOLUTION=$render_scale
+  export NDS_INTERNAL_RESOLUTION
 fi
 
 echo "runner: $runner"
@@ -319,10 +365,16 @@ echo "rom:    $rom"
 echo "banks:  $banks"
 if [ "$native" -eq 1 ]; then
   echo "present: native (render/ - Vulkan, $layout, gpu=$gpu)"
-  if [ -n "$window_text" ]; then window_label=$window_text; else window_label='runner default'; fi
-  echo "output: aspect $aspect, window $window_label, $scaling scaling"
+elif [ "$compute_hd" = true ]; then
+  scale_text=
+  if [ "$render_scale_set" -eq 1 ] && [ "$render_scale" -gt 1 ]; then scale_text=", internal ${render_scale}x"; else scale_text=', internal 1x'; fi
+  echo "present: runner OpenGL direct (compute renderer$scale_text, $layout)"
 else
   echo "present: runner SDL blit ($layout)"
+fi
+if [ "$native" -eq 1 ]; then
+  if [ -n "$window_text" ]; then window_label=$window_text; else window_label='runner default'; fi
+  echo "output: aspect $aspect, window $window_label, $scaling scaling"
 fi
 if [ "$renderer_on" -eq 1 ]; then
   scale_text=
@@ -332,6 +384,8 @@ if [ "$renderer_on" -eq 1 ]; then
   debug_text=
   case $renderer in 3d|2d|both) debug_text=" (debug)" ;; esac
   echo "render: $renderer$debug_text (aspect $aspect, source width $aspect_width$scale_text$title_text)"
+elif [ "$compute_hd" = true ]; then
+  echo "render: OpenGL 4.3 compute (aspect $aspect, source width $aspect_width)"
 elif [ "$native" -eq 1 ]; then
   echo "render: native present, CPU compositor (aspect $aspect, source width $aspect_width)"
 else

@@ -284,6 +284,54 @@ class NativeRenderCommandTests(unittest.TestCase):
         self.assertIn("1x", command.note)
         self.assertIn("CPU compositor", command.note)
 
+    def test_compute_lane_passes_its_flags(self) -> None:
+        command, _ = self.make_command(
+            renderer_3d="compute", render_scale=3, render_native=True, play_native=True
+        )
+        renderer3d_flag = "-Renderer3D" if os.name == "nt" else "--renderer3d"
+        render_scale_flag = "-RenderScale" if os.name == "nt" else "--render-scale"
+        self.assertEqual(command.argv[command.argv.index(renderer3d_flag) + 1], "compute")
+        self.assertEqual(command.argv[command.argv.index(render_scale_flag) + 1], "3")
+        self.assertNotIn("-Renderer", command.argv)
+        self.assertNotIn("--renderer", command.argv)
+        self.assertIn("Compute renderer", command.note)
+
+    def test_compute_hd_moves_to_the_opengl_window(self) -> None:
+        command, _ = self.make_command(renderer_3d="compute", render_scale=4)
+        layout_flag = "-Layout" if os.name == "nt" else "--layout"
+        self.assertEqual(command.argv[command.argv.index(layout_flag) + 1], "separate")
+        self.assertNotIn("-Native", command.argv)
+        self.assertNotIn("--native", command.argv)
+        self.assertIn("OpenGL window", command.note)
+        self.assertIn("separate", command.note)
+
+    def test_compute_at_1x_keeps_native_present(self) -> None:
+        command, _ = self.make_command(renderer_3d="compute", render_scale=1)
+        self.assertIn("-Native" if os.name == "nt" else "--native", command.argv)
+        self.assertNotIn("-Layout", command.argv)
+        self.assertNotIn("--layout", command.argv)
+
+    def test_compute_16_by_9_falls_back_to_faithful(self) -> None:
+        command, _ = self.make_command(renderer_3d="compute", render_aspect="16:9")
+        self.assertNotIn("-Renderer3D", command.argv)
+        self.assertNotIn("--renderer3d", command.argv)
+        self.assertIn("-Native" if os.name == "nt" else "--native", command.argv)
+
+    def test_compute_replaces_the_vulkan_sink(self) -> None:
+        command, _ = self.make_command(renderer_3d="compute", render_native=True)
+        self.assertNotIn("-Renderer", command.argv)
+        self.assertNotIn("--renderer", command.argv)
+        self.assertIn("replaces the Vulkan 3D sink", command.note)
+
+    def test_compatibility_mode_forces_the_faithful_renderer(self) -> None:
+        command, _ = self.make_command(
+            renderer_3d="compute", render_scale=4, compatibility_mode=True
+        )
+        self.assertNotIn("-Renderer3D", command.argv)
+        self.assertNotIn("--renderer3d", command.argv)
+        for flag in ("-Native", "--native"):
+            self.assertNotIn(flag, command.argv)
+
     def test_window_preset_follows_the_aspect(self) -> None:
         command, _ = self.make_command(
             render_native=False,

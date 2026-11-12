@@ -192,6 +192,26 @@ master toggle is inverted into an escape hatch:
 - The sink's 4:3-at-1x limit no longer blocks the output options: choosing
   another aspect or a scale above 1 launches the CPU compositor with a note
   instead of refusing to start, and the TUI says so before Play.
+- **The hi-res 3D lane is the vendored OpenGL compute renderer, enabled.**
+  `Runner.cmake` used to force `NDS_ENABLE_COMPUTE_RENDERER=OFF`; it now follows
+  `PKMNG5PC_ENABLE_COMPUTE_RENDERER` (default ON). With `--renderer3d compute`,
+  the melonDS OpenGL 4.3 compute renderer rasterizes the 3D scene at 1..4 times
+  native sample density and, above 1x, the runner's own GL direct presenter
+  composites the hi-res 3D surface into the `NdsGpu2dHdFrame` 2D stack — this is
+  the exact `ComputeHost.cpp` algorithm this ADR planned to port to Vulkan
+  (decision 6). It needs the separate layout and no native present, and its
+  raster width must be a 64-multiple (256/320/384/448), so 16:9 stays a
+  faithful-path width. The Vulkan HD port (slices 2+) remains the plan; the
+  compute lane ships the user-visible capability now.
+- **Edge objects: the guest still culls for 4:3.** Both wide modes — the
+  host-side clip-X rescale measured above and `GuestWideProjection` — only widen
+  where submitted geometry lands. Geometry the game's own CPU frustum culling
+  never submitted is absent from the band. The fix is the per-title guest
+  patch: `runner/src/title_patches.cpp` already does this for Metroid Prime
+  Hunters (three aspect words in `Camera_SetupProjection`/`Rooms_TraverseAndDraw`
+  widened in place with neighbour verification) and SM64DS (frustum plane
+  renormalization). The Gen 5 equivalent — finding Black's projection/culling
+  sites in the banked ARM9 — is the outstanding RE step.
 
 ## Considered and rejected
 
