@@ -91,7 +91,27 @@ surface stands ready for V2.
 Gate: `verify` at scale 1 stays 0-diff; at 2x/4x the downsampled frame differs
 from soft only inside the filter footprint; frame digests at scale 1 unchanged.
 
-### Slice V2 — Vulkan HD composite (the real 1440p path)
+### Slice V2 — Vulkan HD composite (SHIPPED 2026-11-12, minimal)
+
+**Status: implemented and running.** The presenter gains `present_hd()`: a
+compute composite (`render/src/present_hd.comp`, a faithful port of the
+OpenGL lane's `ComputeHost.cpp` fragment math — blend16/blend5, the
+(priority, order) 3D insert, BLDCNT effects, master brightness) that blends
+the sink's hi-res `FinalFB` surface into the no-3D stack
+(`NdsGpu2dHdFrame`, emitted by the runner once
+`pkmng5pc_ds_render_consumes_hd()` reports a consumer) at the placed
+rectangle's own resolution, then blits it into the swapchain. The rectangle
+uses fit scaling, so the hi-res detail is visible; the bottom band and the
+bottom window come from the faithful 1x framebuffer (no 3D there, so the
+2D stays pixel-crisp — the V1 blur lesson, fixed where it belongs).
+
+`HdComposite` carries zoom/pan (push constants already honour them);
+native_present defaults zoom 1.0 — the env wiring, the separate-layout HD
+band, free resolution from the window size, and a pixel-exact A/B against
+the OpenGL lane (the window-capture harness is DPI-unstable between runs)
+are the remaining follow-ups. Performance at high scale is still raster-bound
+(N² work, serialized fence) — the async-compute and readback-elimination
+items below are where the 4060-class headroom lives.
 
 The sink exports its hi-res color image (and attr); the presenter learns a
 graphics pipeline (the first shader in `render/` — ADR 0005's shader-free

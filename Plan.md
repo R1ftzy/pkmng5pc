@@ -602,6 +602,24 @@ Do not vendor or copy their content; cite and reimplement.
 
 Newest first. Keep entries short; details and evidence live in `re/notes/`.
 
+- **2026-11-12 (slice V2 ships: the Vulkan presenter composites the hi-res 3D
+  on the GPU — the 8x corruption explained, and the 4060 answer)** — the
+  user's 8x screenshot (blocky mosaics and a white smear over the 3D) was the
+  reverted box-filter build; on the current tree a driven overworld capture at
+  8x is clean, and the verify harness is bit-identical to the CPU renderer at
+  every scale. The GPU question: `auto` resolves to the 4060 on the Vulkan
+  lane (verified — both adapters enumerate; `-Gpu discrete` pins it), while
+  the OpenGL compute lane runs on the iGPU because OpenGL has no adapter
+  choice here. And the main event: **slice V2 is in** — the presenter gained
+  `present_hd()`, a compute composite ported from the GL lane's blend math,
+  which blends the sink's hi-res surface into the no-3D stack at the placed
+  rectangle's own resolution (fit placement, so the density is visible; the
+  2D bands come from the faithful framebuffer and stay pixel-crisp). Runs at
+  ~95 fps with the guest digest unchanged. Follow-ups recorded: zoom/pan env
+  wiring (the push-constant plumbing is in), separate-layout HD band,
+  window-derived free resolution, and a pixel-exact composite A/B against the
+  GL lane (the PrintWindow harness is DPI-unstable between runs).
+
 - **2026-11-12 (slice V1 amended: the blur verdict, scales 1..8, and the V2
   gate is now the visible path)** — the user's report settled slice V1's open
   question: the box-filter SSAA readback blurred everything — averaging the

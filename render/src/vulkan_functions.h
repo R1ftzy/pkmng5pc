@@ -59,6 +59,7 @@ namespace pkmn::render::vk {
     X(vkEndCommandBuffer)                                                                          \
     X(vkResetCommandBuffer)                                                                        \
     X(vkCmdPipelineBarrier)                                                                        \
+    X(vkCmdCopyBuffer)                                                                             \
     X(vkCmdCopyBufferToImage)                                                                      \
     X(vkCmdCopyImageToBuffer)                                                                      \
     X(vkCmdBlitImage)                                                                              \

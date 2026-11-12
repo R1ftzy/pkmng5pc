@@ -7,6 +7,7 @@
 #include <SDL3/SDL.h>
 
 #include <algorithm>
+#include <array>
 #include <cstdio>
 #include <cstring>
 #include <memory>
@@ -14,6 +15,10 @@
 
 #include "vulkan_context.h"
 #include "vulkan_functions.h"
+
+// The HD composite shader, compiled at build time (render/src/present_hd.comp).
+extern const unsigned char pkmn_present_hd_spv[];
+extern const std::size_t pkmn_present_hd_spv_size;
 
 namespace pkmn::render {
 namespace {
@@ -32,9 +37,44 @@ namespace {
     struct CanvasUpload {
         StagingBuffer staging;
         VkImage image = VK_NULL_HANDLE;
+        VkImageView view = VK_NULL_HANDLE;
         VkDeviceMemory image_memory = VK_NULL_HANDLE;
         uint32_t width = 0;
         uint32_t height = 0;
+    };
+
+    // One SSBO plane of the HD composite (top/below stack, fallback): staged
+    // per frame, read by the composite shader.
+    struct HdPlane {
+        StagingBuffer staging;
+        VkBuffer buffer = VK_NULL_HANDLE;
+        VkDeviceMemory memory = VK_NULL_HANDLE;
+        VkDeviceSize bytes = 0;
+        uint32_t width = 0;
+    };
+
+    // Mirrors the push-constant block in render/src/present_hd.comp
+    // (std430-style packing; keep the order in sync).
+    struct HdPush {
+        uint32_t canvas_width;
+        uint32_t canvas_height;
+        uint32_t hd_width;
+        uint32_t fallback_width;
+        uint32_t fallback_offset;
+        uint32_t content_row0;
+        uint32_t content_rows;
+        uint32_t scale3d;
+        uint32_t render_xpos;
+        uint32_t priority3d;
+        uint32_t order3d;
+        uint32_t bldcnt;
+        uint32_t eva;
+        uint32_t evb;
+        uint32_t evy;
+        uint32_t master_bright;
+        float zoom;
+        float pan_x;
+        float pan_y;
     };
 
     // One device, one output surface, one upload path. See backend.h for the
@@ -84,6 +124,7 @@ namespace {
             }
             destroy_swapchain();
             destroy_uploads();
+            destroy_hd();
             const VkDevice dev = device();
             for (uint32_t i = 0; i < kFramesInFlight; ++i) {
                 if (image_available_[i]) {
@@ -508,10 +549,20 @@ namespace {
             info.arrayLayers = 1;
             info.samples = VK_SAMPLE_COUNT_1_BIT;
             info.tiling = VK_IMAGE_TILING_OPTIMAL;
-            info.usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+            info.usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT
+                | VK_IMAGE_USAGE_STORAGE_BIT;
             info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
             info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
             if (vkCreateImage(device(), &info, nullptr, &upload.image) != VK_SUCCESS) {
+                return false;
+            }
+            VkImageViewCreateInfo view {};
+            view.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+            view.image = upload.image;
+            view.viewType = VK_IMAGE_VIEW_TYPE_2D;
+            view.format = VK_FORMAT_B8G8R8A8_UNORM;
+            view.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+            if (vkCreateImageView(device(), &view, nullptr, &upload.view) != VK_SUCCESS) {
                 return false;
             }
 
@@ -563,6 +614,10 @@ namespace {
         void destroy_upload(CanvasUpload& upload)
         {
             destroy_staging(upload.staging);
+            if (upload.view) {
+                vkDestroyImageView(device(), upload.view, nullptr);
+                upload.view = VK_NULL_HANDLE;
+            }
             if (upload.image) {
                 vkDestroyImage(device(), upload.image, nullptr);
                 upload.image = VK_NULL_HANDLE;
@@ -580,6 +635,437 @@ namespace {
             for (CanvasUpload& upload : uploads_) {
                 destroy_upload(upload);
             }
+        }
+
+        // ---- HD composite (ADR 0008, slice V2) --------------------------------
+
+        bool create_hd_plane(HdPlane& plane, uint32_t width)
+        {
+            destroy_hd_plane(plane);
+            plane.width = width;
+            plane.bytes = static_cast<VkDeviceSize>(width) * 192 * 2 * 4;
+            VkBufferCreateInfo info {};
+            info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+            info.size = plane.bytes;
+            info.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+            info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+            if (vkCreateBuffer(device(), &info, nullptr, &plane.buffer) != VK_SUCCESS) {
+                return false;
+            }
+            VkMemoryRequirements req {};
+            vkGetBufferMemoryRequirements(device(), plane.buffer, &req);
+            const uint32_t type = context_->find_memory_type(
+                req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+            if (type == UINT32_MAX) {
+                return false;
+            }
+            VkMemoryAllocateInfo alloc {};
+            alloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+            alloc.allocationSize = req.size;
+            alloc.memoryTypeIndex = type;
+            if (vkAllocateMemory(device(), &alloc, nullptr, &plane.memory) != VK_SUCCESS) {
+                return false;
+            }
+            if (vkBindBufferMemory(device(), plane.buffer, plane.memory, 0) != VK_SUCCESS) {
+                return false;
+            }
+            if (!create_staging(plane.staging, plane.bytes)) {
+                return false;
+            }
+            return true;
+        }
+
+        void destroy_hd_plane(HdPlane& plane)
+        {
+            destroy_staging(plane.staging);
+            if (plane.buffer) {
+                vkDestroyBuffer(device(), plane.buffer, nullptr);
+                plane.buffer = VK_NULL_HANDLE;
+            }
+            if (plane.memory) {
+                vkFreeMemory(device(), plane.memory, nullptr);
+                plane.memory = VK_NULL_HANDLE;
+            }
+            plane.width = 0;
+            plane.bytes = 0;
+        }
+
+        void destroy_hd()
+        {
+            if (!device()) {
+                return;
+            }
+            destroy_hd_plane(hd_top_);
+            destroy_hd_plane(hd_below_);
+            destroy_hd_plane(hd_fallback_);
+            if (hd_pool_ != VK_NULL_HANDLE) {
+                vkDestroyDescriptorPool(device(), hd_pool_, nullptr);
+                hd_pool_ = VK_NULL_HANDLE;
+            }
+            hd_set_ = VK_NULL_HANDLE;
+            if (hd_desc_layout_ != VK_NULL_HANDLE) {
+                vkDestroyDescriptorSetLayout(device(), hd_desc_layout_, nullptr);
+                hd_desc_layout_ = VK_NULL_HANDLE;
+            }
+            if (hd_pipeline_layout_ != VK_NULL_HANDLE) {
+                vkDestroyPipelineLayout(device(), hd_pipeline_layout_, nullptr);
+                hd_pipeline_layout_ = VK_NULL_HANDLE;
+            }
+            if (hd_pipeline_ != VK_NULL_HANDLE) {
+                vkDestroyPipeline(device(), hd_pipeline_, nullptr);
+                hd_pipeline_ = VK_NULL_HANDLE;
+            }
+        }
+
+        bool ensure_hd_pipeline()
+        {
+            if (hd_pipeline_ != VK_NULL_HANDLE) {
+                return true;
+            }
+            VkShaderModuleCreateInfo module_info { VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO };
+            module_info.codeSize = pkmn_present_hd_spv_size;
+            module_info.pCode = reinterpret_cast<const uint32_t*>(pkmn_present_hd_spv);
+            VkShaderModule module = VK_NULL_HANDLE;
+            if (vkCreateShaderModule(device(), &module_info, nullptr, &module) != VK_SUCCESS) {
+                std::fprintf(stderr, "[render] HD composite shader module failed\n");
+                return false;
+            }
+
+            std::array<VkDescriptorSetLayoutBinding, 5> bindings {};
+            for (uint32_t i = 0; i < 2; ++i) {
+                bindings[i].binding = i;
+                bindings[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+                bindings[i].descriptorCount = 1;
+                bindings[i].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+            }
+            for (uint32_t i = 2; i < bindings.size(); ++i) {
+                bindings[i].binding = i;
+                bindings[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+                bindings[i].descriptorCount = 1;
+                bindings[i].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+            }
+            VkDescriptorSetLayoutCreateInfo layout_info {};
+            layout_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+            layout_info.bindingCount = static_cast<uint32_t>(bindings.size());
+            layout_info.pBindings = bindings.data();
+            if (vkCreateDescriptorSetLayout(device(), &layout_info, nullptr, &hd_desc_layout_)
+                != VK_SUCCESS) {
+                vkDestroyShaderModule(device(), module, nullptr);
+                return false;
+            }
+
+            VkPushConstantRange push {};
+            push.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+            push.offset = 0;
+            push.size = sizeof(HdPush);
+            VkPipelineLayoutCreateInfo pipeline_info {};
+            pipeline_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+            pipeline_info.setLayoutCount = 1;
+            pipeline_info.pSetLayouts = &hd_desc_layout_;
+            pipeline_info.pushConstantRangeCount = 1;
+            pipeline_info.pPushConstantRanges = &push;
+            if (vkCreatePipelineLayout(device(), &pipeline_info, nullptr, &hd_pipeline_layout_)
+                != VK_SUCCESS) {
+                vkDestroyShaderModule(device(), module, nullptr);
+                return false;
+            }
+
+            VkPipelineShaderStageCreateInfo stage {};
+            stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+            stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+            stage.module = module;
+            stage.pName = "main";
+            VkComputePipelineCreateInfo pipeline {};
+            pipeline.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+            pipeline.stage = stage;
+            pipeline.layout = hd_pipeline_layout_;
+            const VkResult result = vkCreateComputePipelines(
+                device(), VK_NULL_HANDLE, 1, &pipeline, nullptr, &hd_pipeline_);
+            vkDestroyShaderModule(device(), module, nullptr);
+            if (result != VK_SUCCESS) {
+                std::fprintf(stderr, "[render] HD composite pipeline failed\n");
+                return false;
+            }
+
+            VkDescriptorPoolSize sizes[2] {};
+            sizes[0] = { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2 };
+            sizes[1] = { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 3 };
+            VkDescriptorPoolCreateInfo pool {};
+            pool.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+            pool.maxSets = 1;
+            pool.poolSizeCount = 2;
+            pool.pPoolSizes = sizes;
+            if (vkCreateDescriptorPool(device(), &pool, nullptr, &hd_pool_) != VK_SUCCESS) {
+                return false;
+            }
+            VkDescriptorSetAllocateInfo alloc {};
+            alloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+            alloc.descriptorPool = hd_pool_;
+            alloc.descriptorSetCount = 1;
+            alloc.pSetLayouts = &hd_desc_layout_;
+            return vkAllocateDescriptorSets(device(), &alloc, &hd_set_) == VK_SUCCESS;
+        }
+
+        bool present_hd(
+            const HdComposite& hd, const Canvas& fallback, const PresentTarget& target) override
+        {
+            if (!device() || swapchain_ == VK_NULL_HANDLE || !hd.valid() || !fallback.data
+                || target.empty()) {
+                return false;
+            }
+            if (static_cast<uint64_t>(target.x) + target.width > extent_.width
+                || static_cast<uint64_t>(target.y) + target.height > extent_.height) {
+                return false;
+            }
+            if (!ensure_hd_pipeline()) {
+                return false;
+            }
+
+            const uint32_t frame = frame_;
+            vkWaitForFences(device(), 1, &in_flight_[frame], VK_TRUE, UINT64_MAX);
+
+            uint32_t image_index = 0;
+            const VkResult acquired = vkAcquireNextImageKHR(device(), swapchain_, UINT64_MAX,
+                image_available_[frame], VK_NULL_HANDLE, &image_index);
+            if (acquired != VK_SUCCESS) {
+                return false;
+            }
+            vkResetFences(device(), 1, &in_flight_[frame]);
+
+            // The composite fills a canvas at the target's own resolution, so
+            // every hi-res sample survives to the window.
+            if (!ensure_upload(frame, target.width, target.height)) {
+                return false;
+            }
+            CanvasUpload& upload = uploads_[frame];
+
+            // HD stack planes: width * 192 * 2 words each (colour, attr).
+            const std::size_t plane_bytes = static_cast<std::size_t>(hd.width) * 192 * 2 * 4;
+            if (hd_top_.width != hd.width) {
+                if (!create_hd_plane(hd_top_, hd.width) || !create_hd_plane(hd_below_, hd.width)) {
+                    return false;
+                }
+            }
+            if (hd_fallback_.width != fallback.width) {
+                if (!create_hd_plane(hd_fallback_, fallback.width)) {
+                    return false;
+                }
+            }
+            const VkDeviceSize fallback_bytes_local
+                = static_cast<VkDeviceSize>(fallback.width) * 192 * 4;
+            std::memcpy(hd_top_.staging.mapped, hd.top, plane_bytes);
+            std::memcpy(hd_below_.staging.mapped, hd.below, plane_bytes);
+            auto* fb_dst = static_cast<uint8_t*>(hd_fallback_.staging.mapped);
+            for (uint32_t y = 0; y < 192; ++y) {
+                std::memcpy(fb_dst + static_cast<std::size_t>(y) * fallback.width * 4,
+                    fallback.data + static_cast<std::size_t>(y) * fallback.pitch,
+                    static_cast<std::size_t>(fallback.width) * 4);
+            }
+
+            VkCommandBuffer cmd = command_buffers_[frame];
+            vkResetCommandBuffer(cmd, 0);
+            VkCommandBufferBeginInfo begin {};
+            begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+            begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+            if (vkBeginCommandBuffer(cmd, &begin) != VK_SUCCESS) {
+                return false;
+            }
+
+            VkMemoryBarrier host_barrier {};
+            host_barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+            host_barrier.srcAccessMask = VK_ACCESS_HOST_WRITE_BIT;
+            host_barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
+                1, &host_barrier, 0, nullptr, 0, nullptr);
+
+            // Staging -> plane buffers.
+            VkBufferCopy plane_copy {};
+            plane_copy.size = plane_bytes;
+            vkCmdCopyBuffer(cmd, hd_top_.staging.buffer, hd_top_.buffer, 1, &plane_copy);
+            vkCmdCopyBuffer(cmd, hd_below_.staging.buffer, hd_below_.buffer, 1, &plane_copy);
+            plane_copy.size = fallback_bytes_local;
+            vkCmdCopyBuffer(cmd, hd_fallback_.staging.buffer, hd_fallback_.buffer, 1, &plane_copy);
+
+            // The upload image is both the composite target and the blit
+            // source; it starts undefined and ends as a transfer source.
+            VkImageMemoryBarrier to_general { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
+            to_general.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            to_general.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+            to_general.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            to_general.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            to_general.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+            to_general.srcAccessMask = 0;
+            to_general.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+            to_general.image = upload.image;
+            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &to_general);
+
+            VkBufferMemoryBarrier to_shader[3] {};
+            for (VkBufferMemoryBarrier& barrier : to_shader) {
+                barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+                barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+                barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+                barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            }
+            to_shader[0].buffer = hd_top_.buffer;
+            to_shader[0].size = plane_bytes;
+            to_shader[1].buffer = hd_below_.buffer;
+            to_shader[1].size = plane_bytes;
+            to_shader[2].buffer = hd_fallback_.buffer;
+            to_shader[2].size = fallback_bytes_local;
+            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 3, to_shader, 0, nullptr);
+
+            // Descriptor writes: the composite target, the foreign hi-res
+            // view and the three planes.
+            VkDescriptorImageInfo canvas_info {};
+            canvas_info.imageView = upload.view;
+            canvas_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+            VkDescriptorImageInfo hires_info {};
+            hires_info.imageView = static_cast<VkImageView>(const_cast<void*>(hd.hires_view));
+            hires_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+            VkDescriptorBufferInfo buffer_info[3] {};
+            buffer_info[0] = { hd_top_.buffer, 0, VK_WHOLE_SIZE };
+            buffer_info[1] = { hd_below_.buffer, 0, VK_WHOLE_SIZE };
+            buffer_info[2] = { hd_fallback_.buffer, 0, VK_WHOLE_SIZE };
+            VkWriteDescriptorSet writes[5] {};
+            writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[0].dstSet = hd_set_;
+            writes[0].dstBinding = 0;
+            writes[0].descriptorCount = 1;
+            writes[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+            writes[0].pImageInfo = &canvas_info;
+            writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[1].dstSet = hd_set_;
+            writes[1].dstBinding = 1;
+            writes[1].descriptorCount = 1;
+            writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+            writes[1].pImageInfo = &hires_info;
+            for (uint32_t i = 0; i < 3; ++i) {
+                writes[2 + i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                writes[2 + i].dstSet = hd_set_;
+                writes[2 + i].dstBinding = 2 + i;
+                writes[2 + i].descriptorCount = 1;
+                writes[2 + i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+                writes[2 + i].pBufferInfo = &buffer_info[i];
+            }
+            vkUpdateDescriptorSets(device(), 5, writes, 0, nullptr);
+
+            HdPush push {};
+            push.canvas_width = target.width;
+            push.canvas_height = target.height;
+            push.hd_width = hd.width;
+            push.fallback_width = fallback.width;
+            push.fallback_offset = hd.fallback_offset;
+            push.content_row0 = hd.content_row0;
+            push.content_rows = hd.content_rows;
+            push.scale3d = hd.scale;
+            push.render_xpos = hd.render_xpos;
+            push.priority3d = hd.priority_3d;
+            push.order3d = hd.order_3d;
+            push.bldcnt = hd.bldcnt;
+            push.eva = hd.eva;
+            push.evb = hd.evb;
+            push.evy = hd.evy;
+            push.master_bright = hd.master_bright;
+            push.zoom = hd.zoom;
+            push.pan_x = hd.pan_x;
+            push.pan_y = hd.pan_y;
+
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, hd_pipeline_);
+            vkCmdPushConstants(
+                cmd, hd_pipeline_layout_, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push), &push);
+            vkCmdDispatch(cmd, (target.width + 7) / 8, (target.height + 7) / 8, 1);
+
+            VkImageMemoryBarrier canvas_ready = to_general;
+            canvas_ready.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+            canvas_ready.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+            canvas_ready.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+            canvas_ready.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &canvas_ready);
+
+            // From here the path is identical to present(): clear the
+            // swapchain, blit the canvas into the placed rectangle, present.
+            VkImageMemoryBarrier to_transfer { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
+            to_transfer.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            to_transfer.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            to_transfer.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            to_transfer.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            to_transfer.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+            to_transfer.srcAccessMask = 0;
+            to_transfer.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            to_transfer.image = images_[image_index];
+            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &to_transfer);
+
+            const uint8_t letterbox_b = static_cast<uint8_t>(kLetterboxBgra & 0xFFu);
+            const uint8_t letterbox_g = static_cast<uint8_t>((kLetterboxBgra >> 8) & 0xFFu);
+            const uint8_t letterbox_r = static_cast<uint8_t>((kLetterboxBgra >> 16) & 0xFFu);
+            VkClearColorValue clear {};
+            clear.float32[0] = static_cast<float>(letterbox_r) / 255.0f;
+            clear.float32[1] = static_cast<float>(letterbox_g) / 255.0f;
+            clear.float32[2] = static_cast<float>(letterbox_b) / 255.0f;
+            clear.float32[3] = 1.0f;
+            const VkImageSubresourceRange range { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+            vkCmdClearColorImage(
+                cmd, images_[image_index], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &clear, 1, &range);
+
+            VkImageBlit blit {};
+            blit.srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+            blit.srcOffsets[0] = { 0, 0, 0 };
+            blit.srcOffsets[1]
+                = { static_cast<int32_t>(target.width), static_cast<int32_t>(target.height), 1 };
+            blit.dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+            blit.dstOffsets[0]
+                = { static_cast<int32_t>(target.x), static_cast<int32_t>(target.y), 0 };
+            blit.dstOffsets[1] = { static_cast<int32_t>(target.x + target.width),
+                static_cast<int32_t>(target.y + target.height), 1 };
+            vkCmdBlitImage(cmd, upload.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                images_[image_index], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit,
+                VK_FILTER_NEAREST);
+
+            VkImageMemoryBarrier to_present = to_transfer;
+            to_present.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            to_present.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+            to_present.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            to_present.dstAccessMask = 0;
+            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0, nullptr, 1, &to_present);
+
+            if (vkEndCommandBuffer(cmd) != VK_SUCCESS) {
+                return false;
+            }
+
+            VkSubmitInfo submit {};
+            submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+            const VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+            submit.waitSemaphoreCount = 1;
+            submit.pWaitSemaphores = &image_available_[frame];
+            submit.pWaitDstStageMask = &wait_stage;
+            submit.commandBufferCount = 1;
+            submit.pCommandBuffers = &cmd;
+            submit.signalSemaphoreCount = 1;
+            submit.pSignalSemaphores = &render_finished_[frame];
+            if (vkQueueSubmit(queue(), 1, &submit, in_flight_[frame]) != VK_SUCCESS) {
+                return false;
+            }
+
+            VkPresentInfoKHR present_info {};
+            present_info.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+            present_info.waitSemaphoreCount = 1;
+            present_info.pWaitSemaphores = &render_finished_[frame];
+            present_info.swapchainCount = 1;
+            present_info.pSwapchains = &swapchain_;
+            present_info.pImageIndices = &image_index;
+            const VkResult presented = vkQueuePresentKHR(queue(), &present_info);
+            if (presented != VK_SUCCESS) {
+                return false;
+            }
+
+            frame_ = (frame_ + 1) % kFramesInFlight;
+            return true;
         }
 
         VkSurfaceKHR surface() const { return context_ ? context_->surface() : VK_NULL_HANDLE; }
@@ -607,6 +1093,16 @@ namespace {
         VkFence in_flight_[kFramesInFlight] {};
         uint32_t frame_ = 0;
         CanvasUpload uploads_[kFramesInFlight];
+
+        // HD composite state (ADR 0008, slice V2).
+        HdPlane hd_top_;
+        HdPlane hd_below_;
+        HdPlane hd_fallback_;
+        VkDescriptorSetLayout hd_desc_layout_ = VK_NULL_HANDLE;
+        VkPipelineLayout hd_pipeline_layout_ = VK_NULL_HANDLE;
+        VkPipeline hd_pipeline_ = VK_NULL_HANDLE;
+        VkDescriptorPool hd_pool_ = VK_NULL_HANDLE;
+        VkDescriptorSet hd_set_ = VK_NULL_HANDLE;
     };
 
 } // namespace

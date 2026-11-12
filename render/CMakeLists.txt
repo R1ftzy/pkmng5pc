@@ -138,6 +138,15 @@ if(PKMNG5PC_NATIVE_RENDERER)
         PRIVATE Vulkan::Headers pkmn_warnings)
 
     set(PKMNG5PC_SHADER_SOURCES "")
+    # The presenter's HD composite shader (ADR 0008, slice V2) is embedded
+    # first, then the DS shaders, so each target gets its own blob set
+    # (pkmng5pc_add_shader always appends to PKMNG5PC_SHADER_SOURCES).
+    pkmng5pc_add_shader(
+        SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/src/present_hd.comp"
+        STAGE comp
+        SYMBOL "pkmn_present_hd_spv")
+    set(PKMNG5PC_PRESENTER_SHADER_SOURCES "${PKMNG5PC_SHADER_SOURCES}")
+    set(PKMNG5PC_SHADER_SOURCES "")
     foreach(_name IN LISTS _ds_shader_names)
         pkmng5pc_add_shader(
             SOURCE "${_ds_shader_dir}/${_name}.comp"
@@ -145,6 +154,7 @@ if(PKMNG5PC_NATIVE_RENDERER)
             SYMBOL "pkmng5pc_${_name}_spv")
     endforeach()
     target_sources(pkmn_render_ds PRIVATE ${PKMNG5PC_SHADER_SOURCES})
+    target_sources(pkmn_render PRIVATE ${PKMNG5PC_PRESENTER_SHADER_SOURCES})
 
     add_library(pkmn::render_ds ALIAS pkmn_render_ds)
 endif()
@@ -154,6 +164,8 @@ endif()
 # because it is runner-specific: the seam library above neither knows nor cares
 # who calls it. `cmake/Runner.cmake` links this into `nds_runner`.
 add_library(pkmn_render_runner_bridge STATIC src/native_present.cpp)
+target_include_directories(pkmn_render_runner_bridge PRIVATE
+    "${CMAKE_SOURCE_DIR}/third_party/ndsrecomp/runner/src")
 target_link_libraries(pkmn_render_runner_bridge
     PUBLIC pkmn::render
     PRIVATE SDL3::SDL3 pkmn_warnings)

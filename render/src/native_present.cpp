@@ -4,7 +4,10 @@
 
 #include "pkmn/render/native_present.h"
 
+#include "gpu2d.h"
 #include "pkmn/render/backend.h"
+extern "C" int pkmng5pc_ds_render_hires_color(
+    void** view, unsigned* width, unsigned* height, unsigned* scale);
 
 #include <SDL3/SDL.h>
 
@@ -19,6 +22,7 @@
 namespace {
 
 using pkmn::render::BackendKind;
+using pkmn::render::Canvas;
 using pkmn::render::CanvasBuffer;
 using pkmn::render::Config;
 using pkmn::render::Presenter;
@@ -259,6 +263,53 @@ extern "C" int pkmng5pc_native_present_frame(
     const StackPlacement stack
         = pkmn::render::stack_placement(presented_top_width, presented_bottom_width,
             ScreenLayout::Stacked, outputs[0].width, outputs[0].height, configured_scaling());
+
+    // HD composite (ADR 0008, slice V2): when the sink rasterizes above 1x
+    // and the compositor emitted the no-3D stack, blend the hi-res surface at
+    // the placed rectangle's own resolution instead of presenting the 1x
+    // canvas. The rectangle uses fit scaling so the extra density is visible.
+    void* hires_view = nullptr;
+    unsigned hires_w = 0;
+    unsigned hires_h = 0;
+    unsigned hires_scale = 0;
+    NdsGpu2dHdFrame hd {};
+    const bool hd_ok = pkmng5pc_ds_render_hires_color(&hires_view, &hires_w, &hires_h, &hires_scale)
+        && nds_gpu2d_hd_frame(&hd) && hd.top_pixels && hd.below_pixels && hd.width == native_width
+        && hires_scale > 1;
+    if (hd_ok) {
+        const StackPlacement fit = pkmn::render::stack_placement(presented_top_width,
+            presented_bottom_width, ScreenLayout::Stacked, outputs[0].width, outputs[0].height,
+            pkmn::render::Scaling::Fit);
+
+        pkmn::render::HdComposite input {};
+        input.hires_view = hires_view;
+        input.hires_width = hires_w;
+        input.hires_height = hires_h;
+        input.scale = hires_scale;
+        input.top = hd.top_pixels;
+        input.below = hd.below_pixels;
+        input.width = hd.width;
+        input.fallback_width = presented_bottom_width;
+        input.fallback_offset = (native_width - presented_bottom_width) / 2;
+        input.content_row0 = 0;
+        input.content_rows = pkmn::render::kScreenHeight * 2;
+        input.priority_3d = hd.priority_3d;
+        input.order_3d = hd.order_3d;
+        input.bldcnt = hd.bldcnt;
+        input.eva = hd.eva;
+        input.evb = hd.evb;
+        input.evy = hd.evy;
+        input.master_bright = hd.master_bright;
+
+        const Canvas fallback { reinterpret_cast<const uint8_t*>(bottom), presented_bottom_width,
+            pkmn::render::kScreenHeight, presented_bottom_width * 4 };
+        if (outputs[0].presenter->present_hd(
+                input, fallback, PresentTarget { fit.x, fit.y, fit.width, fit.height })) {
+            return 1;
+        }
+        // Composite failed: fall through to the faithful canvas path below.
+    }
+
     present_one(0, PresentTarget { stack.x, stack.y, stack.width, stack.height });
     return 1;
 }

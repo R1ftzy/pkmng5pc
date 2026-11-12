@@ -1,0 +1,222 @@
+#version 450
+// HD composite (ADR 0008, slice V2): blend the hi-res 3D surface into the
+// resolved 2D stack on the GPU, at the placed rectangle's own resolution.
+// Ported from the OpenGL compute lane's presenter fragment shader
+// (runner/src/melonds_compute/ComputeHost.cpp): the blend rules, the 3D layer
+// insertion and the master-bright step are the same math, in (B, G, R) order.
+
+layout (local_size_x = 8, local_size_y = 8) in;
+
+layout (set = 0, binding = 0, rgba8) writeonly uniform image2D OutCanvas;
+// The sink's hi-res color surface: channels normalized by 63/63/63/31; .r
+// carries the DS red channel (LowResFB stores red in byte 2, hence the bgr
+// swizzle below).
+layout (set = 0, binding = 1, rgba8) readonly uniform image2D Tex3dHi;
+// The resolved 2D stack with the 3D layer removed (NdsGpu2dHdFrame): one
+// uvec2 per 1x pixel - colour (B,G,R in bytes 0..2, polygon id in the high
+// bits) and BLDCNT target | effects | alpha | priority | order.
+layout (set = 0, binding = 2) readonly buffer TopPlane { uint TopPixels[]; };
+layout (set = 0, binding = 3) readonly buffer BelowPlane { uint BelowPixels[]; };
+// The faithful bottom-screen framebuffer (no 3D layer), nearest-sampled.
+layout (set = 0, binding = 4) readonly buffer FallbackPlane { uint FallbackPixels[]; };
+
+layout (push_constant) uniform Push {
+    uvec2 canvas_size;   // composite canvas (the placed rectangle), output px
+    uint hd_width;       // 1x width of the top band and the HD stack
+    uint fallback_width; // 1x width of the bottom-screen framebuffer
+    uint fallback_offset; // bottom band's left edge within the 1x stack
+    uint content_row0;   // first 1x DS row this canvas shows (0 or 192)
+    uint content_rows;   // 1x DS rows this canvas shows (192 or 384)
+    uint scale3d;
+    uint render_xpos;
+    uint priority3d;
+    uint order3d;
+    uint bldcnt;
+    uint eva;
+    uint evb;
+    uint evy;
+    uint master_bright;
+    float zoom;          // >= 1; 1.0 = the full content fits the rectangle
+    vec2 pan;            // visible-region origin, 1x DS pixels
+} pc;
+
+uvec3 blend16(uvec3 a, uvec3 b, uint ca, uint cb)
+{
+    return min((a * ca + b * cb + uvec3(8u)) >> 4, uvec3(63u));
+}
+
+uvec3 blend5(uvec3 a, uvec3 b, uint alpha)
+{
+    uint ca = alpha + 1u;
+    if (ca == 32u) return a;
+    return min((a * ca + b * (32u - ca) + uvec3(16u)) >> 5, uvec3(63u));
+}
+
+uvec3 brighten(uvec3 c, uint factor, uint bias)
+{
+    return min(c + (((uvec3(63u) - c) * factor + uvec3(bias)) >> 4), uvec3(63u));
+}
+
+uvec3 darken(uvec3 c, uint factor, uint bias)
+{
+    return c - ((c * factor + uvec3(bias)) >> 4);
+}
+
+// A resolved layer: colour plus the BLDCNT target, alpha, and the
+// (priority, order) key the DS sorts by.
+struct Layer {
+    uvec3 color;
+    uint target;
+    bool effects;
+    uint alpha;    // 0 = no alpha blend, 1..16 = OBJ alpha, 255 = EVA/EVB
+    uint alpha5;   // non-zero only on the 3D layer: its own 5-bit coverage
+    uint priority;
+    uint order;
+};
+
+Layer unpackLayer(uint pair_lo, uint pair_hi)
+{
+    Layer l;
+    l.color = uvec3(pair_lo & 63u, (pair_lo >> 8) & 63u, (pair_lo >> 16) & 63u);
+    l.target = pair_hi & 63u;
+    l.effects = (pair_hi & 128u) != 0u;
+    l.alpha = (pair_hi >> 8) & 255u;
+    l.alpha5 = 0u;
+    l.priority = (pair_hi >> 16) & 255u;
+    l.order = (pair_hi >> 24) & 255u;
+    return l;
+}
+
+bool ahead(Layer a, Layer b)
+{
+    return a.priority < b.priority
+        || (a.priority == b.priority && a.order < b.order);
+}
+
+// Mirrors compose() in gpu2d.cpp exactly, including the 3D layer's forced
+// per-pixel 5-bit blend whenever the pixel behind it is a second target.
+uvec3 composeLayers(Layer top, Layer below)
+{
+    uint target2 = below.target << 8;
+    if (top.alpha5 != 0u) {
+        if ((pc.bldcnt & target2) != 0u)
+            return blend5(top.color, below.color, top.alpha5);
+        if (top.effects && (pc.bldcnt & top.target) != 0u) {
+            uint mode = (pc.bldcnt >> 6) & 3u;
+            if (mode == 2u) return brighten(top.color, pc.evy, 8u);
+            if (mode == 3u) return darken(top.color, pc.evy, 7u);
+        }
+        return top.color;
+    }
+    if (top.alpha != 0u && (pc.bldcnt & target2) != 0u) {
+        uint eva1 = top.alpha == 255u ? pc.eva : top.alpha;
+        uint evb1 = top.alpha == 255u ? pc.evb : 16u - eva1;
+        return blend16(top.color, below.color, eva1, evb1);
+    }
+    if (top.effects && (pc.bldcnt & top.target) != 0u) {
+        uint mode = (pc.bldcnt >> 6) & 3u;
+        if (mode == 1u && (pc.bldcnt & target2) != 0u)
+            return blend16(top.color, below.color, pc.eva, pc.evb);
+        if (mode == 2u) return brighten(top.color, pc.evy, 8u);
+        if (mode == 3u) return darken(top.color, pc.evy, 7u);
+    }
+    return top.color;
+}
+
+void main()
+{
+    ivec2 out_px = ivec2(gl_GlobalInvocationID.xy);
+    if (out_px.x >= int(pc.canvas_size.x) || out_px.y >= int(pc.canvas_size.y)) {
+        return;
+    }
+
+    // The visible DS region is [pan, pan + content/zoom) in 1x pixels,
+    // mapped onto the canvas; outside it is letterbox.
+    const float region_w = float(pc.hd_width) / max(pc.zoom, 1.0);
+    const float region_h = float(pc.content_rows) / max(pc.zoom, 1.0);
+    const float dsx = pc.pan.x + (float(out_px.x) + 0.5) * region_w
+        / float(pc.canvas_size.x);
+    const float dsy = pc.pan.y + (float(out_px.y) + 0.5) * region_h
+        / float(pc.canvas_size.y);
+    const int ds_row = int(pc.content_row0) + int(floor(dsy));
+    const int ds_col = int(floor(dsx));
+    const bool inside = ds_col >= 0 && ds_col < int(pc.hd_width) && ds_row >= 0
+        && ds_row < int(pc.content_row0) + int(pc.content_rows)
+        && ds_row >= int(pc.content_row0);
+
+    if (!inside || ds_row >= 192) {
+        // Bottom screen or outside: the faithful framebuffer pixel, nearest.
+        if (!inside) {
+            // kLetterboxBgra = 0xFF0C0C10: memory B=16, G=12, R=12; the bgra8
+            // image maps shader .r to memory B.
+            imageStore(OutCanvas, out_px, vec4(0.063, 0.047, 0.047, 1.0));
+            return;
+        }
+        const int fx = clamp(ds_col, 0, int(pc.fallback_width) - 1);
+        const int fy = clamp(ds_row - 192, 0, 191);
+        const uint pixel
+            = FallbackPixels[uint(fy) * pc.fallback_width + uint(fx)];
+        imageStore(OutCanvas, out_px,
+            vec4(float(pixel & 0xFFu), float((pixel >> 8) & 0xFFu),
+                float((pixel >> 16) & 0xFFu), 1.0)
+                / 255.0);
+        return;
+    }
+
+    // Top screen: resolve the stack without 3D, then insert the hi-res 3D
+    // layer at its own (priority, order) and blend at this density.
+    const uint index = uint(ds_row) * pc.hd_width + uint(ds_col);
+    Layer top = unpackLayer(TopPixels[index * 2u], TopPixels[index * 2u + 1u]);
+    Layer below = unpackLayer(BelowPixels[index * 2u], BelowPixels[index * 2u + 1u]);
+
+    // RenderXPos is a native-pixel scroll; the hi-res 3D surface is
+    // unscrolled, so it is applied here scaled to that raster.
+    int sx = int(floor(dsx * float(pc.scale3d)));
+    bool off = false;
+    if (pc.render_xpos != 0u) {
+        if ((pc.render_xpos & 0x100u) != 0u) {
+            const int shift
+                = min(int(pc.hd_width), 512 - int(pc.render_xpos)) * int(pc.scale3d);
+            off = sx < shift;
+            sx -= shift;
+        } else {
+            sx += int(pc.render_xpos) * int(pc.scale3d);
+            off = sx >= int(pc.hd_width) * int(pc.scale3d);
+        }
+    }
+
+    uvec3 c = top.color;
+    if (!off && sx >= 0 && sx < int(pc.hd_width) * int(pc.scale3d)) {
+        const vec4 hi
+            = imageLoad(Tex3dHi, ivec2(sx, (ds_row - int(pc.content_row0)) * int(pc.scale3d)));
+        const uint a3 = uint(round(hi.a * 31.0));
+        if (a3 != 0u) {
+            Layer l3;
+            l3.color = uvec3(round(hi.bgr * 63.0));
+            l3.target = 1u; // the 3D layer is BLDCNT first target 0
+            l3.effects = top.effects;
+            l3.alpha = 0u;
+            l3.alpha5 = a3;
+            l3.priority = pc.priority3d;
+            l3.order = pc.order3d;
+            // (priority, order) is a total order, so inserting into the
+            // top two yields the same pair the CPU path picks.
+            if (ahead(l3, top)) {
+                below = top;
+                top = l3;
+            } else if (ahead(l3, below)) {
+                below = l3;
+            }
+        }
+    }
+    c = composeLayers(top, below);
+
+    const uint bm = pc.master_bright >> 14;
+    const uint bf = min(pc.master_bright & 31u, 16u);
+    if (bm == 1u) {
+        c = brighten(c, bf, 0u);
+    } else if (bm == 2u) {
+        c = darken(c, bf, 15u);
+    }
+    imageStore(OutCanvas, out_px, vec4(vec3(c) / 63.0, 1.0));
+}

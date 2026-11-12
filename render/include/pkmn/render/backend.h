@@ -84,6 +84,40 @@ struct CanvasBuffer {
     Canvas view() const { return Canvas { bytes.data(), width, height, width * 4 }; }
 };
 
+// Inputs for the HD composite (ADR 0008, slice V2): the 3D sink's hi-res
+// color surface plus the resolved 2D stack with the 3D layer removed
+// (`NdsGpu2dHdFrame`). The composite blends them at the placed rectangle's
+// own resolution, so every hi-res sample survives to the window.
+struct HdComposite {
+    const void* hires_view = nullptr; // VkImageView over the hi-res color
+    uint32_t hires_width = 0; // hi-res surface size
+    uint32_t hires_height = 0;
+    uint32_t scale = 1; // the sink's raster scale
+    const uint32_t* top = nullptr; // RG32UI pairs, width * 192 * 2 words
+    const uint32_t* below = nullptr;
+    uint32_t width = 0; // 1x band width of the stack
+    uint32_t fallback_width = 0; // 1x width of the bottom-screen plane
+    uint32_t fallback_offset = 0; // its left edge within the 1x stack
+    uint32_t content_row0 = 0; // first 1x DS row this canvas shows
+    uint32_t content_rows = 384; // 1x DS rows this canvas shows
+    uint32_t render_xpos = 0;
+    uint32_t priority_3d = 0;
+    uint32_t order_3d = 0;
+    uint32_t bldcnt = 0;
+    uint32_t eva = 0;
+    uint32_t evb = 0;
+    uint32_t evy = 0;
+    uint32_t master_bright = 0;
+    float zoom = 1.0f; // >= 1; 1.0 = the content fits the rect
+    float pan_x = 0.0f; // visible-region origin, 1x DS pixels
+    float pan_y = 0.0f;
+
+    bool valid() const
+    {
+        return hires_view && top && below && width != 0 && fallback_width != 0 && scale > 1;
+    }
+};
+
 class Presenter {
 public:
     virtual ~Presenter() = default;
@@ -110,6 +144,20 @@ public:
     // Returns false on a recoverable failure (the caller resizes and retries);
     // a surface that cannot be recreated is reported by the next call.
     virtual bool present(const Canvas& canvas, const PresentTarget& target) = 0;
+
+    // HD composite (ADR 0008, slice V2): blend the 3D sink's hi-res color
+    // surface into the resolved 2D stack at the target's own resolution, then
+    // present into `target` exactly like present(). `fallback` is the
+    // faithful 1x framebuffer (the bottom band's source). Returns false when
+    // the backend has no composite; the caller falls back to present().
+    virtual bool present_hd(
+        const HdComposite& hd, const Canvas& fallback, const PresentTarget& target)
+    {
+        (void)hd;
+        (void)fallback;
+        (void)target;
+        return false;
+    }
 
     // Present the canvas over the whole output surface (stretch to fit).
     bool present(const Canvas& canvas)

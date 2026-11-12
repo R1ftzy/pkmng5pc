@@ -32,6 +32,13 @@ public:
     const melonDS::u32* GetAttrLine(int line) override;
     void SetRenderWidth(melonDS::u32 width) override;
 
+    // The hi-res color surface for the HD composite (ADR 0008, slice V2).
+    // Valid only while the renderer is initialized; zero/null at scale 1.
+    void* hires_color_view() const;
+    uint32_t hires_width() const;
+    uint32_t hires_height() const;
+    uint32_t hires_scale() const;
+
     void shutdown();
 
 private:

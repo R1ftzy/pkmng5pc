@@ -2506,6 +2506,17 @@ void VulkanComputeRenderer::SetRenderWidth(melonDS::u32 width)
     }
 }
 
+void* VulkanComputeRenderer::hires_color_view() const
+{
+    return impl_->initialized && impl_->dims.scale > 1 ? impl_->final_fb.view : nullptr;
+}
+
+uint32_t VulkanComputeRenderer::hires_width() const { return impl_->dims.screen_width; }
+
+uint32_t VulkanComputeRenderer::hires_height() const { return impl_->dims.screen_height; }
+
+uint32_t VulkanComputeRenderer::hires_scale() const { return impl_->dims.scale; }
+
 void VulkanComputeRenderer::shutdown()
 {
     if (impl_) {

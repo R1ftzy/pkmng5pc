@@ -4,6 +4,7 @@
 #include <memory>
 
 #include "GPU3D.h"
+#include "gpu2d.h"
 #include "src/gpu3d.h"
 
 #include "pkmn/render/backend.h"
@@ -52,7 +53,7 @@ Config sink_config()
     return config;
 }
 
-melonDS::Renderer3D* installed_sink = nullptr;
+pkmn::render::ds::VulkanComputeRenderer* installed_sink = nullptr;
 
 } // namespace
 
@@ -120,11 +121,21 @@ extern "C" int pkmng5pc_ds_render_init(void* top_window, void* bottom_window, in
         return 0;
     }
 
-    melonDS::Renderer3D* const raw = renderer.get();
+    pkmn::render::ds::VulkanComputeRenderer* const raw = renderer.get();
     gpu3d->SetCurrentRenderer(std::move(renderer));
     installed_sink = raw;
     std::fprintf(stderr, "[native-render] 3D sink active (Vulkan compute, band %u px)\n",
         static_cast<unsigned>(render_width));
+    // The HD stack (NdsGpu2dHdFrame) is only emitted when a consumer asked
+    // for it; above 1x the presenter composites from it (patch 0003's gate
+    // also reads pkmng5pc_ds_render_consumes_hd(), but the boot-time latch
+    // there needs the internal-resolution env, which the sink lane does not
+    // set).
+    if (installed_sink->hires_scale() > 1) {
+        nds_gpu2d_set_hd_emit(true);
+        std::fprintf(stderr, "[native-render] HD composite on (scale %ux)\n",
+            static_cast<unsigned>(installed_sink->hires_scale()));
+    }
     return 1;
 }
 
@@ -141,4 +152,28 @@ extern "C" void pkmng5pc_ds_render_shutdown()
     installed_sink = nullptr;
 }
 
-extern "C" int pkmng5pc_ds_render_consumes_hd() { return 0; }
+extern "C" int pkmng5pc_ds_render_consumes_hd()
+{
+    return installed_sink && installed_sink->hires_scale() > 1 ? 1 : 0;
+}
+
+extern "C" int pkmng5pc_ds_render_hires_color(
+    void** view, unsigned* width, unsigned* height, unsigned* scale)
+{
+    if (!installed_sink || installed_sink->hires_scale() <= 1) {
+        return 0;
+    }
+    if (view) {
+        *view = installed_sink->hires_color_view();
+    }
+    if (width) {
+        *width = installed_sink->hires_width();
+    }
+    if (height) {
+        *height = installed_sink->hires_height();
+    }
+    if (scale) {
+        *scale = installed_sink->hires_scale();
+    }
+    return *view ? 1 : 0;
+}
