@@ -602,6 +602,25 @@ Do not vendor or copy their content; cite and reimplement.
 
 Newest first. Keep entries short; details and evidence live in `re/notes/`.
 
+- **2026-11-12 (own-renderer roadmap: the Vulkan port is staged, and the
+  edge-object fix has a method)** — the user set the target: port the compute
+  renderer's features into the project's own Vulkan sink (keep the GL lane),
+  beat it on performance, add shadow maps/bloom/zoom/pan, add a free resolution
+  mode, then fix the edge objects. Reading the sink end to end produced the
+  concrete architecture: `docs/adr/0008-own-vulkan-renderer-roadmap.md` stages
+  it as V1 scale-aware sink (per-scale baked shader variants, CPU span scaling
+  matching upstream `ComputeRenderer::SetupSpan`, box-filter readback so
+  scale>1 is visible supersampling through the faithful path, 4:3 gate lifted),
+  V2 Vulkan HD composite (the first `render/` shaders; zoom/pan as composite
+  transforms; free resolution from the separate window's density), V3 bloom,
+  V4 shadow maps (design pass first), with the performance levers (async
+  compute, readback elimination, pipeline cache) owned throughout. The GL lane
+  stays as oracle and fallback. The edge-object RE recon found no aspect
+  literals in the banks by grep — the projection is runtime-computed and most
+  engine overlays are unbanked — and recorded the method that will find it:
+  cross-reference the existing gameplay coverage manifest with GX matrix-window
+  access, then a REA pass (`re/notes/wide-output.md`).
+
 - **2026-11-12 (hi-res 3D ships: the vendored OpenGL compute renderer is on,
   and the wide-frustum patch has a home)** — the "clean 1440p" ask exposed that
   `Runner.cmake` forced `NDS_ENABLE_COMPUTE_RENDERER=OFF`: the vendored melonDS

@@ -97,6 +97,20 @@ the banked ARM9 (`banks/black/*_[0-9][0-9].c`, the game's own code), find the
 `NDS_ADAPTIVE_GUEST_CULLING`, and verify the band fills in without perturbing
 guest-visible state. Only then should the TUI expose it.
 
+Recon (2026-11-12): constant-lottery greps over the Black banks come up empty —
+no `0x1555`/5461 (Fix12 4:3), no `1.3333` float literal, in either the main ARM9
+module (~150 MB across `irbo_arm9_main_*.c`) or the twelve banked overlays. Two
+reasons: the overworld projection is computed at runtime from camera state
+rather than stored as an aspect literal, and the 3D-heavy engine code lives
+largely in the ~225 overlays of which only twelve are banked. The procedure that
+will find it: the 262 s gameplay coverage manifest
+(`banks/coverage-ingest-black`) already records which dispatch rows executed
+during the save-loaded overworld run; the projection build runs every frame, so
+shortlisting the functions in those rows that also touch the GX matrix/FIFO
+register window (0x04000440..0x040005CB) narrows the sites to a handful, then a
+REA pass reads the surrounding matrix construction for the aspect term. That is
+a dedicated REA session, not a grep.
+
 ## Cross-ROM comparison
 
 Not performed. The render path is title-independent; a per-title visual audit

@@ -5,7 +5,9 @@ off. **Amended 2026-11-12:** the sinks are now built and enabled by default;
 **Compatibility mode** turns the whole GPU path off at run time. See
 *Amendment* below. This does not mark M6 or M8 complete, and it does not
 authorize M8's post-FX, frame-decoupling or interpolation work. The detailed
-design and slice plan live in `docs/design/native-render-sinks.md`.
+design and slice plan live in `docs/design/native-render-sinks.md`. The staged
+Vulkan port of decision 6 (scale, HD composite, post-FX) has its own ADR:
+`docs/adr/0008-own-vulkan-renderer-roadmap.md`.
 
 The default path still rasterizes and composites the DS GPU on the CPU and uses
 the host GPU only for presentation (`GLOSSARY.md`: *DS pipeline*). The 3D soft
