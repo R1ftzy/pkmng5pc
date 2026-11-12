@@ -602,6 +602,19 @@ Do not vendor or copy their content; cite and reimplement.
 
 Newest first. Keep entries short; details and evidence live in `re/notes/`.
 
+- **2026-11-12 (texture upscaling: the melonDS billboard comparison explained
+  and matched on the compute lane)** — the user's side-by-side showed melonDS's
+  8x player billboard smooth and ours blocky. The cause is not 2D resolution —
+  the overworld character is a 3D textured quad — but xBR **texture upscaling**,
+  which melonDS has enabled and our lanes defaulted off (the vendored
+  `TextureUpscale.cpp` was only ever reachable through a raw env var). Wired:
+  `-TextureUpscale 1|2|4` / `--texture-upscale` → `NDS_TEXTURE_UPSCALE`, a Play
+  row (Off/2x/4x, gated on the compute renderer), and both scripts. Verified
+  on a driven overworld run: `[texup] texture upscaling 4x (xBR-lv2)` and 42.8%
+  of pixels changed between 1x and 4x captures. The Vulkan sink port (the same
+  xBR shader as an upload-time compute pass; normalized-UV sampling means no
+  raster shader change) is recorded in ADR 0008 as the sink-lane follow-up.
+
 - **2026-11-12 (slice V2 ships: the Vulkan presenter composites the hi-res 3D
   on the GPU — the 8x corruption explained, and the 4060 answer)** — the
   user's 8x screenshot (blocky mosaics and a white smear over the 3D) was the

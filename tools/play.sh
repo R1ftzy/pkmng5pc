@@ -21,6 +21,7 @@
 #   sh tools/play.sh --native --aspect 16:9   # widen the top screen band
 #   sh tools/play.sh --native --window-size 3x --scaling fit
 #   sh tools/play.sh --native --window 1280x960   # explicit pixel size
+#   sh tools/play.sh --renderer3d compute --render-scale 4 --texture-upscale 4
 #   sh tools/play.sh --renderer native        # 3D sink, slice 1 (4:3, 1x)
 #   sh tools/play.sh --layout separate --renderer3d compute --render-scale 3
 #                                             # hi-res 3D (OpenGL 4.3), 1440p-class
@@ -90,6 +91,8 @@ native=0
 gpu=${PKMNG5PC_GPU:-auto}
 renderer=off
 renderer3d=faithful
+texture_upscale=
+texture_upscale_set=0
 aspect=4:3
 render_scale=
 aspect_set=0
@@ -118,6 +121,7 @@ while [ $# -gt 0 ]; do
     --gpu)      gpu=$2; shift 2 ;;
     --renderer) renderer=$2; shift 2 ;;
     --renderer3d) renderer3d=$2; shift 2 ;;
+    --texture-upscale) texture_upscale=$2; texture_upscale_set=1; shift 2 ;;
     --aspect)   aspect=$2; aspect_set=1; shift 2 ;;
     --render-scale) render_scale=$2; render_scale_set=1; shift 2 ;;
     --window-size) window_size=$2; shift 2 ;;
@@ -152,6 +156,12 @@ case $aspect in
   21:9) aspect_width=448 ;;
   *) fail "--aspect must be 4:3, 5:3, 16:9, 2:1 or 21:9." ;;
 esac
+if [ "$texture_upscale_set" -eq 1 ]; then
+  case $texture_upscale in
+    1|2|4) ;;
+    *) fail "--texture-upscale must be 1, 2 or 4." ;;
+  esac
+fi
 case $renderer3d in
   faithful) ;;
   compute)
@@ -364,6 +374,12 @@ if [ "$render_scale_set" -eq 1 ]; then
     NDS_INTERNAL_RESOLUTION=$render_scale
     export NDS_INTERNAL_RESOLUTION
   fi
+fi
+if [ "$texture_upscale_set" -eq 1 ]; then
+  # xBR texture upscaling: the vendored melonDS compute lane applies it to
+  # every decoded 3D texture; the faithful path stays native. 1 = off.
+  NDS_TEXTURE_UPSCALE=$texture_upscale
+  export NDS_TEXTURE_UPSCALE
 fi
 
 echo "runner: $runner"

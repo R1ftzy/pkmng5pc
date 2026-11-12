@@ -18,6 +18,7 @@ from tui.model import (
     COMPUTE_ASPECTS,
     PRESENT_SCALINGS,
     RENDERER_3D_MODES,
+    TEXTURE_UPSCALES,
     RENDER_ASPECT_WIDTHS,
     RENDER_SCALES,
     Repo,
@@ -362,6 +363,9 @@ def play_command(repo: Repo, settings: Settings, require_artifacts: bool = True)
     present_scaling = (
         settings.present_scaling if settings.present_scaling in PRESENT_SCALINGS else "integer"
     )
+    texture_upscale = (
+        settings.texture_upscale if settings.texture_upscale in TEXTURE_UPSCALES else 1
+    )
     window = play_window_size(settings) if native_present else None
     window_text = f"{window[0]}x{window[1]}" if window else "runner default"
 
@@ -407,6 +411,8 @@ def play_command(repo: Repo, settings: Settings, require_artifacts: bool = True)
             argv.extend(["-Renderer3D", "compute"])
             if render_scale != 1:
                 argv.extend(["-RenderScale", str(render_scale)])
+            if texture_upscale != 1:
+                argv.extend(["-TextureUpscale", str(texture_upscale)])
         if render_native:
             argv.extend(
                 [
@@ -457,6 +463,8 @@ def play_command(repo: Repo, settings: Settings, require_artifacts: bool = True)
             argv.extend(["--renderer3d", "compute"])
             if render_scale != 1:
                 argv.extend(["--render-scale", str(render_scale)])
+            if texture_upscale != 1:
+                argv.extend(["--texture-upscale", str(texture_upscale)])
         if render_native:
             argv.extend(
                 [

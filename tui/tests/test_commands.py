@@ -320,6 +320,18 @@ class NativeRenderCommandTests(unittest.TestCase):
         self.assertNotIn("--renderer3d", command.argv)
         self.assertIn("-Native" if os.name == "nt" else "--native", command.argv)
 
+    def test_compute_texture_upscaling_flag(self) -> None:
+        command, _ = self.make_command(
+            renderer_3d="compute", render_scale=4, texture_upscale=4
+        )
+        flag = "-TextureUpscale" if os.name == "nt" else "--texture-upscale"
+        self.assertEqual(command.argv[command.argv.index(flag) + 1], "4")
+
+    def test_faithful_lane_has_no_texture_upscaling_flag(self) -> None:
+        command, _ = self.make_command(renderer_3d="faithful", texture_upscale=4)
+        self.assertNotIn("-TextureUpscale", command.argv)
+        self.assertNotIn("--texture-upscale", command.argv)
+
     def test_compute_replaces_the_vulkan_sink(self) -> None:
         command, _ = self.make_command(renderer_3d="compute", render_native=True)
         self.assertNotIn("-Renderer", command.argv)

@@ -160,6 +160,11 @@ The SHA-1 is computed in a background thread and passed to Configure as
   there; Play switches the layout with a note). Its raster width must be a
   64-multiple, so aspect 16:9 (342 px) falls back to the faithful renderer with
   a notice; 5:3/2:1/21:9 stay compute. Needs a GPU with OpenGL 4.3.
+- 3D texture upscaling: Off / 2x / 4x (xBR-lv2, applied once per texture cache
+  miss). This is what makes the overworld character billboards and other
+  textured 3D quads read smoothly at hi-res — melonDS's "texture upscaling"
+  option, which is why its 8x screenshot looks softer than our native-texel
+  path. Needs the compute renderer; the faithful path stays native.
 - Window size: runner default, `1x`..`4x` of the chosen aspect and layout (2x of
   16:9 stacked is 684x768; separate windows are one screen tall), or an explicit
   pixel size. The window is sized once at launch and stays freely resizable.

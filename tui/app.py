@@ -27,6 +27,7 @@ from tui.model import (
     PLAY_ASPECTS,
     PLAY_LAYOUTS,
     RENDERER_3D_MODES,
+    TEXTURE_UPSCALES,
     RENDER_ASPECT_WIDTHS,
     RENDER_SCALES,
     SAVE_MODES,
@@ -651,6 +652,25 @@ class App:
             f"{label} in pixels",
             f"{minimum}-{maximum} px.",
             validator=lambda value: validate_window_pixels(value, minimum, maximum),
+        )
+
+    def texture_upscale_item(self) -> Item:
+        compute = self.s.renderer_3d == "compute"
+        return self._choice(
+            "texture-upscale",
+            "3D texture upscaling",
+            "texture_upscale",
+            [
+                (1, "Off  ·  native texels"),
+                (2, "2x  ·  xBR"),
+                (4, "4x  ·  xBR"),
+            ],
+            "xBR-upscales every decoded 3D texture once per cache miss, so "
+            "textured quads (the overworld character billboards, signs, "
+            "terrain decals) read smoothly at hi-res instead of showing 1x "
+            "texels. Needs the compute renderer; the faithful path stays "
+            "native.",
+            enabled=compute and not self.s.compatibility_mode,
         )
 
     def _text(
@@ -2170,6 +2190,7 @@ class App:
             [
                 self.render_scale_item(),
                 self.renderer_3d_item(),
+                self.texture_upscale_item(),
                 self._choice(
                     "render-aspect",
                     "Aspect ratio",

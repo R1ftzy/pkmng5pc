@@ -32,6 +32,7 @@ class SettingsLoadTests(unittest.TestCase):
         self.assertEqual(settings.render_scale, 1)
         self.assertEqual(settings.render_aspect, "4:3")
         self.assertEqual(settings.renderer_3d, "faithful")
+        self.assertEqual(settings.texture_upscale, 1)
         self.assertEqual(settings.window_size, "native")
         self.assertEqual(settings.window_width, 1024)
         self.assertEqual(settings.window_height, 768)
@@ -62,6 +63,7 @@ class SettingsLoadTests(unittest.TestCase):
             "render_scale": 9,
             "render_aspect": "32:9",
             "renderer_3d": "warp",
+            "texture_upscale": 3,
             "window_size": "warp",
             "window_width": 10,
             "window_height": 100_000,
@@ -86,6 +88,7 @@ class SettingsLoadTests(unittest.TestCase):
         self.assertEqual(settings.render_scale, 1)
         self.assertEqual(settings.render_aspect, "4:3")
         self.assertEqual(settings.renderer_3d, "faithful")
+        self.assertEqual(settings.texture_upscale, 1)
         self.assertEqual(settings.window_size, "native")
         self.assertEqual(settings.window_width, 160)
         self.assertEqual(settings.window_height, 4320)
@@ -186,6 +189,7 @@ class SettingsRoundTripTests(unittest.TestCase):
             render_native=True,
             renderer_3d="compute",
             render_scale=3,
+            texture_upscale=4,
             render_aspect="21:9",
             window_size="custom",
             window_width=1600,

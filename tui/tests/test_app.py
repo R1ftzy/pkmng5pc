@@ -770,6 +770,18 @@ class PlayViewNativeRendererTests(unittest.TestCase):
             self.assertFalse(app.s.render_native)
             self.assertTrue(app.s.play_native)
 
+    def test_texture_upscale_row_follows_the_renderer(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            app, _ = make_app(Path(temp), Settings(preset="test-debug"))
+            items = {item.key: item for item in app.play_view(120).items}
+            self.assertFalse(items["texture-upscale"].enabled)
+
+            app.s.renderer_3d = "compute"
+            items = {item.key: item for item in app.play_view(120).items}
+            self.assertTrue(items["texture-upscale"].enabled)
+            items["texture-upscale"].on_adjust(1)
+            self.assertEqual(app.s.texture_upscale, 2)
+
     def test_renderer_3d_choice_and_hd_notice(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             app, _ = make_app(Path(temp), Settings(preset="test-debug"))

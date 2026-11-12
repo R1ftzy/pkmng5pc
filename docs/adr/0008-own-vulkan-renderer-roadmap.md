@@ -143,7 +143,17 @@ Gate: HD composite output matches the GL lane's HD output on the same frames
 (swap screenshots through both lanes at identical settings); digests at the
 native surface unchanged.
 
-### Slice V3 — bloom
+### Slice V3 — bloom (and the texture-upscale port)
+
+**2026-11-12 note:** xBR texture upscaling ships for the *compute lane* first
+(the runner's vendored `TextureUpscale.cpp`, wired through `-TextureUpscale`
+1/2/4 → `NDS_TEXTURE_UPSCALE`, the TUI row and both play scripts). It is what
+explains the melonDS-vs-ours billboard comparison: melonDS smooths the player
+quad's texture; our lanes uploaded native texels. Porting the same xBR-lv2
+shader (MIT, `TextureUpscale.cpp`) into the Vulkan sink as an upload-time
+compute pass — the sink's texture store already samples with normalized UVs,
+so the upscaled arrays need no shader change — is the sink-lane follow-up;
+bloom stays below it.
 
 Compute post-pass on the hi-res 3D surface before the composite: bright-pass at
 a threshold, separable blur (two 1D dispatches), additive blend in the

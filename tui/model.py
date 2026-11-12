@@ -32,6 +32,7 @@ PLAY_LAYOUTS = ("stacked", "separate")
 SAVE_MODES = ("default", "custom", "off")
 PLAY_ASPECTS = ("4:3", "5:3", "16:9", "2:1", "21:9")
 RENDER_SCALES = (1, 2, 3, 4, 5, 6, 7, 8)
+TEXTURE_UPSCALES = (1, 2, 4)
 RENDER_ASPECT_WIDTHS: dict[str, int] = {
     "4:3": 256,
     "5:3": 320,
@@ -568,6 +569,7 @@ class Settings:
     render_native: bool = True
     renderer_3d: str = "faithful"
     render_scale: int = 1
+    texture_upscale: int = 1
     render_aspect: str = "4:3"
     window_size: str = "native"
     window_width: int = 1024
@@ -641,6 +643,8 @@ class Settings:
             self.save_mode = "default"
         if isinstance(self.render_scale, bool) or self.render_scale not in RENDER_SCALES:
             self.render_scale = 1
+        if isinstance(self.texture_upscale, bool) or self.texture_upscale not in TEXTURE_UPSCALES:
+            self.texture_upscale = 1
         if self.render_aspect not in PLAY_ASPECTS:
             self.render_aspect = "4:3"
         if self.renderer_3d not in RENDERER_3D_MODES:

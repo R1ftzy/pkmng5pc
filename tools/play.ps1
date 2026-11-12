@@ -23,6 +23,8 @@
 #   pwsh tools/play.ps1 -Renderer native      # 3D sink, slice 1 (4:3, 1x)
 #   pwsh tools/play.ps1 -Layout separate -Renderer3D compute -RenderScale 3
 #                                             # hi-res 3D (OpenGL 4.3), 1440p-class
+#   pwsh tools/play.ps1 -Layout separate -Renderer3D compute -RenderScale 4 -TextureUpscale 4
+#                                             # xBR texture upscaling (smooth sprites)
 #   pwsh tools/play.ps1 -Frames 600 -Stats    # present 600 frames, print stats, exit
 #   pwsh tools/play.ps1 -Sav "banks/black.sav"  # keep a different save file
 #   pwsh tools/play.ps1 -NoSave               # blank 512 KiB cart, write nothing
@@ -86,6 +88,7 @@ param(
   [string]$Gpu = '',
   [ValidateSet('off', 'native', '3d', '2d', 'both')][string]$Renderer = 'off',
   [ValidateSet('faithful', 'compute')][string]$Renderer3D = 'faithful',
+  [ValidateSet(1, 2, 4)][int]$TextureUpscale = 1,
   [ValidateSet('4:3', '5:3', '16:9', '2:1', '21:9')][string]$Aspect = '4:3',
   [int]$RenderScale = 0,
   [ValidateSet('native', '1x', '2x', '3x', '4x')][string]$WindowSize = 'native',
@@ -319,6 +322,11 @@ if ($renderScaleSet) {
   # lane's own parser tops out at 4, so it only gets the in-range values.
   $env:PKMNG5PC_RENDER_SCALE = "$RenderScale"
   if ($RenderScale -le 4) { $env:NDS_INTERNAL_RESOLUTION = "$RenderScale" }
+}
+if ($PSBoundParameters.ContainsKey('TextureUpscale')) {
+  # xBR texture upscaling (the vendored melonDS compute lane applies it to
+  # every decoded 3D texture; the faithful path stays native): 1 = off.
+  $env:NDS_TEXTURE_UPSCALE = "$TextureUpscale"
 }
 
 Write-Host "runner: $runner"
