@@ -506,10 +506,11 @@ class App:
         current = self.s.render_native and not compatibility
         hint = (
             "Installs the Vulkan compute 3D sink (alpha, on by default): our own "
-            "GPU rasterizer. Rasterizes any even 256..448 px band at the "
-            "internal-resolution scale (supersampled readback), and presents "
-            "through Native present. The 2D rasterizer still uses the soft "
-            "path. Requires native presentation."
+            "GPU rasterizer. Rasterizes any even 256..448 px band at the chosen "
+            "internal-resolution density (1..8). The faithful readback is "
+            "unchanged at scale; the visible hi-res composite lands with ADR "
+            "0008 slice V2, and the compute lane shows it today. Requires "
+            "native presentation."
         )
         if compatibility:
             hint = f"Disabled by Compatibility mode. {hint}"
@@ -568,11 +569,12 @@ class App:
             kind="choice",
             value=f"{current}x",
             hint=(
-                "Internal 3D resolution multiplier. The compute renderer "
+                "Internal 3D resolution multiplier (1x..8x). The compute renderer "
                 "rasterizes the 3D scene at this density and, above 1x, presents "
                 "it hi-res through its own OpenGL window. The Vulkan sink "
-                "rasterizes at this density and presents it supersampled through "
-                "the faithful path. The faithful soft renderer stays 1x."
+                "rasterizes at this density too; its faithful readback is "
+                "unchanged until the GPU composite lands (ADR 0008 slice V2). "
+                "The faithful soft renderer stays 1x."
             ),
             enabled=not self.s.compatibility_mode,
             on_activate=lambda: adjust(1),

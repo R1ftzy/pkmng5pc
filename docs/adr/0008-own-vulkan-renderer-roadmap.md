@@ -36,15 +36,26 @@ multiplies positions by the factor
 
 ## Decision
 
-### Slice V1 — scale-aware Vulkan sink (SHIPPED 2026-11-12)
+### Slice V1 — scale-aware Vulkan sink (SHIPPED 2026-11-12, readback amended)
 
 The sink gains a raster scale (integer 1..8) fixed at renderer init.
 **Status: implemented and verified** — spec-constant shaders, runtime surface
-geometry, upstream's hires-coordinate span scaling, box-filter SSAA readback at
-scale>1, 4:3 gate lifted (any even 256..448 px whose product with the scale is a
-64-multiple; 16:9's 342 stays faithful-only), scale via `PKMNG5PC_RENDER_SCALE`
-forwarded from `-RenderScale`. Verified: scale-1 verify 0-diff (colors),
-scale 2 skip note, band 448 at 2x = 896x768 raster through Native present.
+geometry, upstream's hires-coordinate span scaling, 4:3 gate lifted (any even
+256..448 px whose product with the scale is a 64-multiple; 16:9's 342 stays
+faithful-only), scale via `PKMNG5PC_RENDER_SCALE` forwarded from
+`-RenderScale`. Verified: scale-1 verify color 0-diff; **the faithful readback
+is bit-identical at 2x/6x** (block-boundary point-sample); band 448 at 2x =
+896x768 raster through Native present.
+
+**Amendment (same day): the box-filter SSAA readback was tried and reverted.**
+Averaging the hi-res surface down to 1x *before* the CPU composite blurs the
+2D stack composited over the 3D layer — semi-transparent sprites and 3D/2D
+boundaries sample muddy blocks, and the SSAA result at 1x composite reads as
+blur, not resolution. The user-visible lesson: the hi-res benefit only exists
+where the blend happens at the same density as the raster, i.e. the V2 GPU
+composite. The faithful readback point-samples the block-boundary plane
+(bit-identical at every scale, verify-proven), and the hi-res `FinalFB`
+surface stands ready for V2.
 
 - **Baked per-scale shader variants, not runtime compilation.** Vulkan has no
   runtime GLSL compiler here and the project ships no runtime glslang; the

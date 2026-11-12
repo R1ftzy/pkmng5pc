@@ -121,8 +121,8 @@ if ($computeHd -and $rendererOn) {
   Fail '-Renderer and -Renderer3D compute are exclusive: the Vulkan 3D sink and the OpenGL compute renderer both replace the 3D rasterizer.'
 }
 $renderScaleSet = $PSBoundParameters.ContainsKey('RenderScale')
-if ($renderScaleSet -and ($RenderScale -lt 1 -or $RenderScale -gt 4)) {
-  Fail '-RenderScale must be 1, 2, 3 or 4.'
+if ($renderScaleSet -and ($RenderScale -lt 1 -or $RenderScale -gt 8)) {
+  Fail '-RenderScale must be 1..8.'
 }
 if ($computeHd -and $renderScaleSet -and $RenderScale -gt 1 -and $Native) {
   Fail '-Native and -Renderer3D compute cannot both present: the hi-res image is presented through the runner''s own OpenGL window. Drop -Native, or keep -Native and 1x.'
@@ -313,10 +313,13 @@ if ($computeHd) {
 if ($rendererOn) {
   $env:PKMNG5PC_RENDERER = $Renderer
   if ($titleId) { $env:PKMNG5PC_TITLE_ID = $titleId }
-  # The Vulkan sink reads its raster scale from this (render/src/ds).
-  if ($renderScaleSet) { $env:PKMNG5PC_RENDER_SCALE = "$RenderScale" }
 }
-if ($renderScaleSet) { $env:NDS_INTERNAL_RESOLUTION = "$RenderScale" }
+if ($renderScaleSet) {
+  # The Vulkan sink reads this directly (1..8, render/src/ds). The compute
+  # lane's own parser tops out at 4, so it only gets the in-range values.
+  $env:PKMNG5PC_RENDER_SCALE = "$RenderScale"
+  if ($RenderScale -le 4) { $env:NDS_INTERNAL_RESOLUTION = "$RenderScale" }
+}
 
 Write-Host "runner: $runner"
 Write-Host "rom:    $Rom"

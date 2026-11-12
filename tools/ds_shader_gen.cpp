@@ -31,42 +31,6 @@ struct ShaderSpec {
 const std::map<std::string, const std::string*>& shader_sources()
 {
     namespace S = melonDS::ComputeRendererShaders;
-    static const std::string downsample = R"(
-layout (local_size_x = 8, local_size_y = 8) in;
-
-layout (set = 2, binding = 0, rgba8) readonly uniform image2D HiresColor;
-layout (set = 2, binding = 1, rgba8ui) readonly uniform uimage2D FaithfulColor;
-layout (set = 2, binding = 3, rgba8ui) writeonly uniform uimage2D DownsampledColor;
-
-// Box-filter the hi-res color surface into the faithful 1x readback plane
-// (ADR 0008, slice V1): scale > 1 becomes visible supersampling. The byte
-// order matches LowResFB (B, G, R, A); the edge-marker high bits come from
-// the faithful plane so outline ids survive averaging.
-void main()
-{
-    ivec2 dst = ivec2(gl_GlobalInvocationID.xy);
-    ivec2 native = ivec2(ScreenWidth / RenderScale, ScreenHeight / RenderScale);
-    if (dst.x >= native.x || dst.y >= native.y) {
-        return;
-    }
-
-    vec4 sum = vec4(0.0);
-    for (int y = 0; y < RenderScale; ++y) {
-        for (int x = 0; x < RenderScale; ++x) {
-            sum += imageLoad(HiresColor, dst * RenderScale + ivec2(x, y));
-        }
-    }
-    vec4 avg = sum / float(RenderScale * RenderScale);
-
-    uvec4 faithful = imageLoad(FaithfulColor, dst);
-    uvec4 out_color;
-    out_color.x = uint(round(avg.b * 63.0)) & 0x3FU;
-    out_color.y = (uint(round(avg.g * 63.0)) & 0x3FU) | (faithful.y & 0xC0U);
-    out_color.z = (uint(round(avg.r * 63.0)) & 0x3FU) | (faithful.z & 0xC0U);
-    out_color.w = uint(round(avg.a * 31.0)) & 0xFFU;
-    imageStore(DownsampledColor, dst, out_color);
-}
-)";
     static const std::map<std::string, const std::string*> sources = {
         { "InterpSpans", &S::InterpSpans },
         { "BinCombined", &S::BinCombined },
@@ -77,7 +41,6 @@ void main()
         { "CalcOffsets", &S::CalcOffsets },
         { "SortWork", &S::SortWork },
         { "FinalPass", &S::FinalPass },
-        { "DsDownsample", &downsample },
     };
     return sources;
 }

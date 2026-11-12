@@ -84,7 +84,6 @@ namespace {
     constexpr unsigned kPipelineClearWorkCount = shader_index(ShaderId::ds_clear_workcount);
     constexpr unsigned kPipelineCalcOffsets = shader_index(ShaderId::ds_calc_offsets);
     constexpr unsigned kPipelineSortWork = shader_index(ShaderId::ds_sort_work);
-    constexpr unsigned kPipelineDownsample = shader_index(ShaderId::ds_downsample);
 
     ShaderId raster_shader(bool textured, uint32_t blend, bool wbuffer, bool highlight)
     {
@@ -790,7 +789,6 @@ struct VulkanComputeRenderer::Impl {
     Image final_fb;
     Image lowres_fb;
     Image attr_fb;
-    Image downsampled_fb;
 
     std::vector<SpanSetupY> yspans;
     std::vector<SetupIndices> setup_indices;
@@ -1003,9 +1001,6 @@ bool VulkanComputeRenderer::Impl::initialize(SDL_Window* window, const Config& c
             image_barrier(command, attr_fb.image, VK_IMAGE_LAYOUT_UNDEFINED,
                 VK_IMAGE_LAYOUT_GENERAL, 0, VK_ACCESS_SHADER_WRITE_BIT,
                 VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 1);
-            image_barrier(command, downsampled_fb.image, VK_IMAGE_LAYOUT_UNDEFINED,
-                VK_IMAGE_LAYOUT_GENERAL, 0, VK_ACCESS_SHADER_WRITE_BIT,
-                VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 1);
             images_ok = true;
         })) {
         return false;
@@ -1016,7 +1011,6 @@ bool VulkanComputeRenderer::Impl::initialize(SDL_Window* window, const Config& c
     final_fb.layout = VK_IMAGE_LAYOUT_GENERAL;
     lowres_fb.layout = VK_IMAGE_LAYOUT_GENERAL;
     attr_fb.layout = VK_IMAGE_LAYOUT_GENERAL;
-    downsampled_fb.layout = VK_IMAGE_LAYOUT_GENERAL;
 
     soft = std::make_unique<melonDS::SoftRenderer>();
     verify = std::getenv("PKMNG5PC_DS3D_VERIFY") != nullptr;
@@ -1104,7 +1098,6 @@ void VulkanComputeRenderer::Impl::shutdown()
     destroy_image(*context, final_fb);
     destroy_image(*context, lowres_fb);
     destroy_image(*context, attr_fb);
-    destroy_image(*context, downsampled_fb);
     destroy_buffer(*context, yspan_buffer);
     destroy_buffer(*context, xspan_buffer);
     destroy_buffer(*context, polygon_buffer);
@@ -1182,9 +1175,9 @@ bool VulkanComputeRenderer::Impl::create_images()
 {
     // FinalFB carries the hi-res color surface (the HD-composite source, ADR
     // 0008 slice V2); LowResFB and AttrFB are the faithful 1x planes the
-    // FinalPass writes at block boundaries, whatever the scale. At scale > 1
-    // the downsample pass averages FinalFB into downsampled_fb, the
-    // supersampled readback color.
+    // FinalPass writes at block boundaries, whatever the scale. The readback
+    // is point-sampled from them: averaging the hi-res surface before the CPU
+    // composite blurs the 2D stack (tried in slice V1 and reverted).
     if (!create_device_image(*context, dims.screen_width, dims.screen_height, 1,
             VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
             VK_IMAGE_VIEW_TYPE_2D, final_fb)
@@ -1193,10 +1186,7 @@ bool VulkanComputeRenderer::Impl::create_images()
             lowres_fb)
         || !create_device_image(*context, dims.render_width, kHeight, 1, VK_FORMAT_R32_UINT,
             VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, VK_IMAGE_VIEW_TYPE_2D,
-            attr_fb)
-        || !create_device_image(*context, dims.render_width, kHeight, 1, VK_FORMAT_R8G8B8A8_UINT,
-            VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, VK_IMAGE_VIEW_TYPE_2D,
-            downsampled_fb)) {
+            attr_fb)) {
         return false;
     }
     return true;
@@ -1243,7 +1233,7 @@ bool VulkanComputeRenderer::Impl::create_descriptor_layouts()
         }
     }
     {
-        std::array<VkDescriptorSetLayoutBinding, 4> bindings {};
+        std::array<VkDescriptorSetLayoutBinding, 3> bindings {};
         for (uint32_t i = 0; i < bindings.size(); ++i) {
             bindings[i].binding = i;
             bindings[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
@@ -1281,7 +1271,7 @@ bool VulkanComputeRenderer::Impl::create_descriptor_pools()
         VkDescriptorPoolSize sizes[4] {};
         sizes[0] = { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1 };
         sizes[1] = { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 10 };
-        sizes[2] = { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 4 };
+        sizes[2] = { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 3 };
         sizes[3] = { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1 };
         VkDescriptorPoolCreateInfo info { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
         info.maxSets = 3;
@@ -1346,10 +1336,10 @@ bool VulkanComputeRenderer::Impl::create_common_descriptors()
     }
     vkUpdateDescriptorSets(context->device(), 11, writes, 0, nullptr);
 
-    const Image* images[4] = { &final_fb, &lowres_fb, &attr_fb, &downsampled_fb };
-    VkDescriptorImageInfo image_info[4] {};
-    VkWriteDescriptorSet image_writes[4] {};
-    for (uint32_t i = 0; i < 4; ++i) {
+    const Image* images[3] = { &final_fb, &lowres_fb, &attr_fb };
+    VkDescriptorImageInfo image_info[3] {};
+    VkWriteDescriptorSet image_writes[3] {};
+    for (uint32_t i = 0; i < 3; ++i) {
         image_info[i].imageView = images[i]->view;
         image_info[i].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
         image_writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -1359,7 +1349,7 @@ bool VulkanComputeRenderer::Impl::create_common_descriptors()
         image_writes[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
         image_writes[i].pImageInfo = &image_info[i];
     }
-    vkUpdateDescriptorSets(context->device(), 4, image_writes, 0, nullptr);
+    vkUpdateDescriptorSets(context->device(), 3, image_writes, 0, nullptr);
 
     Texture* dummy = texture_store->get(dummy_texture);
     if (!dummy) {
@@ -1576,17 +1566,15 @@ void VulkanComputeRenderer::Impl::verify_frame(melonDS::GPU& gpu)
         ++verify_polygon_frames;
     }
     if (dims.scale > 1) {
-        // The hi-res raster supersamples: its downsampled planes differ from
-        // the soft renderer at polygon edges by design, so the byte-lock
-        // comparison is only meaningful at scale 1.
+        // The readback is the faithful block-boundary plane; at scale > 1 the
+        // hi-res raster should reproduce it exactly. Any diff lands in the
+        // same summary counters, logged once with the scale so it is not
+        // confused with a scale-1 regression.
         if (!scale_logged) {
-            std::fprintf(stderr,
-                "[native-render] verify compare skipped at %ux scale (supersampling "
-                "differs from soft at edges by design)\n",
+            std::fprintf(stderr, "[ds3d-verify] comparing at %ux scale (hires-coordinate raster)\n",
                 static_cast<unsigned>(dims.scale));
             scale_logged = true;
         }
-        return;
     }
 
     uint32_t max_diff = 0;
@@ -2307,15 +2295,6 @@ bool VulkanComputeRenderer::Impl::record_frame(uint32_t num_variants, const Vari
         pipelines[shader_index(final_pass_shader(final_flags))]);
     vkCmdDispatch(frame_command, dims.screen_width / 32, dims.screen_height, 1);
 
-    if (dims.scale > 1) {
-        // Supersampled readback (ADR 0008, slice V1): box-filter the hi-res
-        // surface into the 1x color plane. Attr stays point-sampled faithful.
-        memory_barrier(frame_command);
-        vkCmdBindPipeline(
-            frame_command, VK_PIPELINE_BIND_POINT_COMPUTE, pipelines[kPipelineDownsample]);
-        vkCmdDispatch(frame_command, (dims.render_width + 7) / 8, (kHeight + 7) / 8, 1);
-    }
-
     VkMemoryBarrier image_done { VK_STRUCTURE_TYPE_MEMORY_BARRIER };
     image_done.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
     image_done.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
@@ -2332,38 +2311,20 @@ bool VulkanComputeRenderer::Impl::record_frame(uint32_t num_variants, const Vari
         VK_PIPELINE_STAGE_TRANSFER_BIT, 1);
 
     // LowResFB and AttrFB are the faithful 1x planes at every scale: FinalPass
-    // stores them at block boundaries only, so the readback copy is unchanged.
-    const Image& color_source = dims.scale > 1 ? downsampled_fb : lowres_fb;
-    if (dims.scale > 1) {
-        image_barrier(frame_command, downsampled_fb.image, VK_IMAGE_LAYOUT_GENERAL,
-            VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_ACCESS_SHADER_WRITE_BIT,
-            VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-            VK_PIPELINE_STAGE_TRANSFER_BIT, 1);
-    }
+    // stores them at block boundaries only, so the readback is point-sampled
+    // and bit-identical to scale 1. The visible hi-res path is the GPU
+    // composite (ADR 0008, slice V2) - averaging here would blur the 2D stack
+    // composited over the 3D layer.
     VkBufferImageCopy color_copy {};
     color_copy.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     color_copy.imageSubresource.layerCount = 1;
     color_copy.imageExtent = { dims.render_width, kHeight, 1 };
-    vkCmdCopyImageToBuffer(frame_command, color_source.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+    vkCmdCopyImageToBuffer(frame_command, lowres_fb.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
         color_readback.buffer, 1, &color_copy);
 
     VkBufferImageCopy attr_copy = color_copy;
     vkCmdCopyImageToBuffer(frame_command, attr_fb.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
         attr_readback.buffer, 1, &attr_copy);
-
-    image_barrier(frame_command, color_source.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-        VK_IMAGE_LAYOUT_GENERAL, VK_ACCESS_TRANSFER_READ_BIT,
-        VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
-        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 1);
-    image_barrier(frame_command, attr_fb.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-        VK_IMAGE_LAYOUT_GENERAL, VK_ACCESS_TRANSFER_READ_BIT,
-        VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
-        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 1);
-    lowres_fb.layout = VK_IMAGE_LAYOUT_GENERAL;
-    attr_fb.layout = VK_IMAGE_LAYOUT_GENERAL;
-    if (dims.scale > 1) {
-        downsampled_fb.layout = VK_IMAGE_LAYOUT_GENERAL;
-    }
 
     if (vkEndCommandBuffer(frame_command) != VK_SUCCESS) {
         fail("command buffer end");

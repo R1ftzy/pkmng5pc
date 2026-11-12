@@ -169,8 +169,8 @@ if [ "$render_scale_set" -eq 1 ]; then
   case $render_scale in
     ''|*[!0-9]*) fail "--render-scale must be 1, 2, 3 or 4." ;;
   esac
-  if [ "$render_scale" -lt 1 ] || [ "$render_scale" -gt 4 ]; then
-    fail "--render-scale must be 1, 2, 3 or 4."
+  if [ "$render_scale" -lt 1 ] || [ "$render_scale" -gt 8 ]; then
+    fail "--render-scale must be 1..8."
   fi
 fi
 window_text=$window
@@ -347,21 +347,23 @@ elif [ -z "${NDS_3D_RENDERER:-}" ]; then
   NDS_3D_RENDERER=soft
   export NDS_3D_RENDERER
 fi
-if ($renderer_on -eq 1) {
+if [ "$renderer_on" -eq 1 ]; then
   PKMNG5PC_RENDERER=$renderer
   export PKMNG5PC_RENDERER
   if [ -n "$title_id" ]; then
     PKMNG5PC_TITLE_ID=$title_id
     export PKMNG5PC_TITLE_ID
   fi
-  if [ "$render_scale_set" -eq 1 ]; then
-    PKMNG5PC_RENDER_SCALE=$render_scale
-    export PKMNG5PC_RENDER_SCALE
-  fi
-}
+fi
 if [ "$render_scale_set" -eq 1 ]; then
-  NDS_INTERNAL_RESOLUTION=$render_scale
-  export NDS_INTERNAL_RESOLUTION
+  # The Vulkan sink reads this directly (1..8, render/src/ds). The compute
+  # lane's own parser tops out at 4, so it only gets the in-range values.
+  PKMNG5PC_RENDER_SCALE=$render_scale
+  export PKMNG5PC_RENDER_SCALE
+  if [ "$render_scale" -le 4 ]; then
+    NDS_INTERNAL_RESOLUTION=$render_scale
+    export NDS_INTERNAL_RESOLUTION
+  fi
 fi
 
 echo "runner: $runner"

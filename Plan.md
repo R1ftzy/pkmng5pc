@@ -602,6 +602,22 @@ Do not vendor or copy their content; cite and reimplement.
 
 Newest first. Keep entries short; details and evidence live in `re/notes/`.
 
+- **2026-11-12 (slice V1 amended: the blur verdict, scales 1..8, and the V2
+  gate is now the visible path)** — the user's report settled slice V1's open
+  question: the box-filter SSAA readback blurred everything — averaging the
+  hi-res 3D surface *before* the CPU composite makes semi-transparent sprites
+  sample muddy blocks and reads as blur at 1x, because the blend decision has
+  to happen at the raster's own density. The downsample pass is reverted; the
+  faithful readback point-samples the block-boundary plane and is now
+  **verify-proven bit-identical to the soft renderer at 2x** (and 6x), so the
+  scale is safe infrastructure with zero visual change — the visible hi-res is
+  the V2 GPU composite (GL lane meanwhile). The scale range widens to 1..8
+  (RENDER_SCALES, `-RenderScale`, `PKMNG5PC_RENDER_SCALE`); the compute lane's
+  1..4 parser gets only in-range values. Performance at high scale is
+  raster-bound (N² shader work plus per-frame serialization) — the honest
+  levers stay in ADR 0008's performance list (async compute, readback
+  elimination through the V2 composite, pipeline cache).
+
 - **2026-11-12 (slice V1 ships: the Vulkan sink rasterizes wide bands at up to
   8x — the renderer is ours)** — ADR 0008's first slice is implemented: the
   Vulkan sink's shaders specialize `ScreenWidth/ScreenHeight/RenderScale/

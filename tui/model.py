@@ -31,7 +31,7 @@ ROM_EXTENSIONS = (".nds", ".srl")
 PLAY_LAYOUTS = ("stacked", "separate")
 SAVE_MODES = ("default", "custom", "off")
 PLAY_ASPECTS = ("4:3", "5:3", "16:9", "2:1", "21:9")
-RENDER_SCALES = (1, 2, 3, 4)
+RENDER_SCALES = (1, 2, 3, 4, 5, 6, 7, 8)
 RENDER_ASPECT_WIDTHS: dict[str, int] = {
     "4:3": 256,
     "5:3": 320,
