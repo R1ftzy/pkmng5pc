@@ -947,7 +947,12 @@ bool VulkanComputeRenderer::Impl::initialize(SDL_Window* window, const Config& c
             static_cast<unsigned>(dims.render_width));
         return false;
     }
-    dims.screen_width = dims.render_width * dims.scale;
+    // The compute shaders dispatch whole coarse tiles, so the raster width
+    // rounds up to the next coarse-tile multiple. The guest band and the
+    // readback keep the real width; the padded columns are never sampled
+    // (FinalPass stores LowResFB/AttrFB at 1x block boundaries, and those
+    // stores past the real width are discarded by the smaller image).
+    dims.screen_width = ((dims.render_width * dims.scale) + kCoarseTileW - 1) & ~(kCoarseTileW - 1);
     dims.screen_height = kHeight * dims.scale;
     dims.tiles_per_line = dims.screen_width / kTileSize;
     dims.tile_lines = dims.screen_height / kTileSize;
@@ -963,16 +968,6 @@ bool VulkanComputeRenderer::Impl::initialize(SDL_Window* window, const Config& c
     dims.tile_buffer_size
         = static_cast<VkDeviceSize>(4) * kTileSize * kTileSize * dims.max_work_tiles;
     dims.readback_size = static_cast<VkDeviceSize>(dims.render_width) * kHeight * 4;
-    // The compute shaders dispatch whole coarse tiles, so the hi-res surface
-    // must tile exactly; 342 (16:9) stays a faithful-path width.
-    if ((dims.screen_width % kCoarseTileW) != 0 || (dims.screen_height % kCoarseTileH) != 0) {
-        std::fprintf(stderr,
-            "[native-render] render width %u at %ux scale is unsupported; the hi-res "
-            "surface must be a %u-px multiple (use the faithful renderer for this width)\n",
-            static_cast<unsigned>(dims.render_width), static_cast<unsigned>(dims.scale),
-            static_cast<unsigned>(kCoarseTileW));
-        return false;
-    }
     texcache = std::make_unique<melonDS::Texcache<VulkanTextureLoader, uint32_t>>(
         VulkanTextureLoader { texture_store,
             [this](uint32_t id, uint32_t width, uint32_t height, uint32_t layer, const void* data) {

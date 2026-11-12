@@ -91,6 +91,16 @@ surface stands ready for V2.
 Gate: `verify` at scale 1 stays 0-diff; at 2x/4x the downsampled frame differs
 from soft only inside the filter footprint; frame digests at scale 1 unchanged.
 
+**2026-11-12 amendments:** the sink pads its raster width up to the next
+64-px tile multiple (the guest band and readback keep the real width), so
+**16:9 (342 px) now composites at any scale** — the old refusal is gone. Scale
+is 1..8 on the sink lane; the compute lane's parser caps at 4, so the TUI caps
+its value there and the command clamps with a note. The resolution row is
+disabled when neither GPU lane is active (the faithful soft renderer is 1x by
+nature). A present filter (`nearest`/`linear`, `PKMNG5PC_PRESENT_FILTER`)
+selects the final window scaling — linear is the smooth-but-crisp look
+melonDS's screen scaling gives.
+
 ### Slice V2 — Vulkan HD composite (SHIPPED 2026-11-12, minimal)
 
 **Status: implemented and running.** The presenter gains `present_hd()`: a

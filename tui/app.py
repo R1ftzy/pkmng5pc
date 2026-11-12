@@ -26,6 +26,7 @@ from tui.model import (
     COMPUTE_ASPECTS,
     PLAY_ASPECTS,
     PLAY_LAYOUTS,
+    COMPUTE_RENDER_SCALES,
     RENDERER_3D_MODES,
     TEXTURE_UPSCALES,
     RENDER_ASPECT_WIDTHS,
@@ -557,29 +558,63 @@ class App:
         )
 
     def render_scale_item(self) -> Item:
-        current = self.s.render_scale if self.s.render_scale in RENDER_SCALES else RENDER_SCALES[0]
+        compute = self.s.renderer_3d == "compute"
+        sink = self.s.render_native and not self.s.compatibility_mode
+        values = COMPUTE_RENDER_SCALES if compute else RENDER_SCALES
+        current = self.s.render_scale if self.s.render_scale in values else values[0]
+        enabled = not self.s.compatibility_mode and (sink or compute)
 
         def adjust(delta: int) -> None:
-            index = RENDER_SCALES.index(current)
-            self.s.render_scale = RENDER_SCALES[(index + delta) % len(RENDER_SCALES)]
+            index = values.index(current)
+            self.s.render_scale = values[(index + delta) % len(values)]
             self.touch()
 
+        if self.s.compatibility_mode:
+            hint = "Disabled by Compatibility mode."
+        elif compute:
+            hint = (
+                "Internal 3D resolution multiplier for the compute renderer "
+                "(1x..4x; its parser tops out there). Above 1x the hi-res 3D is "
+                "presented through its own OpenGL window in the separate layout. "
+                "The Vulkan sink reaches 8x on the faithful renderer."
+            )
+        elif sink:
+            hint = (
+                "Internal 3D resolution multiplier for the Vulkan sink: the 3D "
+                "scene rasterizes at this density and the presenter composites "
+                "it on the GPU (1x..8x). The faithful soft renderer itself "
+                "always renders 1x."
+            )
+        else:
+            hint = (
+                "Needs the Vulkan sink or the compute renderer: the faithful "
+                "soft renderer always renders 1x."
+            )
         return Item(
             "render-scale",
             "3D internal resolution",
             kind="choice",
             value=f"{current}x",
-            hint=(
-                "Internal 3D resolution multiplier (1x..8x). The compute renderer "
-                "rasterizes the 3D scene at this density and, above 1x, presents "
-                "it hi-res through its own OpenGL window. The Vulkan sink "
-                "rasterizes at this density too; its faithful readback is "
-                "unchanged until the GPU composite lands (ADR 0008 slice V2). "
-                "The faithful soft renderer stays 1x."
-            ),
-            enabled=not self.s.compatibility_mode,
+            hint=hint,
+            enabled=enabled,
             on_activate=lambda: adjust(1),
             on_adjust=adjust,
+        )
+
+    def present_filter_item(self) -> Item:
+        return self._choice(
+            "present-filter",
+            "Present filter",
+            "present_filter",
+            [
+                ("nearest", "Nearest  ·  crisp pixel edges"),
+                ("linear", "Linear  ·  smooth upscale (melonDS-like)"),
+            ],
+            "How the canvas scales into the window. Nearest keeps hard pixel "
+            "edges; Linear interpolates, which is the softer look melonDS's "
+            "screen scaling gives. Applies to Native present (both lanes and "
+            "Compatibility's SDL path is unaffected).",
+            enabled=not self.s.compatibility_mode,
         )
 
     def renderer_3d_item(self) -> Item:
@@ -2121,19 +2156,7 @@ class App:
                 )
             )
         elif self.s.render_native and self.s.renderer_3d != "compute":
-            if self.s.render_aspect == "16:9":
-                items.append(
-                    Item(
-                        "render-slice1-note",
-                        "",
-                        kind="notice",
-                        value=term.yellow(
-                            "The Vulkan sink rasterizes 64-multiple band widths "
-                            "only; aspect 16:9 (342 px) launches the CPU compositor "
-                            "instead. 5:3, 2:1 and 21:9 stay in the sink."
-                        ),
-                    )
-                )
+            pass
         elif self.s.renderer_3d == "compute":
             if self.s.render_aspect == "16:9":
                 items.append(
@@ -2201,8 +2224,10 @@ class App:
                     ],
                     "Widens the top screen band through Native present or the "
                     "compute renderer. Measured on the overworld: the extra band "
-                    "is real scene content, not a stretch. 16:9 (342 px) is "
-                    "faithful-only - the compute raster needs a 64-multiple width.",
+                    "is real scene content, not a stretch. The Vulkan sink takes "
+                    "every width (16:9 included, via a padded raster); the "
+                    "compute renderer needs a 64-multiple width, so 16:9 there "
+                    "falls back to the faithful renderer.",
                     enabled=not self.s.compatibility_mode,
                 ),
                 self.window_size_item(),
@@ -2222,6 +2247,7 @@ class App:
                 ]
             )
         items.append(self.present_scaling_item())
+        items.append(self.present_filter_item())
         items.extend(
             [
                 Item("save-section", "SAVE", kind="section"),

@@ -280,12 +280,11 @@ class NativeRenderCommandTests(unittest.TestCase):
         scale_flag = "-RenderScale" if os.name == "nt" else "--render-scale"
         self.assertEqual(command.argv[command.argv.index(scale_flag) + 1], "4")
 
-    def test_sink_16_by_9_falls_back_to_the_cpu_compositor(self) -> None:
+    def test_sink_16_by_9_stays_in_the_sink(self) -> None:
+        # The sink pads its raster to the tile multiple, so 342 is supported.
         command, _ = self.make_command(render_native=True, render_aspect="16:9")
-        self.assertNotIn("-Renderer", command.argv)
-        self.assertNotIn("--renderer", command.argv)
-        self.assertIn("64-multiple", command.note)
-        self.assertIn("-Native" if os.name == "nt" else "--native", command.argv)
+        self.assertIn("-Renderer" if os.name == "nt" else "--renderer", command.argv)
+        self.assertNotIn("CPU compositor", command.note)
 
     def test_compute_lane_passes_its_flags(self) -> None:
         command, _ = self.make_command(

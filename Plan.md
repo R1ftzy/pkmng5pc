@@ -602,6 +602,20 @@ Do not vendor or copy their content; cite and reimplement.
 
 Newest first. Keep entries short; details and evidence live in `re/notes/`.
 
+- **2026-11-12 (16:9 composites, 5x stops lying, and the melonDS look gets a
+  switch)** — three reports, three causes. "5x goes back to 1x": the compute
+  lane's parser caps at 4, so the TUI silently kept showing 5x while the
+  command dropped it — the row is now lane-aware (1..4 compute, 1..8 sink),
+  disabled when no GPU lane is active (the faithful soft renderer is 1x by
+  nature), and the command clamps with a note. "Upscaling not happening in
+  4:3 and 16:9": 16:9's 342 px was refused by the 64-px tile rule — the sink
+  now pads its internal raster to the next tile multiple (guest band and
+  readback unchanged), and 16:9 composites at every scale, 4:3 included.
+  "melonDS looks smooth but crisp": its screen scaling is linear — the
+  presenter gains a `nearest`/`linear` present filter (`-PresentFilter`,
+  `PKMNG5PC_PRESENT_FILTER`, TUI row). Verified: band 342 at 5x and 8x with
+  `HD composite on`, linear filter, digests unchanged.
+
 - **2026-11-12 (texture upscaling: the melonDS billboard comparison explained
   and matched on the compute lane)** — the user's side-by-side showed melonDS's
   8x player billboard smooth and ours blocky. The cause is not 2D resolution —

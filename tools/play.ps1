@@ -94,6 +94,7 @@ param(
   [ValidateSet('native', '1x', '2x', '3x', '4x')][string]$WindowSize = 'native',
   [ValidatePattern('^(\d+x\d+)?$')][string]$Window = '',
   [ValidateSet('integer', 'fit')][string]$Scaling = 'integer',
+  [ValidateSet('nearest', 'linear')][string]$PresentFilter = 'nearest',
   [int]$Frames = 0,
   [Alias('SavePath')][string]$Sav,
   [switch]$Save,
@@ -295,6 +296,7 @@ if ($nativePresent) {
   $env:PKMNG5PC_PRESENT = 'native'
   $env:PKMNG5PC_GPU = $Gpu
   $env:PKMNG5PC_PRESENT_SCALING = $Scaling
+  $env:PKMNG5PC_PRESENT_FILTER = $PresentFilter
   if ($windowText) { $env:PKMNG5PC_WINDOW_SIZE = $windowText }
 }
 # The wide top band works on the native-present path and on the compute

@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <memory>
 #include <vector>
@@ -97,6 +98,10 @@ namespace {
                 }
             }
             vsync_ = config.vsync;
+            linear_filter_ = false;
+            if (const char* filter = std::getenv("PKMNG5PC_PRESENT_FILTER")) {
+                linear_filter_ = std::strcmp(filter, "linear") == 0;
+            }
             context_ = std::make_shared<VulkanContext>();
             if (!context_->init(window_, config)) {
                 context_.reset();
@@ -295,7 +300,7 @@ namespace {
                 static_cast<int32_t>(target.y + target.height), 1 };
             vkCmdBlitImage(cmd, upload.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                 images_[image_index], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit,
-                VK_FILTER_NEAREST);
+                linear_filter_ ? VK_FILTER_LINEAR : VK_FILTER_NEAREST);
 
             VkImageMemoryBarrier to_present = to_transfer[0];
             to_present.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
@@ -1024,7 +1029,7 @@ namespace {
                 static_cast<int32_t>(target.y + target.height), 1 };
             vkCmdBlitImage(cmd, upload.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                 images_[image_index], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit,
-                VK_FILTER_NEAREST);
+                linear_filter_ ? VK_FILTER_LINEAR : VK_FILTER_NEAREST);
 
             VkImageMemoryBarrier to_present = to_transfer;
             to_present.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
@@ -1079,6 +1084,7 @@ namespace {
 
         SDL_Window* window_ = nullptr;
         bool vsync_ = true;
+        bool linear_filter_ = false;
         std::shared_ptr<VulkanContext> context_;
 
         VkSwapchainKHR swapchain_ = VK_NULL_HANDLE;

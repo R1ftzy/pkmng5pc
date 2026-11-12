@@ -102,6 +102,8 @@ window=
 window_set=0
 scaling=integer
 scaling_set=0
+present_filter=nearest
+present_filter_set=0
 frames=0
 stats=0
 coverage=0
@@ -127,6 +129,7 @@ while [ $# -gt 0 ]; do
     --window-size) window_size=$2; shift 2 ;;
     --window)   window=$2; window_set=1; shift 2 ;;
     --scaling)  scaling=$2; scaling_set=1; shift 2 ;;
+    --present-filter) present_filter=$2; present_filter_set=1; shift 2 ;;
     --frames)   frames=$2; shift 2 ;;
     --save-path) save_path=$2; save_path_set=1; shift 2 ;;
     --sav)      save_path=$2; save_path_set=1; shift 2 ;;
@@ -210,6 +213,10 @@ fi
 case $scaling in
   integer|fit) ;;
   *) fail "--scaling must be integer or fit." ;;
+esac
+case $present_filter in
+  nearest|linear) ;;
+  *) fail "--present-filter must be nearest or linear." ;;
 esac
 if [ "$renderer_on" -eq 1 ]; then native=1; fi
 if [ "$compute_hd" = true ] && [ "$native" -eq 1 ] && [ "$render_scale_set" -eq 1 ] &&
@@ -333,7 +340,8 @@ if [ "$native" -eq 1 ]; then
   PKMNG5PC_PRESENT=native
   PKMNG5PC_GPU=$gpu
   PKMNG5PC_PRESENT_SCALING=$scaling
-  export PKMNG5PC_PRESENT PKMNG5PC_GPU PKMNG5PC_PRESENT_SCALING
+  PKMNG5PC_PRESENT_FILTER=$present_filter
+  export PKMNG5PC_PRESENT PKMNG5PC_GPU PKMNG5PC_PRESENT_SCALING PKMNG5PC_PRESENT_FILTER
   if [ -n "$window_text" ]; then
     PKMNG5PC_WINDOW_SIZE=$window_text
     export PKMNG5PC_WINDOW_SIZE

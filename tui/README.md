@@ -171,6 +171,13 @@ The SHA-1 is computed in a background thread and passed to Configure as
 - Present scaling: `integer` keeps every DS pixel a square block and letterboxes
   the unused window area; `fit` fills the window on its tighter axis at an
   aspect-preserving fractional scale. Neither stretches.
+- Present filter: `nearest` keeps hard pixel edges; `linear` interpolates into
+  the window, which is the softer look melonDS's screen scaling gives. Applies
+  to Native present; the SDL path (Compatibility) is unaffected.
+- 3D internal resolution: 1x..8x on the Vulkan sink (the presenter composites
+  the hi-res 3D on the GPU), 1x..4x on the compute renderer (its parser tops
+  out there). The row is disabled when neither is active — the faithful soft
+  renderer always renders 1x.
 - Wide output really widens the scene: measured on a save-loaded overworld run,
   the 342-wide frame's centre 256 columns match the 4:3 frame while a
   downscale-to-256 does not, and the player sprite keeps its size and centre.

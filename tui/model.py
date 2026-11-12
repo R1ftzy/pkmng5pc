@@ -32,7 +32,10 @@ PLAY_LAYOUTS = ("stacked", "separate")
 SAVE_MODES = ("default", "custom", "off")
 PLAY_ASPECTS = ("4:3", "5:3", "16:9", "2:1", "21:9")
 RENDER_SCALES = (1, 2, 3, 4, 5, 6, 7, 8)
+# The vendored OpenGL compute lane's parser tops out at 4.
+COMPUTE_RENDER_SCALES = (1, 2, 3, 4)
 TEXTURE_UPSCALES = (1, 2, 4)
+PRESENT_FILTERS = ("nearest", "linear")
 RENDER_ASPECT_WIDTHS: dict[str, int] = {
     "4:3": 256,
     "5:3": 320,
@@ -575,6 +578,7 @@ class Settings:
     window_width: int = 1024
     window_height: int = 768
     present_scaling: str = "integer"
+    present_filter: str = "nearest"
     compatibility_mode: bool = False
     render_verify: bool = False
     save_mode: str = "default"
@@ -653,6 +657,8 @@ class Settings:
             self.window_size = "native"
         if self.present_scaling not in PRESENT_SCALINGS:
             self.present_scaling = "integer"
+        if self.present_filter not in PRESENT_FILTERS:
+            self.present_filter = "nearest"
         if isinstance(self.window_width, bool):
             self.window_width = 1024
         if isinstance(self.window_height, bool):

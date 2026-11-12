@@ -16,6 +16,7 @@ from typing import Any
 
 from tui.model import (
     COMPUTE_ASPECTS,
+    PRESENT_FILTERS,
     PRESENT_SCALINGS,
     RENDERER_3D_MODES,
     TEXTURE_UPSCALES,
@@ -326,6 +327,12 @@ def play_command(repo: Repo, settings: Settings, require_artifacts: bool = True)
             "Aspect 16:9 (342 px) uses the faithful renderer; the compute raster "
             "supports 256/320/384/448 px widths"
         )
+    if compute and render_scale > 4:
+        render_scale = 4
+        lane_notes.append(
+            "The compute renderer tops out at 4x; using 4x (the Vulkan sink "
+            "reaches 8x on the faithful renderer)"
+        )
     render_env: dict[str, str] = {}
     # The compute renderer replaces the rasterizer, so the port's own Vulkan
     # sink has nothing to do in that lane.
@@ -337,12 +344,6 @@ def play_command(repo: Repo, settings: Settings, require_artifacts: bool = True)
         render_native, render_reason = repo.native_renderer_state(settings.preset)
         if not render_native:
             sink_fallback_note = f"Native renderer unavailable: {render_reason}"
-        elif render_aspect == "16:9":
-            render_native = False
-            sink_fallback_note = (
-                "Native 3D sink rasterizes 64-multiple band widths only; aspect "
-                "16:9 (342 px) uses the CPU compositor instead"
-            )
     if render_native and settings.render_verify:
         render_env["PKMNG5PC_DS3D_VERIFY"] = "1"
 
@@ -365,6 +366,9 @@ def play_command(repo: Repo, settings: Settings, require_artifacts: bool = True)
     )
     texture_upscale = (
         settings.texture_upscale if settings.texture_upscale in TEXTURE_UPSCALES else 1
+    )
+    present_filter = (
+        settings.present_filter if settings.present_filter in PRESENT_FILTERS else "nearest"
     )
     window = play_window_size(settings) if native_present else None
     window_text = f"{window[0]}x{window[1]}" if window else "runner default"
@@ -405,6 +409,7 @@ def play_command(repo: Repo, settings: Settings, require_artifacts: bool = True)
             argv.append("-Native")
             argv.extend(["-Gpu", settings.play_gpu or "auto"])
             argv.extend(["-Scaling", present_scaling])
+            argv.extend(["-PresentFilter", present_filter])
             if window:
                 argv.extend(["-Window", window_text])
         if compute:
@@ -457,6 +462,7 @@ def play_command(repo: Repo, settings: Settings, require_artifacts: bool = True)
             argv.append("--native")
             argv.extend(["--gpu", settings.play_gpu or "auto"])
             argv.extend(["--scaling", present_scaling])
+            argv.extend(["--present-filter", present_filter])
             if window:
                 argv.extend(["--window", window_text])
         if compute:

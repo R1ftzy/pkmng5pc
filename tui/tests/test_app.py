@@ -842,17 +842,6 @@ class PlayViewNativeRendererTests(unittest.TestCase):
             items = {item.key: item for item in app.play_view(120).items}
             self.assertIn("Fit", items["present-scaling"].value)
 
-    def test_sink_16_by_9_choice_explains_the_cpu_fallback(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
-            root = Path(temp)
-            write_renderer_cache(root)
-            app, _ = make_app(root, Settings(preset="test-debug", render_aspect="16:9"))
-            items = {item.key: item for item in app.play_view(120).items}
-
-            self.assertIn("render-slice1-note", items)
-            self.assertIn("64-multiple", items["render-slice1-note"].value)
-            self.assertNotIn("stops before launch", items["render-slice1-note"].value)
-
     def test_sink_wide_aspects_show_no_fallback_notice(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
